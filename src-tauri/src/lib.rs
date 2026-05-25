@@ -183,6 +183,44 @@ fn hide_window(app: tauri::AppHandle) {
     }
 }
 
+type TimerState = Arc<providers::timer::TimerState>;
+
+#[tauri::command]
+fn create_timer(
+    duration_secs: u64,
+    label: String,
+    timer_state: tauri::State<'_, TimerState>,
+) -> u32 {
+    timer_state.create(duration_secs, label)
+}
+
+#[tauri::command]
+fn stop_timer(id: u32, timer_state: tauri::State<'_, TimerState>) {
+    timer_state.stop(id);
+}
+
+#[derive(serde::Serialize, Clone)]
+struct TimerExpiredPayload {
+    id: u32,
+    label: String,
+}
+
+fn start_timer_watcher(app: tauri::AppHandle, state: Arc<providers::timer::TimerState>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        for entry in state.drain_expired() {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let _ = app.emit("timer-expired", TimerExpiredPayload {
+                id: entry.id,
+                label: entry.label,
+            });
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|a| a == "--show") {
@@ -204,14 +242,24 @@ pub fn run() {
     let registry: Registry = Arc::new(RwLock::new(providers::PluginRegistry::new(max_results)));
     let bg_registry = Arc::clone(&registry);
 
+    let timer_state: TimerState = providers::timer::TimerState::new();
+    let watcher_timer_state = Arc::clone(&timer_state);
+    let provider_timer_state = Arc::clone(&timer_state);
+
     tauri::Builder::default()
         .manage(registry)
         .manage(start_pdf_worker(pdf_render_width))
+        .manage(timer_state)
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
             }
             start_socket_listener(app.handle().clone());
+            start_timer_watcher(app.handle().clone(), watcher_timer_state);
+            // Timer provider is always enabled — no I/O required.
+            bg_registry.write().unwrap().register(
+                providers::timer::TimerProvider::new(provider_timer_state)
+            );
             if providers_cfg.calc {
                 bg_registry.write().unwrap().register(providers::calc::CalcProvider);
             }
@@ -235,7 +283,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![search, launch_app, hide_window, is_apps_ready, render_pdf_page])
+        .invoke_handler(tauri::generate_handler![search, launch_app, hide_window, is_apps_ready, render_pdf_page, create_timer, stop_timer])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
