@@ -111,6 +111,7 @@ function App() {
           invoke("launch_app", { exec });
         }
       } else if (e.key === "Escape") {
+        e.preventDefault();
         setQuery("");
         setResults([]);
         invoke("hide_window");
