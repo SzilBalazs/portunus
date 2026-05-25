@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod calc;
 pub mod files;
+pub mod recent;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,6 +69,13 @@ impl PluginRegistry {
             .flat_map(|p| p.search(query))
             .collect();
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        // deduplicate by exec: same file may appear from both FileProvider and RecentProvider;
+        // keep the highest-scored occurrence (already first after sort)
+        let mut seen = std::collections::HashSet::new();
+        results.retain(|r| match &r.exec {
+            Some(e) => seen.insert(e.clone()),
+            None => true,
+        });
         results.truncate(8);
         results
     }

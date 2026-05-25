@@ -191,6 +191,8 @@ pub fn run() {
             std::thread::spawn(move || {
                 let file_provider = providers::files::FileProvider::new();
                 bg_registry.write().unwrap().register(file_provider);
+                let recent_provider = providers::recent::RecentProvider::new();
+                bg_registry.write().unwrap().register(recent_provider);
                 let app_provider = providers::apps::AppProvider::new();
                 bg_registry.write().unwrap().register(app_provider);
                 APPS_READY.store(true, Ordering::Release);
