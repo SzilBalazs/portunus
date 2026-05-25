@@ -422,7 +422,7 @@ kbd {
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
 }
 
@@ -439,12 +439,13 @@ kbd {
 
 .pdf-skeleton {
   width: 100%;
+  max-height: 100%;
   aspect-ratio: 210 / 297;
   border-radius: 3px;
   position: relative;
   overflow: hidden;
   background: #2b2622;
-  flex-shrink: 0;
+  flex-shrink: 1;
 }
 
 .pdf-skeleton::before {
@@ -467,9 +468,12 @@ kbd {
 }
 
 .pdf-preview-wrap img {
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
   display: block;
+  object-fit: contain;
   transition: opacity 0.15s ease;
 }
 
@@ -478,6 +482,72 @@ kbd {
   color: var(--fg-dim);
   padding: 24px;
 }
+
+/* ---------- text preview ---------- */
+
+.text-preview-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: 4px;
+  background: #15120f;
+  position: relative;
+}
+
+.text-preview-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+.text-preview-wrap::-webkit-scrollbar-thumb {
+  background: #2a2521;
+  border-radius: 2px;
+}
+.text-preview-wrap::-webkit-scrollbar-track { background: transparent; }
+.text-preview-wrap::-webkit-scrollbar-corner { background: #15120f; }
+
+.text-preview-code {
+  margin: 0;
+  padding: 12px 14px;
+  font: 400 11px/1.65 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg);
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* Syntax token colours — warm brown palette */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-strong    { color: #d6a370; }
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition  { color: #96be65; }
+
+.hljs-number,
+.hljs-literal   { color: #e8c07a; }
+
+.hljs-comment,
+.hljs-quote     { color: #5e564e; font-style: italic; }
+
+.hljs-title,
+.hljs-section,
+.hljs-function  { color: #8dbcd4; }
+
+.hljs-type,
+.hljs-class     { color: #c8a464; }
+
+.hljs-built_in,
+.hljs-builtin-name { color: #d48055; }
+
+.hljs-attr,
+.hljs-attribute { color: #c8b890; }
+
+.hljs-variable,
+.hljs-params    { color: #c8c0b8; }
+
+.hljs-tag       { color: #d6a370; }
+
+.hljs-bullet,
+.hljs-link      { color: #96be65; }
+
+.hljs-emphasis  { font-style: italic; }
 
 /* ---------- result group labels ---------- */
 

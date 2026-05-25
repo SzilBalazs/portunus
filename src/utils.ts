@@ -81,6 +81,37 @@ export async function playTimerChime() {
   strike(783.99, t + 0.60); // G5
 }
 
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif"]);
+
+export function isImagePreviewable(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return IMAGE_EXTS.has(ext);
+}
+
+const TEXT_PREVIEW_LANGS: Record<string, string> = {
+  rs: "rust",
+  ts: "typescript", tsx: "typescript",
+  js: "javascript", jsx: "javascript",
+  py: "python",
+  go: "go",
+  sh: "bash", bash: "bash",
+  json: "json",
+  toml: "ini",
+  yaml: "yaml", yml: "yaml",
+  md: "markdown",
+  css: "css",
+  html: "xml", htm: "xml", xml: "xml",
+  svg: "xml",
+  c: "c", h: "c",
+  cpp: "cpp", cc: "cpp",
+  txt: "plaintext",
+};
+
+export function textPreviewLang(filename: string): string | null {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return TEXT_PREVIEW_LANGS[ext] ?? null;
+}
+
 export function fileKind(title: string, isFolder: boolean): string {
   if (isFolder) return "Folder";
   const ext = title.split(".").pop()?.toLowerCase() ?? "";

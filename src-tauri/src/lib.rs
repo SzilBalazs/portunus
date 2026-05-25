@@ -166,11 +166,57 @@ fn start_pdf_worker(render_width: u32) -> PdfWorkerHandle {
 }
 
 #[tauri::command]
-async fn render_pdf_page(path: String, worker: tauri::State<'_, PdfWorkerHandle>) -> Result<Vec<u8>, String> {
+async fn render_pdf_page(
+    path: String,
+    worker: tauri::State<'_, PdfWorkerHandle>,
+) -> Result<Vec<u8>, String> {
     let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
-    worker.tx.try_send((path, reply_tx)).map_err(|e| e.to_string())?;
+    worker
+        .tx
+        .try_send((path, reply_tx))
+        .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn read_text_preview(path: String) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    const MAX_LINES: usize = 300;
+    const MAX_BYTES: usize = 32 * 2048;
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut lines: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for line in BufReader::new(file).lines().take(MAX_LINES) {
+        let line = line.map_err(|e| e.to_string())?;
+        total += line.len() + 1;
+        if total > MAX_BYTES {
+            break;
+        }
+        lines.push(line);
+    }
+    Ok(lines.join("\n"))
+}
+
+#[tauri::command]
+async fn render_image_preview(path: String) -> Result<Vec<u8>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use image::ImageFormat;
+        const MAX_WIDTH: u32 = 800;
+        let img = image::open(&path).map_err(|e| e.to_string())?;
+        let img = if img.width() > MAX_WIDTH {
+            img.thumbnail(MAX_WIDTH, u32::MAX)
+        } else {
+            img
+        };
+        let mut bytes = Vec::new();
+        img.into_rgb8()
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)
+            .map_err(|e| e.to_string())?;
+        Ok(bytes)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -213,10 +259,13 @@ fn start_timer_watcher(app: tauri::AppHandle, state: Arc<providers::timer::Timer
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-            let _ = app.emit("timer-expired", TimerExpiredPayload {
-                id: entry.id,
-                label: entry.label,
-            });
+            let _ = app.emit(
+                "timer-expired",
+                TimerExpiredPayload {
+                    id: entry.id,
+                    label: entry.label,
+                },
+            );
         }
     });
 }
@@ -257,20 +306,26 @@ pub fn run() {
             start_socket_listener(app.handle().clone());
             start_timer_watcher(app.handle().clone(), watcher_timer_state);
             // Timer provider is always enabled — no I/O required.
-            bg_registry.write().unwrap().register(
-                providers::timer::TimerProvider::new(provider_timer_state)
-            );
+            bg_registry
+                .write()
+                .unwrap()
+                .register(providers::timer::TimerProvider::new(provider_timer_state));
             if providers_cfg.calc {
-                bg_registry.write().unwrap().register(providers::calc::CalcProvider);
+                bg_registry
+                    .write()
+                    .unwrap()
+                    .register(providers::calc::CalcProvider);
             }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if providers_cfg.files {
-                    let file_provider = providers::files::FileProvider::new(&files_cfg, &search_cfg);
+                    let file_provider =
+                        providers::files::FileProvider::new(&files_cfg, &search_cfg);
                     bg_registry.write().unwrap().register(file_provider);
                 }
                 if providers_cfg.recent {
-                    let recent_provider = providers::recent::RecentProvider::new(&recent_cfg, &search_cfg);
+                    let recent_provider =
+                        providers::recent::RecentProvider::new(&recent_cfg, &search_cfg);
                     bg_registry.write().unwrap().register(recent_provider);
                 }
                 if providers_cfg.apps {
@@ -283,7 +338,17 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![search, launch_app, hide_window, is_apps_ready, render_pdf_page, create_timer, stop_timer])
+        .invoke_handler(tauri::generate_handler![
+            search,
+            launch_app,
+            hide_window,
+            is_apps_ready,
+            render_pdf_page,
+            create_timer,
+            stop_timer,
+            read_text_preview,
+            render_image_preview
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
