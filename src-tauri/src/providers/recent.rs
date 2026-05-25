@@ -130,8 +130,6 @@ fn load_entries() -> Vec<RecentEntry> {
 
         let is_dir = path.is_dir();
 
-        println!("{} {}", name, path_str);
-
         let (file_size, created, modified) = match std::fs::metadata(&path) {
             Ok(meta) => {
                 let size = if is_dir { None } else { Some(meta.len()) };
