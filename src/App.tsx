@@ -146,6 +146,23 @@ export default function App() {
           e.preventDefault();
           launch(sel.exec);
         }
+      } else if (e.ctrlKey && !e.altKey && e.key === "c") {
+        const sel = displayResults[selectedIndex];
+        if (sel?.kind === "calc") {
+          e.preventDefault();
+          navigator.clipboard.writeText(sel.title);
+        } else if (sel?.kind === "file" || sel?.kind === "folder") {
+          e.preventDefault();
+          const path = sel.subtitle ? `${sel.subtitle}/${sel.title}` : sel.title;
+          navigator.clipboard.writeText(path);
+        }
+      } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        const idx = parseInt(e.key) - 1;
+        const target = displayResults[idx];
+        if (!target) return;
+        setSelectedIndex(idx);
+        if (target.kind !== "timer-item") launch(target.exec);
       } else if (e.key === "Escape") {
         e.preventDefault();
         setQuery("");

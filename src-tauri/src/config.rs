@@ -38,7 +38,7 @@ pub struct GeneralConfig {
 
 impl Default for GeneralConfig {
     fn default() -> Self {
-        Self { max_results: 8 }
+        Self { max_results: 9 }
     }
 }
 

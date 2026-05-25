@@ -129,7 +129,7 @@ html, body, #root {
 
 .result-row {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  grid-template-columns: 28px 1fr auto 16px;
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
@@ -172,6 +172,20 @@ html, body, #root {
   font: 500 11px/1 "JetBrains Mono", "Fira Code", monospace;
   color: var(--fg-dim);
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.result-shortcut {
+  font: 600 10px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+  background: var(--kbd-bg);
+  border: 1px solid #3d3730;
+  border-bottom: 2px solid #4a4038;
+  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
 }
 

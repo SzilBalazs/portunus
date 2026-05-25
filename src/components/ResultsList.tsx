@@ -62,6 +62,9 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
                   ? formatBytes(result.file_size)
                   : ""}
               </div>
+              <div className="result-shortcut">
+                {i < 9 ? i + 1 : ""}
+              </div>
             </div>
           </Fragment>
         );
