@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod calc;
+pub mod clipboard;
 pub mod files;
 pub mod recent;
 pub mod timer;
@@ -10,6 +11,7 @@ use serde::Serialize;
 
 // Category base scores (not user-tunable; define search priority ordering).
 pub const SCORE_TIMER: f32 = 4_000_000.0;
+pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
 pub const SCORE_CALC: f32 = 3_000_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;

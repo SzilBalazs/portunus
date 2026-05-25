@@ -14,10 +14,10 @@ fn socket_path() -> std::path::PathBuf {
     std::path::PathBuf::from(runtime_dir).join("portunus.sock")
 }
 
-fn try_signal_running() -> bool {
+fn try_signal_running(cmd: &str) -> bool {
     use std::io::Write;
     match std::os::unix::net::UnixStream::connect(socket_path()) {
-        Ok(mut stream) => stream.write_all(b"show\n").is_ok(),
+        Ok(mut stream) => stream.write_all(format!("{cmd}\n").as_bytes()).is_ok(),
         Err(_) => false,
     }
 }
@@ -37,8 +37,15 @@ fn start_socket_listener(app: tauri::AppHandle) {
         for stream in listener.incoming().flatten() {
             let mut line = String::new();
             let _ = std::io::BufReader::new(stream).read_line(&mut line);
-            if line.trim() == "show" {
-                let _ = app.emit("window-show", ());
+            let cmd = line.trim();
+            // "show" or "show:<initial-query>"
+            if cmd == "show" || cmd.starts_with("show:") {
+                let initial_query = cmd.strip_prefix("show:").map(str::to_string);
+                if let Some(q) = initial_query {
+                    let _ = app.emit("window-show-query", q);
+                } else {
+                    let _ = app.emit("window-show", ());
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -256,6 +263,30 @@ fn list_folder(path: String) -> Vec<FolderEntry> {
 }
 
 #[tauri::command]
+fn paste_clipboard(app: tauri::AppHandle, id: String) {
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("cliphist decode {} | wl-copy", id))
+        .spawn();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn decode_clipboard_entry(id: String) -> Result<Vec<u8>, String> {
+    let out = std::process::Command::new("cliphist")
+        .args(["decode", &id])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
 fn hide_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
@@ -306,7 +337,14 @@ fn start_timer_watcher(app: tauri::AppHandle, state: Arc<providers::timer::Timer
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|a| a == "--show") {
-        if !try_signal_running() {
+        if !try_signal_running("show") {
+            eprintln!("portunus: no running instance found");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if std::env::args().any(|a| a == "--clipboard") {
+        if !try_signal_running("show:clipboard") {
             eprintln!("portunus: no running instance found");
             std::process::exit(1);
         }
@@ -338,11 +376,15 @@ pub fn run() {
             }
             start_socket_listener(app.handle().clone());
             start_timer_watcher(app.handle().clone(), watcher_timer_state);
-            // Timer provider is always enabled — no I/O required.
+            // Timer and clipboard providers are always enabled — no I/O required.
             bg_registry
                 .write()
                 .unwrap()
                 .register(providers::timer::TimerProvider::new(provider_timer_state));
+            bg_registry
+                .write()
+                .unwrap()
+                .register(providers::clipboard::ClipboardProvider);
             if providers_cfg.calc {
                 bg_registry
                     .write()
@@ -381,7 +423,9 @@ pub fn run() {
             stop_timer,
             read_text_preview,
             render_image_preview,
-            list_folder
+            list_folder,
+            paste_clipboard,
+            decode_clipboard_entry
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

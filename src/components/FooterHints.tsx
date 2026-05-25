@@ -31,6 +31,16 @@ export default function FooterHints({ selected }: Props) {
       </div>
     );
   }
+  if (selected?.kind === "clipboard" || selected?.kind === "clipboard-image") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span className="hint"><kbd>↵</kbd> paste</span>
+        <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
   if (selected?.kind === "calc") {
     return (
       <div className="hints">

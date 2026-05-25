@@ -42,6 +42,21 @@ export default function App() {
     return () => { active = false; unlisten?.(); };
   }, []);
 
+  // Handle show-with-initial-query (e.g. --clipboard flag).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    listen<string>("window-show-query", event => {
+      setQuery(event.payload);
+      setResults([]);
+      inputRef.current?.focus();
+      audioCtxWarmup();
+    }).then(fn => {
+      if (active) unlisten = fn; else fn();
+    });
+    return () => { active = false; unlisten?.(); };
+  }, []);
+
   // Debounced search: fire 40ms after the last query change.
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
@@ -99,6 +114,13 @@ export default function App() {
 
   const launch = (exec?: string) => {
     if (!exec) return;
+
+    if (exec.startsWith("clipboard:copy:")) {
+      invoke("paste_clipboard", { id: exec.slice("clipboard:copy:".length) });
+      setQuery("");
+      setResults([]);
+      return;
+    }
 
     if (exec.startsWith("timer:create:")) {
       const rest = exec.slice("timer:create:".length);

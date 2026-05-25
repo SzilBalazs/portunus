@@ -7,6 +7,7 @@ export function groupLabel(kind: string): string | null {
   if (kind === "app") return "APPS";
   if (kind === "file" || kind === "folder") return "FILES";
   if (kind === "timer-item" || kind === "timer-create" || kind === "timer-new" || kind === "timer-expired") return "TIMERS";
+  if (kind === "clipboard" || kind === "clipboard-image") return "CLIPBOARD";
   return null;
 }
 
