@@ -483,6 +483,63 @@ kbd {
   padding: 24px;
 }
 
+/* ---------- folder contents ---------- */
+
+.folder-contents {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 4px;
+  background: #15120f;
+  padding: 6px 4px;
+  scroll-padding-top: 6px;
+}
+
+.folder-contents::-webkit-scrollbar { width: 4px; }
+.folder-contents::-webkit-scrollbar-thumb { background: #2a2521; border-radius: 2px; }
+.folder-contents::-webkit-scrollbar-track { background: transparent; }
+
+.folder-contents-empty {
+  padding: 10px 12px;
+  font: 400 11px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-dim);
+}
+
+.folder-entry {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 5px;
+}
+
+.folder-entry:hover { background: var(--bg-row-hov); }
+
+.folder-entry-icon {
+  color: var(--fg-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.folder-entry-name {
+  font: 400 11px/1.3 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.folder-entry-size {
+  font: 400 10px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ---------- text preview ---------- */
 
 .text-preview-wrap {

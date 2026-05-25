@@ -222,6 +222,39 @@ async fn render_image_preview(path: String) -> Result<Vec<u8>, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Serialize)]
+struct FolderEntry {
+    name: String,
+    is_dir: bool,
+    size: Option<u64>,
+}
+
+#[tauri::command]
+fn list_folder(path: String) -> Vec<FolderEntry> {
+    const MAX: usize = 200;
+    let mut entries: Vec<FolderEntry> = std::fs::read_dir(&path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .take(MAX)
+        .map(|e| {
+            let meta = e.metadata().ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            FolderEntry {
+                name: e.file_name().to_string_lossy().into_owned(),
+                is_dir,
+                size: meta.and_then(|m| if m.is_file() { Some(m.len()) } else { None }),
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    entries
+}
+
 #[tauri::command]
 fn hide_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -347,7 +380,8 @@ pub fn run() {
             create_timer,
             stop_timer,
             read_text_preview,
-            render_image_preview
+            render_image_preview,
+            list_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

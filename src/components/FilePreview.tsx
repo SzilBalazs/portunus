@@ -161,6 +161,52 @@ function ImagePreview({ path }: { path: string }) {
   );
 }
 
+// ── folder contents ───────────────────────────────────────────────────────────
+
+interface FolderEntry { name: string; is_dir: boolean; size?: number; }
+
+function FolderContents({ path }: { path: string }) {
+  const [entries, setEntries] = useState<FolderEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEntries(null);
+    invoke<FolderEntry[]>("list_folder", { path })
+      .then(e => { if (!cancelled) setEntries(e); })
+      .catch(() => { if (!cancelled) setEntries([]); });
+    return () => { cancelled = true; };
+  }, [path]);
+
+  return (
+    <div className="folder-contents">
+      {entries === null && <div className="folder-contents-empty">Loading…</div>}
+      {entries !== null && entries.length === 0 && (
+        <div className="folder-contents-empty">Empty folder</div>
+      )}
+      {entries?.map(e => (
+        <div key={e.name} className="folder-entry">
+          <span className="folder-entry-icon">
+            {e.is_dir ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+            )}
+          </span>
+          <span className="folder-entry-name">{e.name}</span>
+          {!e.is_dir && e.size != null && (
+            <span className="folder-entry-size">{formatBytes(e.size)}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── text preview ─────────────────────────────────────────────────────────────
 
 function TextPreview({ path, lang }: { path: string; lang: string }) {
@@ -229,6 +275,7 @@ export default function FilePreview({ result }: Props) {
       {isPdf && <PdfPreview path={filePath} />}
       {isImage && <ImagePreview path={filePath} />}
       {textLang && <TextPreview path={filePath} lang={textLang} />}
+      {isFolder && <FolderContents path={filePath} />}
 
       <div className="file-preview-meta">
         {result.modified && (
