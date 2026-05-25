@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { SearchResult } from "../types";
 import { groupLabel, formatBytes, shortenPath } from "../utils";
 import ResultIcon from "./ResultIcon";
@@ -12,6 +12,12 @@ interface Props {
 }
 
 export default function ResultsList({ results, selectedIndex, query, onSelect, onLaunch }: Props) {
+  const selectedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
+
   return (
     <div className="results-col" role="listbox">
       {query.trim() && results.length === 0 && (
@@ -24,11 +30,15 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
         return (
           <Fragment key={result.id}>
             {showLabel && (
-              <div className={`result-group-label${i === 0 ? " first" : ""}`}>
+              <div
+                ref={i === selectedIndex ? selectedRef : null}
+                className={`result-group-label${i === 0 ? " first" : ""}`}
+              >
                 <span>{label}</span>
               </div>
             )}
             <div
+              ref={i === selectedIndex && !showLabel ? selectedRef : null}
               className={`result-row${i === selectedIndex ? " selected" : ""}`}
               role="option"
               aria-selected={i === selectedIndex}

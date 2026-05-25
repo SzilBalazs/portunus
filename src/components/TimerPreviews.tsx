@@ -1,7 +1,16 @@
 import { useState, useEffect } from "react";
 import { SearchResult } from "../types";
-import { fmtRemaining } from "../utils";
 import { ClockIconLg } from "../icons";
+
+function TimerDisplay({ secs }: { secs: number }) {
+  const s = Math.max(0, Math.floor(secs));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return <>{h}<span className="timer-unit">h</span> {m}<span className="timer-unit">m</span> {sec}<span className="timer-unit">s</span></>;
+  if (m > 0) return <>{m}<span className="timer-unit">m</span> {sec}<span className="timer-unit">s</span></>;
+  return <>{sec}<span className="timer-unit">s</span></>;
+}
 
 // ── running timer ─────────────────────────────────────────────────────────────
 
@@ -42,7 +51,7 @@ export function TimerPreview({ result, onStop }: TimerPreviewProps) {
         </div>
       </div>
       <div className={`timer-remaining${isDone ? " done" : ""}`}>
-        {fmtRemaining(remaining)}
+        {isDone ? "Done" : <TimerDisplay secs={remaining} />}
       </div>
       <div className="timer-progress-track">
         <div className="timer-progress-fill" style={{ width: `${progress * 100}%` }} />
@@ -80,7 +89,7 @@ export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps)
         </div>
       </div>
       {durationSecs != null && (
-        <div className="timer-remaining">{fmtRemaining(durationSecs)}</div>
+        <div className="timer-remaining"><TimerDisplay secs={durationSecs} /></div>
       )}
       {hasAction && (
         <div className="timer-preview-actions">

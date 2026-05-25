@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SearchResult, ExpiredTimer } from "./types";
+import { playTimerChime, audioCtxWarmup } from "./utils";
 import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
 import FooterHints from "./components/FooterHints";
@@ -28,10 +29,14 @@ export default function App() {
   }, []);
 
   // Re-focus the input whenever the window is shown via IPC.
+  // Also warm up the AudioContext on first show so it isn't suspended when a timer fires.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
-    listen("window-show", () => inputRef.current?.focus()).then(fn => {
+    listen("window-show", () => {
+      inputRef.current?.focus();
+      audioCtxWarmup();
+    }).then(fn => {
       if (active) unlisten = fn; else fn();
     });
     return () => { active = false; unlisten?.(); };
@@ -80,6 +85,7 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let active = true;
     listen<ExpiredTimer>("timer-expired", event => {
+      playTimerChime();
       setExpiredTimers(prev => [...prev, event.payload]);
       setQuery("");
     }).then(fn => { if (active) unlisten = fn; else fn(); });
@@ -179,7 +185,7 @@ export default function App() {
             ref={inputRef}
             className="search-input"
             type="text"
-            placeholder={loading ? "Loading…" : "Search apps…"}
+            placeholder={loading ? "Loading…" : "Search…"}
             value={query}
             onChange={e => setQuery(e.target.value)}
             autoFocus
