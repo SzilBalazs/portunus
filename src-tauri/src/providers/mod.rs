@@ -1,7 +1,33 @@
 pub mod apps;
 pub mod calc;
+pub mod files;
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+
+pub const SCORE_CALC: f32 = 3_000_000.0;
+pub const SCORE_APP: f32 = 2_000_000.0;
+pub const SCORE_FILE: f32 = 1_000_000.0;
+pub const SCORE_FOLDER: f32 = 0.0;
+
+pub const MIN_NUCLEO_SCORE: u32 = 50;
+pub const RECENCY_WEIGHT: f32 = 50.0;
+const ONE_YEAR_SECS: f64 = 365.0 * 24.0 * 3600.0;
+
+pub fn recency_bonus(created: Option<u64>, modified: Option<u64>) -> f32 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let newest = [created, modified].iter().filter_map(|&t| t).max().unwrap_or(0);
+    if newest == 0 || now <= newest {
+        return 0.0;
+    }
+    let age = (now - newest) as f64;
+    let factor = (1.0 - age / ONE_YEAR_SECS).max(0.0) as f32;
+    factor * RECENCY_WEIGHT
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
@@ -12,6 +38,9 @@ pub struct SearchResult {
     pub score: f32,
     pub exec: Option<String>,
     pub icon_path: Option<String>,
+    pub file_size: Option<u64>,
+    pub created: Option<u64>,
+    pub modified: Option<u64>,
 }
 
 pub trait Provider: Send + Sync {
@@ -39,7 +68,7 @@ impl PluginRegistry {
             .flat_map(|p| p.search(query))
             .collect();
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(5);
+        results.truncate(8);
         results
     }
 }

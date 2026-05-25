@@ -40,9 +40,12 @@ impl Provider for CalcProvider {
             title: display,
             subtitle: Some(q.to_string()),
             kind: "calc".to_string(),
-            score: 1_000_000.0,
+            score: super::SCORE_CALC,
             exec: None,
             icon_path: None,
+            file_size: None,
+            created: None,
+            modified: None,
         }]
     }
 }

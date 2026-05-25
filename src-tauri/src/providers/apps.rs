@@ -301,14 +301,20 @@ impl Provider for AppProvider {
             .filter_map(|app| {
                 let score =
                     pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher)?;
+                if score < super::MIN_NUCLEO_SCORE {
+                    return None;
+                }
                 Some(SearchResult {
                     id: format!("app:{}", app.name),
                     title: app.name.clone(),
                     subtitle: app.description.clone(),
                     kind: "app".to_string(),
-                    score: score as f32,
+                    score: super::SCORE_APP + score as f32,
                     exec: Some(app.exec.clone()),
                     icon_path: app.icon_path.clone(),
+                    file_size: None,
+                    created: None,
+                    modified: None,
                 })
             })
             .collect()

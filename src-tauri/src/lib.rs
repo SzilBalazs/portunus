@@ -132,8 +132,10 @@ pub fn run() {
             bg_registry.write().unwrap().register(providers::calc::CalcProvider);
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let provider = providers::apps::AppProvider::new();
-                bg_registry.write().unwrap().register(provider);
+                let file_provider = providers::files::FileProvider::new();
+                bg_registry.write().unwrap().register(file_provider);
+                let app_provider = providers::apps::AppProvider::new();
+                bg_registry.write().unwrap().register(app_provider);
                 APPS_READY.store(true, Ordering::Release);
                 let _ = handle.emit("apps-ready", ());
             });
