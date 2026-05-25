@@ -102,61 +102,75 @@ fn is_apps_ready() -> bool {
     APPS_READY.load(Ordering::Acquire)
 }
 
-#[tauri::command]
-async fn render_pdf_page(path: String) -> Result<Vec<u8>, String> {
-    tauri::async_runtime::spawn_blocking(move || render_pdf_page_blocking(&path))
-        .await
-        .map_err(|e| e.to_string())?
+type PdfRenderMsg = (String, std::sync::mpsc::Sender<Result<Vec<u8>, String>>);
+
+struct PdfWorkerHandle {
+    tx: std::sync::mpsc::SyncSender<PdfRenderMsg>,
 }
 
-fn render_pdf_page_blocking(path: &str) -> Result<Vec<u8>, String> {
-    use image::ImageFormat;
-    use pdfium_render::prelude::*;
+fn start_pdf_worker() -> PdfWorkerHandle {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<PdfRenderMsg>(4);
+    std::thread::spawn(move || {
+        use image::ImageFormat;
+        use pdfium_render::prelude::*;
+        let pdfium = Pdfium::bind_to_system_library()
+            .map(Pdfium::new)
+            .map_err(|e| {
+                eprintln!("[pdf] bind_to_system_library failed: {e}");
+                e.to_string()
+            });
+        while let Ok((path, reply)) = rx.recv() {
+            let result = match &pdfium {
+                Err(msg) => Err(msg.clone()),
+                Ok(pdfium) => (|| {
+                    eprintln!("[pdf] rendering: {path}");
+                    let doc = pdfium.load_pdf_from_file(&path, None).map_err(|e| {
+                        let msg = e.to_string();
+                        eprintln!("[pdf] load_pdf_from_file failed: {msg}");
+                        msg
+                    })?;
+                    eprintln!("[pdf] loaded, {} page(s)", doc.pages().len());
+                    let page = doc.pages().get(0).map_err(|e| {
+                        let msg = e.to_string();
+                        eprintln!("[pdf] get page 0 failed: {msg}");
+                        msg
+                    })?;
+                    let bitmap = page
+                        .render_with_config(&PdfRenderConfig::new().set_target_width(800))
+                        .map_err(|e| {
+                            let msg = e.to_string();
+                            eprintln!("[pdf] render failed: {msg}");
+                            msg
+                        })?;
+                    let mut bytes = Vec::new();
+                    bitmap
+                        .as_image()
+                        .into_rgb8()
+                        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)
+                        .map_err(|e| {
+                            let msg = e.to_string();
+                            eprintln!("[pdf] jpeg encode failed: {msg}");
+                            msg
+                        })?;
+                    eprintln!("[pdf] done, {} bytes", bytes.len());
+                    Ok(bytes)
+                })(),
+            };
+            let _ = reply.send(result);
+        }
+    });
+    PdfWorkerHandle { tx }
+}
 
-    eprintln!("[pdf] rendering: {path}");
-
-    let bindings = Pdfium::bind_to_system_library().map_err(|e| {
-        let msg = e.to_string();
-        eprintln!("[pdf] bind_to_system_library failed: {msg}");
-        msg
-    })?;
-    let pdfium = Pdfium::new(bindings);
-
-    let doc = pdfium.load_pdf_from_file(&path, None).map_err(|e| {
-        let msg = e.to_string();
-        eprintln!("[pdf] load_pdf_from_file failed: {msg}");
-        msg
-    })?;
-
-    eprintln!("[pdf] loaded, {} page(s)", doc.pages().len());
-
-    let page = doc.pages().get(0).map_err(|e| {
-        let msg = e.to_string();
-        eprintln!("[pdf] get page 0 failed: {msg}");
-        msg
-    })?;
-
-    let bitmap = page
-        .render_with_config(&PdfRenderConfig::new().set_target_width(800))
-        .map_err(|e| {
-            let msg = e.to_string();
-            eprintln!("[pdf] render failed: {msg}");
-            msg
-        })?;
-
-    let mut bytes = Vec::new();
-    bitmap
-        .as_image()
-        .into_rgb8()
-        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)
-        .map_err(|e| {
-            let msg = e.to_string();
-            eprintln!("[pdf] jpeg encode failed: {msg}");
-            msg
-        })?;
-
-    eprintln!("[pdf] done, {} bytes", bytes.len());
-    Ok(bytes)
+#[tauri::command]
+async fn render_pdf_page(path: String, worker: tauri::State<'_, PdfWorkerHandle>) -> Result<Vec<u8>, String> {
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
+    worker.tx.try_send((path, reply_tx)).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -181,6 +195,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(registry)
+        .manage(start_pdf_worker())
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();

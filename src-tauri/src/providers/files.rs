@@ -25,6 +25,8 @@ impl FileProvider {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
         let roots: Vec<(PathBuf, usize)> = vec![
             (PathBuf::from(&home).join("Downloads"), 2),
+            (PathBuf::from(&home).join("Documents"), 2),
+            (PathBuf::from(&home).join(".config").join("hypr"), 2),
         ];
         let mut entries = Vec::new();
         for (dir, depth) in &roots {
@@ -68,7 +70,15 @@ impl FileProvider {
                     }
                     Err(_) => (None, None, None),
                 };
-                entries.push(FileEntry { path: path.to_string_lossy().into_owned(), name, parent, is_dir, file_size, created, modified });
+                entries.push(FileEntry {
+                    path: path.to_string_lossy().into_owned(),
+                    name,
+                    parent,
+                    is_dir,
+                    file_size,
+                    created,
+                    modified,
+                });
             }
         }
         Self { entries }
@@ -101,7 +111,11 @@ impl Provider for FileProvider {
                 if score < super::MIN_NUCLEO_SCORE {
                     return None;
                 }
-                let base = if entry.is_dir { super::SCORE_FOLDER } else { super::SCORE_FILE };
+                let base = if entry.is_dir {
+                    super::SCORE_FOLDER
+                } else {
+                    super::SCORE_FILE
+                };
                 let recency = super::recency_bonus(entry.created, entry.modified);
                 let escaped = entry.path.replace('"', "\\\"");
                 Some(SearchResult {

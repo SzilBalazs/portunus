@@ -161,6 +161,9 @@ function getPdfUrl(path: string): Promise<string> {
         const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
         pdfUrlCache.set(path, url);
         return url;
+      }).catch((e) => {
+        pdfPromiseCache.delete(path);
+        throw e;
       })
     );
   }
