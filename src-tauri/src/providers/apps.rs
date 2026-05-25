@@ -42,8 +42,8 @@ impl AppProvider {
 
 fn xdg_data_dirs() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let data_home = std::env::var("XDG_DATA_HOME")
-        .unwrap_or_else(|_| format!("{home}/.local/share"));
+    let data_home =
+        std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{home}/.local/share"));
     let system_dirs = std::env::var("XDG_DATA_DIRS")
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
 
@@ -117,17 +117,17 @@ fn build_icon_index() -> HashMap<String, String> {
     // (size_dir, category_dir, base_score) — scanned in declaration order.
     // SVG gets an additional +100 bonus inside index_dir.
     let targets: &[(&str, &str, u32)] = &[
-        ("scalable",  "apps",         190),
-        ("scalable",  "applications", 190),
-        ("256x256",   "apps",         180),
-        ("128x128",   "apps",         170),
-        ("64x64",     "apps",         160),
-        ("48x48",     "apps",         150),
-        ("48x48",     "applications", 150),
-        ("32x32",     "apps",         140),
-        ("24x24",     "apps",         130),
-        ("22x22",     "apps",         125),
-        ("16x16",     "apps",         110),
+        ("scalable", "apps", 190),
+        ("scalable", "applications", 190),
+        ("256x256", "apps", 180),
+        ("128x128", "apps", 170),
+        ("64x64", "apps", 160),
+        ("48x48", "apps", 150),
+        ("48x48", "applications", 150),
+        ("32x32", "apps", 140),
+        ("24x24", "apps", 130),
+        ("22x22", "apps", 125),
+        ("16x16", "apps", 110),
     ];
 
     let mut index: HashMap<String, (String, u32)> = HashMap::new();
@@ -179,7 +179,9 @@ fn index_dir(dir: &PathBuf, base_score: u32, index: &mut HashMap<String, (String
         };
         let score = base_score + fmt_bonus;
         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            let slot = index.entry(stem.to_string()).or_insert_with(|| (String::new(), 0));
+            let slot = index
+                .entry(stem.to_string())
+                .or_insert_with(|| (String::new(), 0));
             if score > slot.1 {
                 slot.0 = path.to_string_lossy().into_owned();
                 slot.1 = score;
@@ -272,7 +274,12 @@ fn parse_desktop(path: &std::path::Path, current_desktop: &str) -> Option<Parsed
         .or_else(|| fields.remove("GenericName"));
     let icon_name = fields.remove("Icon");
 
-    Some(ParsedEntry { name, exec, description, icon_name })
+    Some(ParsedEntry {
+        name,
+        exec,
+        description,
+        icon_name,
+    })
 }
 
 // ── Provider impl ─────────────────────────────────────────────────────────────
@@ -299,9 +306,8 @@ impl Provider for AppProvider {
         self.apps
             .iter()
             .filter_map(|app| {
-                let score =
-                    pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher)?;
-                if score < super::MIN_NUCLEO_SCORE {
+                let score = pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher)?;
+                if score < super::MIN_NUCLEO_SCORE_APP && query.chars().count() >= 4 {
                     return None;
                 }
                 Some(SearchResult {

@@ -12,7 +12,8 @@ pub const SCORE_APP: f32 = 2_000_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
 
-pub const MIN_NUCLEO_SCORE: u32 = 50;
+pub const MIN_NUCLEO_SCORE: u32 = 80;
+pub const MIN_NUCLEO_SCORE_APP: u32 = 50;
 pub const RECENCY_WEIGHT: f32 = 50.0;
 const ONE_YEAR_SECS: f64 = 365.0 * 24.0 * 3600.0;
 
@@ -21,7 +22,11 @@ pub fn recency_bonus(created: Option<u64>, modified: Option<u64>) -> f32 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let newest = [created, modified].iter().filter_map(|&t| t).max().unwrap_or(0);
+    let newest = [created, modified]
+        .iter()
+        .filter_map(|&t| t)
+        .max()
+        .unwrap_or(0);
     if newest == 0 || now <= newest {
         return 0.0;
     }
@@ -56,7 +61,9 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self { providers: Vec::new() }
+        Self {
+            providers: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, provider: impl Provider + 'static) {
@@ -64,11 +71,16 @@ impl PluginRegistry {
     }
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
-        let mut results: Vec<SearchResult> = self.providers
+        let mut results: Vec<SearchResult> = self
+            .providers
             .iter()
             .flat_map(|p| p.search(query))
             .collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // deduplicate by exec: same file may appear from both FileProvider and RecentProvider;
         // keep the highest-scored occurrence (already first after sort)
         let mut seen = std::collections::HashSet::new();

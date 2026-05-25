@@ -1,7 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+
+function shortenPath(path: string): string {
+  return path.replace(/^\/home\/[^/]+/, "~").replace(/^\/root/, "~");
+}
+
+function groupLabel(kind: string): string | null {
+  if (kind === "app") return "APPS";
+  if (kind === "file" || kind === "folder") return "FILES";
+  return null;
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -375,28 +385,39 @@ function App() {
             {query && results.length === 0 && (
               <div className="results-empty">No results</div>
             )}
-            {results.map((result, i) => (
-              <div
-                key={result.id}
-                className={`result-row${i === selectedIndex ? " selected" : ""}`}
-                role="option"
-                aria-selected={i === selectedIndex}
-                onClick={() => { setSelectedIndex(i); launch(result.exec); }}
-              >
-                <ResultIcon icon_path={result.icon_path} title={result.title} kind={result.kind} />
-                <div className="result-text">
-                  <div className="result-title">{result.title}</div>
-                  {result.subtitle && (
-                    <div className="result-subtitle">{result.subtitle}</div>
+            {results.map((result, i) => {
+              const label = groupLabel(result.kind);
+              const prevLabel = i > 0 ? groupLabel(results[i - 1].kind) : null;
+              const showLabel = label !== null && label !== prevLabel;
+              return (
+                <Fragment key={result.id}>
+                  {showLabel && (
+                    <div className={`result-group-label${i === 0 ? " first" : ""}`}>
+                      <span>{label}</span>
+                    </div>
                   )}
-                </div>
-                <div className="result-meta">
-                  {result.kind === "file" && result.file_size != null
-                    ? formatBytes(result.file_size)
-                    : ""}
-                </div>
-              </div>
-            ))}
+                  <div
+                    className={`result-row${i === selectedIndex ? " selected" : ""}`}
+                    role="option"
+                    aria-selected={i === selectedIndex}
+                    onClick={() => { setSelectedIndex(i); launch(result.exec); }}
+                  >
+                    <ResultIcon icon_path={result.icon_path} title={result.title} kind={result.kind} />
+                    <div className="result-text">
+                      <div className="result-title">{result.title}</div>
+                      {result.subtitle && (
+                        <div className="result-subtitle">{shortenPath(result.subtitle)}</div>
+                      )}
+                    </div>
+                    <div className="result-meta">
+                      {result.kind === "file" && result.file_size != null
+                        ? formatBytes(result.file_size)
+                        : ""}
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
           </div>
 
           <div className="preview-col">
