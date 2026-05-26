@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { SearchResult } from "../types";
+import { EnterIcon } from "../icons";
 
 interface Props {
   result: SearchResult;
@@ -30,7 +31,7 @@ export default function AppPreview({ result, onLaunch }: Props) {
       </div>
       <div className="app-preview-actions">
         <button className="btn-primary" onClick={onLaunch}>
-          Launch <span className="btn-kbd">↵</span>
+          Launch <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>
     </div>

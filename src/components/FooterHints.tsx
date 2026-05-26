@@ -1,4 +1,5 @@
 import { SearchResult } from "../types";
+import { EnterIcon } from "../icons";
 
 interface Props {
   selected: SearchResult | null;
@@ -17,7 +18,7 @@ export default function FooterHints({ selected }: Props) {
   if (selected?.kind === "timer-create" && selected.exec) {
     return (
       <div className="hints">
-        <span className="hint"><kbd>↵</kbd> start timer</span>
+        <span className="hint"><kbd><EnterIcon /></kbd> start timer</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -43,7 +44,7 @@ export default function FooterHints({ selected }: Props) {
     return (
       <div className="hints">
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span className="hint"><kbd>↵</kbd> dismiss</span>
+        <span className="hint"><kbd><EnterIcon /></kbd> dismiss</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -52,7 +53,7 @@ export default function FooterHints({ selected }: Props) {
     return (
       <div className="hints">
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span className="hint"><kbd>↵</kbd> paste</span>
+        <span className="hint"><kbd><EnterIcon /></kbd> paste</span>
         <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
@@ -88,8 +89,9 @@ export default function FooterHints({ selected }: Props) {
     return (
       <div className="hints">
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span className="hint"><kbd>↵</kbd> open</span>
+        <span className="hint"><kbd><EnterIcon /></kbd> open</span>
         <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>
+        {selected.kind === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -98,7 +100,7 @@ export default function FooterHints({ selected }: Props) {
     return (
       <div className="hints">
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span className="hint"><kbd>↵</kbd> launch</span>
+        <span className="hint"><kbd><EnterIcon /></kbd> launch</span>
         <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
@@ -107,7 +109,7 @@ export default function FooterHints({ selected }: Props) {
   return (
     <div className="hints">
       <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-      <span className="hint"><kbd>↵</kbd> open</span>
+      <span className="hint"><kbd><EnterIcon /></kbd> open</span>
       <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
       <span className="hint"><kbd>Esc</kbd> close</span>
     </div>

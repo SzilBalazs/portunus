@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { SearchResult } from "../types";
-import { ClockIconLg } from "../icons";
+import { ClockIconLg, EnterIcon } from "../icons";
 
 const TIMER_HINT_STYLES = `
 .timer-hint {
@@ -141,7 +141,7 @@ export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps)
       {hasAction && (
         <div className="timer-preview-actions">
           <button className="btn-primary" onClick={onStart}>
-            Start <span className="btn-kbd">↵</span>
+            Start <span className="btn-kbd"><EnterIcon /></span>
           </button>
         </div>
       )}
@@ -207,7 +207,7 @@ export function TimerExpiredPreview({ label, onDismiss }: TimerExpiredPreviewPro
       </div>
       <div className="timer-preview-actions">
         <button className="btn-primary" onClick={onDismiss}>
-          Dismiss <span className="btn-kbd">↵</span>
+          Dismiss <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>
     </div>

@@ -348,6 +348,8 @@ html, body, #root {
   font-size: 14px;
   opacity: 0.85;
   font-weight: 400;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* ---------- footer ---------- */
@@ -401,7 +403,7 @@ kbd {
 
 .file-preview-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
 }
 
@@ -418,8 +420,40 @@ kbd {
 }
 
 .file-preview-head-text {
+  flex: 1;
   min-width: 0;
-  padding-top: 2px;
+}
+
+.file-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.file-btn-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid #3d3730;
+  border-bottom: 2px solid #4a4038;
+  background: var(--kbd-bg);
+  color: var(--fg-mute);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+.file-btn-icon:hover {
+  background: #332e2a;
+  color: var(--fg);
+}
+
+.file-btn-icon.copied {
+  color: var(--accent);
 }
 
 .file-preview-title {

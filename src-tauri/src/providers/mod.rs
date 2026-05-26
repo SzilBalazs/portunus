@@ -23,14 +23,20 @@ pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
 
 /// Score threshold that scales with query length.
-/// min_score is the target for 4+ char queries; shorter queries get a proportionally
-/// lower threshold because nucleo scores naturally drop with query length.
+/// Two-phase ramp so the jump to full threshold is gradual:
+///   len 1 →   0%    len 2 → 33%    len 3 → 66%
+///   len 4 →  77%    len 5 → 88%    len 6+ → 100%
 pub fn effective_min_score(min_score: u32, query_len: usize) -> u32 {
     if query_len <= 1 {
         return 0;
     }
-    let factor = (query_len - 1).min(3) as u64;
-    (min_score as u64 * factor / 3) as u32
+    if query_len <= 3 {
+        let factor = (query_len - 1) as u64;
+        return (min_score as u64 * factor / 3) as u32;
+    }
+    let extra = (query_len - 3).min(3) as u64;
+    let base = min_score as u64 * 2 / 3;
+    (base + (min_score as u64 - base) * extra / 3) as u32
 }
 
 pub fn recency_bonus(created: Option<u64>, modified: Option<u64>, weight: f32) -> f32 {

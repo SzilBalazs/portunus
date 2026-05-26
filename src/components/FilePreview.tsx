@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchResult } from "../types";
 import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable } from "../utils";
+import { EnterIcon, CopyIcon, FolderOpenIcon, CheckIcon } from "../icons";
 import hljs from "highlight.js/lib/core";
 import langRust       from "highlight.js/lib/languages/rust";
 import langTS         from "highlight.js/lib/languages/typescript";
@@ -218,8 +219,10 @@ function TextPreview({ path, lang }: { path: string; lang: string }) {
     invoke<string>("read_text_preview", { path })
       .then(text => {
         if (cancelled) return;
-        const result = hljs.highlight(text, { language: lang, ignoreIllegals: true });
-        setHtml(result.value);
+        setTimeout(() => {
+          if (cancelled) return;
+          setHtml(hljs.highlight(text, { language: lang, ignoreIllegals: true }).value);
+        }, 0);
       })
       .catch(() => { if (!cancelled) setHtml(""); });
     return () => { cancelled = true; };
@@ -238,9 +241,10 @@ function TextPreview({ path, lang }: { path: string; lang: string }) {
 
 interface Props {
   result: SearchResult;
+  onLaunch: () => void;
 }
 
-export default function FilePreview({ result }: Props) {
+export default function FilePreview({ result, onLaunch }: Props) {
   const isFolder = result.kind === "folder";
   const kind = fileKind(result.title, isFolder);
   const tag = [kind, !isFolder && result.file_size != null ? formatBytes(result.file_size) : null]
@@ -250,6 +254,19 @@ export default function FilePreview({ result }: Props) {
   const isPdf = kind === "PDF Document";
   const isImage = !isFolder && isImagePreviewable(result.title);
   const textLang = !isFolder && !isImage ? textPreviewLang(result.title) : null;
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(filePath);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleReveal = () => {
+    const parent = result.subtitle ?? '.';
+    invoke('launch_app', { exec: `xdg-open "${parent}"`, id: undefined, kind: undefined });
+  };
 
   const icon = isFolder ? (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="22" height="22">
@@ -269,6 +286,19 @@ export default function FilePreview({ result }: Props) {
         <div className="file-preview-head-text">
           <div className="file-preview-title">{result.title}</div>
           <div className="file-preview-tag">{tag}</div>
+        </div>
+        <div className="file-preview-actions">
+          <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={handleCopy} title="Copy path">
+            {copied ? <CheckIcon /> : <CopyIcon />}
+          </button>
+          {!isFolder && (
+            <button className="file-btn-icon" onClick={handleReveal} title="Reveal in folder">
+              <FolderOpenIcon />
+            </button>
+          )}
+          <button className="btn-primary" onClick={onLaunch}>
+            Open <span className="btn-kbd"><EnterIcon /></span>
+          </button>
         </div>
       </div>
 

@@ -28,6 +28,8 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
         const label = groupLabel(result.kind);
         const prevLabel = i > 0 ? groupLabel(results[i - 1].kind) : null;
         const showLabel = label !== null && label !== prevLabel;
+        const shortcutIdx = launchableResults.indexOf(result);
+        const showShortcut = shortcutIdx >= 0 && shortcutIdx < 9;
         return (
           <Fragment key={result.id}>
             {showLabel && (
@@ -63,8 +65,8 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
                   ? formatBytes(result.file_size)
                   : ""}
               </div>
-              <div className="result-shortcut" style={launchableResults.indexOf(result) < 0 || launchableResults.indexOf(result) >= 9 ? { visibility: 'hidden' } : undefined}>
-                {launchableResults.indexOf(result) >= 0 && launchableResults.indexOf(result) < 9 ? launchableResults.indexOf(result) + 1 : ""}
+              <div className="result-shortcut" style={!showShortcut ? { visibility: 'hidden' } : undefined}>
+                {showShortcut ? shortcutIdx + 1 : ""}
               </div>
             </div>
           </Fragment>

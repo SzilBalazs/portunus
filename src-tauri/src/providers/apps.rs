@@ -310,13 +310,28 @@ impl Provider for AppProvider {
         );
         let mut char_buf = Vec::new();
 
+        let threshold = super::effective_min_score(self.min_score, query.chars().count());
+
         self.apps
             .iter()
             .filter_map(|app| {
-                let score = pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher)?;
-                let threshold = super::effective_min_score(self.min_score, query.chars().count());
+                let name_score = pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher);
+                let desc_score = app.description.as_deref().and_then(|desc| {
+                    pattern
+                        .score(Utf32Str::new(desc, &mut char_buf), &mut matcher)
+                        .map(|s| (s as f32 * 0.8) as u32)
+                });
+                let score = match (name_score, desc_score) {
+                    (Some(n), Some(d)) => n.max(d),
+                    (Some(n), None) => n,
+                    (None, Some(d)) => d,
+                    (None, None) => return None,
+                };
                 if self.log_scores {
-                    eprintln!("[apps] {:?} → {:?}  score={} threshold={}", query, app.name, score, threshold);
+                    eprintln!(
+                        "[apps] {:?} → {:?}  name={:?} desc={:?} best={} threshold={}",
+                        query, app.name, name_score, desc_score, score, threshold
+                    );
                 }
                 if score < threshold {
                     return None;

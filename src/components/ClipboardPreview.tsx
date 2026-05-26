@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchResult } from "../types";
+import { EnterIcon } from "../icons";
 
 interface Props {
   result: SearchResult;
@@ -49,7 +50,7 @@ export default function ClipboardPreview({ result, onPaste }: Props) {
           {isImage ? result.title : result.subtitle ?? "Text"}
         </span>
         <button className="btn-primary" onClick={onPaste}>
-          Paste <span className="btn-kbd">↵</span>
+          Paste <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>
 

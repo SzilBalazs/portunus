@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useLayoutEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SearchResult, ExpiredTimer } from "./types";
@@ -25,7 +25,7 @@ export default function App() {
 
   useEffect(() => { queryRef.current = query; }, [query]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     setInputWidth(mirrorRef.current?.offsetWidth ?? 0);
   }, [query]);
 
