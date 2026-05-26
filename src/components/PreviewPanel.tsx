@@ -1,8 +1,5 @@
-import { SearchResult } from "../types";
-import AppPreview from "./AppPreview";
-import FilePreview from "./FilePreview";
-import ClipboardPreview from "./ClipboardPreview";
-import { TimerPreview, TimerCreatePreview, TimerExpiredPreview } from "./TimerPreviews";
+import { getPreview } from '../providers/registry';
+import type { SearchResult } from '../types';
 
 interface Props {
   result: SearchResult | null;
@@ -11,23 +8,7 @@ interface Props {
 }
 
 export default function PreviewPanel({ result, onLaunch, onStopTimer }: Props) {
-  if (result?.kind === "app") {
-    return <AppPreview result={result} onLaunch={onLaunch} />;
-  }
-  if (result?.kind === "file" || result?.kind === "folder") {
-    return <FilePreview result={result} />;
-  }
-  if (result?.kind === "timer-item") {
-    return <TimerPreview key={result.id} result={result} onStop={onStopTimer} />;
-  }
-  if (result?.kind === "timer-create") {
-    return <TimerCreatePreview result={result} onStart={onLaunch} />;
-  }
-  if (result?.kind === "timer-expired") {
-    return <TimerExpiredPreview label={result.title} onDismiss={onLaunch} />;
-  }
-  if (result?.kind === "clipboard" || result?.kind === "clipboard-image") {
-    return <ClipboardPreview result={result} onPaste={onLaunch} />;
-  }
-  return <div className="preview-empty" />;
+  const Preview = getPreview(result?.kind);
+  if (!Preview || !result) return <div className="preview-empty" />;
+  return <Preview key={result.id} result={result} onLaunch={onLaunch} onStopTimer={onStopTimer} />;
 }

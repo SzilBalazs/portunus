@@ -1,8 +1,10 @@
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{Provider, SearchResult, SCORE_TIMER};
+use tauri::{AppHandle, Emitter, Manager};
+
+use super::{PluginRegistry, Provider, SearchResult, SCORE_TIMER};
 
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -61,6 +63,54 @@ impl TimerState {
         });
         expired
     }
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct TimerExpiredPayload {
+    pub id: u32,
+    pub label: String,
+}
+
+fn start_timer_watcher(app: AppHandle, state: Arc<TimerState>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        for entry in state.drain_expired() {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let _ = app.emit(
+                "timer-expired",
+                TimerExpiredPayload {
+                    id: entry.id,
+                    label: entry.label,
+                },
+            );
+        }
+    });
+}
+
+pub fn setup(app: &AppHandle, registry: &Arc<RwLock<PluginRegistry>>) {
+    let timer_state = TimerState::new();
+    let provider_state = Arc::clone(&timer_state);
+    let watcher_state = Arc::clone(&timer_state);
+    app.manage(Arc::clone(&timer_state));
+    registry.write().unwrap().register(TimerProvider::new(provider_state));
+    start_timer_watcher(app.clone(), watcher_state);
+}
+
+#[tauri::command]
+pub fn create_timer(
+    duration_secs: u64,
+    label: String,
+    timer_state: tauri::State<'_, Arc<TimerState>>,
+) -> u32 {
+    timer_state.create(duration_secs, label)
+}
+
+#[tauri::command]
+pub fn stop_timer(id: u32, timer_state: tauri::State<'_, Arc<TimerState>>) {
+    timer_state.stop(id);
 }
 
 pub struct TimerProvider {

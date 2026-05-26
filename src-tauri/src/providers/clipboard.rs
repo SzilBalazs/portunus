@@ -1,4 +1,39 @@
+use tauri::Manager;
+
 use super::{Provider, SearchResult, SCORE_CLIPBOARD};
+
+#[tauri::command]
+pub fn paste_clipboard(app: tauri::AppHandle, id: String) {
+    use std::process::{Command, Stdio};
+    if let Ok(decoded) = Command::new("cliphist").args(["decode", &id]).output() {
+        if decoded.status.success() {
+            if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+                if let Some(stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let mut stdin = stdin;
+                    let _ = stdin.write_all(&decoded.stdout);
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+pub fn decode_clipboard_entry(id: String) -> Result<Vec<u8>, String> {
+    let out = std::process::Command::new("cliphist")
+        .args(["decode", &id])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
 
 struct ClipEntry {
     id: String,

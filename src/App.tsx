@@ -6,6 +6,8 @@ import { playTimerChime, audioCtxWarmup } from "./utils";
 import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
 import FooterHints from "./components/FooterHints";
+import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers/registry";
+import "./providers";
 import "./App.css";
 
 export default function App() {
@@ -19,7 +21,6 @@ export default function App() {
 
   useEffect(() => { queryRef.current = query; }, [query]);
 
-  // Wait for the background provider thread to finish loading apps.
   useEffect(() => {
     let done = false;
     const markReady = () => { if (!done) { done = true; setLoading(false); } };
@@ -28,8 +29,6 @@ export default function App() {
     return () => { done = true; promise.then(ul => ul()); };
   }, []);
 
-  // Re-focus the input whenever the window is shown via IPC.
-  // Also warm up the AudioContext on first show so it isn't suspended when a timer fires.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
@@ -42,13 +41,12 @@ export default function App() {
     return () => { active = false; unlisten?.(); };
   }, []);
 
-  // Handle show-with-initial-query (e.g. --clipboard flag).
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
     listen<string>("window-show-query", event => {
       setQuery(event.payload);
-      setResults([]);
+      // Don't manually clear results — the query useEffect will re-search immediately.
       inputRef.current?.focus();
       audioCtxWarmup();
     }).then(fn => {
@@ -57,7 +55,6 @@ export default function App() {
     return () => { active = false; unlisten?.(); };
   }, []);
 
-  // Debounced search: fire 40ms after the last query change.
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
     let cancelled = false;
@@ -67,10 +64,8 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [query]);
 
-  // Reset selection on every new query, but NOT on timer auto-refresh.
   useEffect(() => { setSelectedIndex(0); }, [query]);
 
-  // When query is empty, overlay unacknowledged expired timers as results.
   const displayResults = useMemo<SearchResult[]>(() => {
     if (query.trim()) return results;
     if (expiredTimers.length === 0) return [];
@@ -84,7 +79,6 @@ export default function App() {
     }));
   }, [query, results, expiredTimers]);
 
-  // Re-query every second while running timers are visible to keep countdowns live.
   const hasTimerItems = displayResults.some(r => r.kind === "timer-item");
   useEffect(() => {
     if (!hasTimerItems) return;
@@ -95,7 +89,6 @@ export default function App() {
     return () => clearInterval(id);
   }, [hasTimerItems]);
 
-  // Show expired timers when the backend signals one finished.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
@@ -112,39 +105,21 @@ export default function App() {
     if (q.trim()) invoke<SearchResult[]>("search", { query: q }).then(setResults);
   };
 
+  const makeCtx = (): LaunchContext => ({
+    setQuery,
+    setResults,
+    requery,
+    removeExpiredTimer: (id: number) => setExpiredTimers(prev => prev.filter(t => t.id !== id)),
+  });
+
   const launch = (result?: SearchResult) => {
-    const exec = result?.exec;
-    if (!exec) return;
-
-    if (exec.startsWith("clipboard:copy:")) {
-      invoke("paste_clipboard", { id: exec.slice("clipboard:copy:".length) });
-      setQuery("");
-      setResults([]);
-      return;
-    }
-
-    if (exec.startsWith("timer:create:")) {
-      const rest = exec.slice("timer:create:".length);
-      const colon = rest.indexOf(":");
-      invoke("create_timer", { durationSecs: parseInt(rest.slice(0, colon)), label: rest.slice(colon + 1) });
-      setQuery("timer");
-      setResults([]);
-      return;
-    }
-    if (exec.startsWith("timer:stop:")) {
-      invoke("stop_timer", { id: parseInt(exec.slice("timer:stop:".length)) });
-      requery();
-      return;
-    }
-    if (exec.startsWith("timer:dismiss:")) {
-      const id = parseInt(exec.slice("timer:dismiss:".length));
-      setExpiredTimers(prev => prev.filter(t => t.id !== id));
-      return;
-    }
-
+    if (!result) return;
+    const ctx = makeCtx();
+    if (dispatchLaunch(result, ctx)) return;
+    if (!result.exec) return;
     setQuery("");
     setResults([]);
-    invoke("launch_app", { exec, id: result?.id, kind: result?.kind });
+    invoke("launch_app", { exec: result.exec, id: result.id, kind: result.kind });
   };
 
   useEffect(() => {
@@ -155,26 +130,6 @@ export default function App() {
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex(i => Math.max(i - 1, 0));
-      } else if (e.key === "Enter") {
-        const sel = displayResults[selectedIndex];
-        // Don't stop a running timer accidentally with Enter — require Del for that.
-        if (sel?.kind !== "timer-item") launch(sel);
-      } else if (e.key === "Delete") {
-        const sel = displayResults[selectedIndex];
-        if (sel?.kind === "timer-item" || sel?.kind === "timer-expired") {
-          e.preventDefault();
-          launch(sel);
-        }
-      } else if (e.ctrlKey && !e.altKey && e.key === "c") {
-        const sel = displayResults[selectedIndex];
-        if (sel?.kind === "calc") {
-          e.preventDefault();
-          navigator.clipboard.writeText(sel.title);
-        } else if (sel?.kind === "file" || sel?.kind === "folder") {
-          e.preventDefault();
-          const path = sel.subtitle ? `${sel.subtitle}/${sel.title}` : sel.title;
-          navigator.clipboard.writeText(path);
-        }
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const idx = parseInt(e.key) - 1;
@@ -187,6 +142,11 @@ export default function App() {
         setQuery("");
         setResults([]);
         invoke("hide_window");
+      } else {
+        const ctx = makeCtx();
+        if (!dispatchKeyDown(e, selected, ctx)) {
+          if (e.key === "Enter") launch(displayResults[selectedIndex]);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
