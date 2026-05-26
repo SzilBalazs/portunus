@@ -208,6 +208,12 @@ pub fn run() {
                     .unwrap()
                     .register(providers::calc::CalcProvider);
             }
+            if providers_cfg.dict {
+                let dict_provider = providers::dict::DictProvider::new();
+                if dict_provider.available {
+                    bg_registry.write().unwrap().register(dict_provider);
+                }
+            }
 
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -248,6 +254,8 @@ pub fn run() {
             // Clipboard provider
             providers::clipboard::paste_clipboard,
             providers::clipboard::decode_clipboard_entry,
+            // Dict provider
+            providers::dict::get_dict_definitions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

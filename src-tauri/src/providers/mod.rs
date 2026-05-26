@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod calc;
 pub mod clipboard;
+pub mod dict;
 pub mod files;
 pub mod recent;
 pub mod timer;
@@ -16,6 +17,7 @@ use crate::frecency::FrecencyStore;
 pub const SCORE_TIMER: f32 = 4_000_000.0;
 pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
 pub const SCORE_CALC: f32 = 3_000_000.0;
+pub const SCORE_DICT: f32 = 3_000_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;

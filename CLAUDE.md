@@ -27,6 +27,7 @@ bun x tsc --noEmit  # type-check TypeScript only
 ## System dependencies
 
 - `libpdfium.so` (x86_64) — required for PDF preview. Install via AUR: `yay -S pdfium-bin` (must be the 64-bit build). Loaded at runtime via `Pdfium::bind_to_system_library()`.
+- `dict` — required for dictionary lookups (`define word` / `dict word`). Install: `sudo pacman -S dictd`. If `dict` is not found at runtime the provider is silently disabled.
 
 ## Structure
 

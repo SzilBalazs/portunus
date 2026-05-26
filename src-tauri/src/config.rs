@@ -53,6 +53,7 @@ pub struct ProvidersConfig {
     pub files: bool,
     pub recent: bool,
     pub calc: bool,
+    pub dict: bool,
 }
 
 impl Default for ProvidersConfig {
@@ -62,6 +63,7 @@ impl Default for ProvidersConfig {
             files: true,
             recent: true,
             calc: true,
+            dict: true,
         }
     }
 }

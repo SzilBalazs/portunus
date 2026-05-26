@@ -4,6 +4,7 @@ export function shortenPath(path: string): string {
 
 export function groupLabel(kind: string): string | null {
   if (kind === "calc") return "CALCULATOR";
+  if (kind === "dict" || kind === "dict-hint") return "DICTIONARY";
   if (kind === "app") return "APPS";
   if (kind === "file" || kind === "folder") return "FILES";
   if (kind === "timer-item" || kind === "timer-create" || kind === "timer-new" || kind === "timer-expired") return "TIMERS";
