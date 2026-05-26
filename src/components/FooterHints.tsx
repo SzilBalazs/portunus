@@ -22,6 +22,15 @@ export default function FooterHints({ selected }: Props) {
       </div>
     );
   }
+  if (selected?.kind === "timer-create" && !selected.exec) {
+    return (
+      <div className="hints">
+        <span className="hint">type a duration</span>
+        <span className="hint"><kbd>5m</kbd> <kbd>1h30m</kbd> <kbd>30s</kbd></span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
   if (selected?.kind === "timer-expired") {
     return (
       <div className="hints">

@@ -13,6 +13,8 @@ pub struct Config {
     pub recent: RecentConfig,
     pub search: SearchConfig,
     pub pdf: PdfConfig,
+    pub frecency: FrecencyConfig,
+    pub debug: DebugConfig,
 }
 
 impl Default for Config {
@@ -24,6 +26,8 @@ impl Default for Config {
             recent: RecentConfig::default(),
             search: SearchConfig::default(),
             pdf: PdfConfig::default(),
+            frecency: FrecencyConfig::default(),
+            debug: DebugConfig::default(),
         }
     }
 }
@@ -115,10 +119,22 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            min_score_file: 80,
-            min_score_app: 50,
+            min_score_file: 95,
+            min_score_app: 95,
             recency_weight: 50.0,
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct DebugConfig {
+    pub log_scores: bool,
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self { log_scores: false }
     }
 }
 
@@ -131,6 +147,24 @@ pub struct PdfConfig {
 impl Default for PdfConfig {
     fn default() -> Self {
         Self { render_width: 800 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FrecencyConfig {
+    pub enabled: bool,
+    pub half_life_days: f32,
+    pub weight: f32,
+}
+
+impl Default for FrecencyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            half_life_days: 14.0,
+            weight: 5000.0,
+        }
     }
 }
 

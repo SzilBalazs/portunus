@@ -5,9 +5,12 @@ pub mod files;
 pub mod recent;
 pub mod timer;
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+
+use crate::frecency::FrecencyStore;
 
 // Category base scores (not user-tunable; define search priority ordering).
 pub const SCORE_TIMER: f32 = 4_000_000.0;
@@ -16,6 +19,17 @@ pub const SCORE_CALC: f32 = 3_000_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
+
+/// Score threshold that scales with query length.
+/// min_score is the target for 4+ char queries; shorter queries get a proportionally
+/// lower threshold because nucleo scores naturally drop with query length.
+pub fn effective_min_score(min_score: u32, query_len: usize) -> u32 {
+    if query_len <= 1 {
+        return 0;
+    }
+    let factor = (query_len - 1).min(3) as u64;
+    (min_score as u64 * factor / 3) as u32
+}
 
 pub fn recency_bonus(created: Option<u64>, modified: Option<u64>, weight: f32) -> f32 {
     const ONE_YEAR_SECS: f64 = 365.0 * 24.0 * 3600.0;
@@ -59,6 +73,8 @@ pub trait Provider: Send + Sync {
 pub struct PluginRegistry {
     providers: Vec<Box<dyn Provider>>,
     max_results: usize,
+    frecency: Option<Arc<FrecencyStore>>,
+    frecency_weight: f32,
 }
 
 impl PluginRegistry {
@@ -66,11 +82,18 @@ impl PluginRegistry {
         Self {
             providers: Vec::new(),
             max_results,
+            frecency: None,
+            frecency_weight: 0.0,
         }
     }
 
     pub fn register(&mut self, provider: impl Provider + 'static) {
         self.providers.push(Box::new(provider));
+    }
+
+    pub fn set_frecency(&mut self, store: Arc<FrecencyStore>, weight: f32) {
+        self.frecency = Some(store);
+        self.frecency_weight = weight;
     }
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
@@ -79,6 +102,17 @@ impl PluginRegistry {
             .iter()
             .flat_map(|p| p.search(query))
             .collect();
+
+        // Apply frecency bonus before sort so heavily-used items surface correctly.
+        if let Some(store) = &self.frecency {
+            let scores = store.all_scores();
+            for r in &mut results {
+                if let Some(&fs) = scores.get(&r.id) {
+                    r.score += fs * self.frecency_weight;
+                }
+            }
+        }
+
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)

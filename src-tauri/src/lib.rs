@@ -1,4 +1,5 @@
 mod config;
+mod frecency;
 mod providers;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,6 +9,7 @@ use tauri::{Emitter, Manager};
 static APPS_READY: AtomicBool = AtomicBool::new(false);
 
 type Registry = Arc<RwLock<providers::PluginRegistry>>;
+type FrecencyState = Option<Arc<frecency::FrecencyStore>>;
 
 fn socket_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -85,7 +87,17 @@ fn split_exec(exec: &str) -> Vec<String> {
 }
 
 #[tauri::command]
-fn launch_app(app: tauri::AppHandle, exec: String) {
+fn launch_app(
+    app: tauri::AppHandle,
+    exec: String,
+    id: Option<String>,
+    kind: Option<String>,
+    frecency: tauri::State<'_, FrecencyState>,
+) {
+    if let (Some(id), Some(kind), Some(store)) = (&id, &kind, frecency.as_ref()) {
+        store.record_launch(id, kind);
+    }
+
     let args: Vec<String> = split_exec(&exec)
         .into_iter()
         .filter(|s| !(s.len() == 2 && s.starts_with('%')))
@@ -353,14 +365,35 @@ pub fn run() {
 
     let cfg = config::Config::load();
     let search_cfg = cfg.search.clone();
+    let frecency_cfg = cfg.frecency;
     let files_cfg = cfg.files;
     let recent_cfg = cfg.recent;
     let providers_cfg = cfg.providers;
     let pdf_render_width = cfg.pdf.render_width;
     let max_results = cfg.general.max_results;
+    let log_scores = cfg.debug.log_scores;
 
     let registry: Registry = Arc::new(RwLock::new(providers::PluginRegistry::new(max_results)));
     let bg_registry = Arc::clone(&registry);
+
+    let frecency_state: FrecencyState = if frecency_cfg.enabled {
+        match frecency::FrecencyStore::open(frecency_cfg.half_life_days) {
+            Ok(store) => {
+                let arc = Arc::new(store);
+                registry
+                    .write()
+                    .unwrap()
+                    .set_frecency(Arc::clone(&arc), frecency_cfg.weight);
+                Some(arc)
+            }
+            Err(e) => {
+                eprintln!("[frecency] failed to open DB: {e} — frecency disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let timer_state: TimerState = providers::timer::TimerState::new();
     let watcher_timer_state = Arc::clone(&timer_state);
@@ -370,6 +403,7 @@ pub fn run() {
         .manage(registry)
         .manage(start_pdf_worker(pdf_render_width))
         .manage(timer_state)
+        .manage(frecency_state)
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
@@ -395,16 +429,16 @@ pub fn run() {
             std::thread::spawn(move || {
                 if providers_cfg.files {
                     let file_provider =
-                        providers::files::FileProvider::new(&files_cfg, &search_cfg);
+                        providers::files::FileProvider::new(&files_cfg, &search_cfg, log_scores);
                     bg_registry.write().unwrap().register(file_provider);
                 }
                 if providers_cfg.recent {
                     let recent_provider =
-                        providers::recent::RecentProvider::new(&recent_cfg, &search_cfg);
+                        providers::recent::RecentProvider::new(&recent_cfg, &search_cfg, log_scores);
                     bg_registry.write().unwrap().register(recent_provider);
                 }
                 if providers_cfg.apps {
-                    let app_provider = providers::apps::AppProvider::new(&search_cfg);
+                    let app_provider = providers::apps::AppProvider::new(&search_cfg, log_scores);
                     bg_registry.write().unwrap().register(app_provider);
                 }
                 APPS_READY.store(true, Ordering::Release);

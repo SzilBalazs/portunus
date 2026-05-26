@@ -32,13 +32,15 @@ struct ParsedEntry {
 pub struct AppProvider {
     apps: Vec<DesktopEntry>,
     min_score: u32,
+    log_scores: bool,
 }
 
 impl AppProvider {
-    pub fn new(search_cfg: &SearchConfig) -> Self {
+    pub fn new(search_cfg: &SearchConfig, log_scores: bool) -> Self {
         Self {
             apps: load_apps(),
             min_score: search_cfg.min_score_app,
+            log_scores,
         }
     }
 }
@@ -312,7 +314,11 @@ impl Provider for AppProvider {
             .iter()
             .filter_map(|app| {
                 let score = pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher)?;
-                if score < self.min_score && query.chars().count() >= 4 {
+                let threshold = super::effective_min_score(self.min_score, query.chars().count());
+                if self.log_scores {
+                    eprintln!("[apps] {:?} → {:?}  score={} threshold={}", query, app.name, score, threshold);
+                }
+                if score < threshold {
                     return None;
                 }
                 Some(SearchResult {

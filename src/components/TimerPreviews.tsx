@@ -35,7 +35,7 @@ export function TimerPreview({ result, onStop }: TimerPreviewProps) {
   const progress = durationSecs > 0 ? Math.min(1, elapsed / durationSecs) : 1;
   const isDone = remaining <= 0;
 
-  const label = result.title.replace(/^Timer — /, "");
+  const label = result.title;
   const startedStr =
     elapsedInt < 60 ? `${elapsedInt}s ago`
     : elapsedInt < 3600 ? `${Math.floor(elapsedInt / 60)}m ${elapsedInt % 60}s ago`
@@ -74,17 +74,21 @@ interface TimerCreatePreviewProps {
 
 export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps) {
   const durationSecs = result.file_size;
-  const label = result.title.replace(/^Set timer for /, "");
   const hasAction = !!result.exec;
+  const hasLabel = hasAction && result.subtitle !== "↵ to start";
 
   return (
     <div className="timer-preview">
       <div className="timer-preview-hero">
         <div className="timer-preview-icon-wrap"><ClockIconLg /></div>
         <div>
-          <div className="timer-preview-name">{hasAction ? label : "Set a timer"}</div>
+          <div className="timer-preview-name">
+            {hasAction ? result.title : "Start a timer"}
+          </div>
           <div className="timer-preview-hint">
-            {hasAction ? "Ready to start" : "e.g.  30s · 5m · 1h30m"}
+            {hasAction
+              ? (hasLabel ? result.subtitle : "Ready to start")
+              : "30s · 5m · 1h30m"}
           </div>
         </div>
       </div>
@@ -98,22 +102,6 @@ export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps)
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── new timer prompt ──────────────────────────────────────────────────────────
-
-export function TimerNewPreview() {
-  return (
-    <div className="timer-preview">
-      <div className="timer-preview-hero">
-        <div className="timer-preview-icon-wrap"><ClockIconLg /></div>
-        <div>
-          <div className="timer-preview-name">Create a timer</div>
-          <div className="timer-preview-hint">Type  set timer 5m  to get started</div>
-        </div>
-      </div>
     </div>
   );
 }

@@ -8,7 +8,7 @@ interface Props {
   selectedIndex: number;
   query: string;
   onSelect: (index: number) => void;
-  onLaunch: (exec?: string) => void;
+  onLaunch: (result?: SearchResult) => void;
 }
 
 export default function ResultsList({ results, selectedIndex, query, onSelect, onLaunch }: Props) {
@@ -46,7 +46,7 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
                 onSelect(i);
                 // Clicking a running timer selects it (shows preview) but doesn't stop it.
                 if (result.kind !== "timer-item") {
-                  onLaunch(result.exec);
+                  onLaunch(result);
                 }
               }}
             >

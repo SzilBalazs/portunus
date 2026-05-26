@@ -22,14 +22,16 @@ pub struct RecentProvider {
     entries: Vec<RecentEntry>,
     min_score: u32,
     recency_weight: f32,
+    log_scores: bool,
 }
 
 impl RecentProvider {
-    pub fn new(recent_cfg: &RecentConfig, search_cfg: &SearchConfig) -> Self {
+    pub fn new(recent_cfg: &RecentConfig, search_cfg: &SearchConfig, log_scores: bool) -> Self {
         Self {
             entries: load_entries(recent_cfg.max_entries),
             min_score: search_cfg.min_score_file,
             recency_weight: search_cfg.recency_weight,
+            log_scores,
         }
     }
 }
@@ -57,7 +59,11 @@ impl Provider for RecentProvider {
             .filter_map(|entry| {
                 let score =
                     pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
-                if score < self.min_score {
+                let threshold = super::effective_min_score(self.min_score, query.chars().count());
+                if self.log_scores {
+                    eprintln!("[recent] {:?} → {:?}  score={} threshold={}", query, entry.name, score, threshold);
+                }
+                if score < threshold {
                     return None;
                 }
                 let base = if entry.is_dir {

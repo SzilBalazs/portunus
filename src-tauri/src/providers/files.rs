@@ -21,10 +21,11 @@ pub struct FileProvider {
     entries: Vec<FileEntry>,
     min_score: u32,
     recency_weight: f32,
+    log_scores: bool,
 }
 
 impl FileProvider {
-    pub fn new(files_cfg: &FilesConfig, search_cfg: &SearchConfig) -> Self {
+    pub fn new(files_cfg: &FilesConfig, search_cfg: &SearchConfig, log_scores: bool) -> Self {
         let roots: Vec<(PathBuf, usize)> = files_cfg
             .dirs
             .iter()
@@ -88,6 +89,7 @@ impl FileProvider {
             entries,
             min_score: search_cfg.min_score_file,
             recency_weight: search_cfg.recency_weight,
+            log_scores,
         }
     }
 }
@@ -115,7 +117,11 @@ impl Provider for FileProvider {
             .filter_map(|entry| {
                 let score =
                     pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
-                if score < self.min_score {
+                let threshold = super::effective_min_score(self.min_score, query.chars().count());
+                if self.log_scores {
+                    eprintln!("[files] {:?} → {:?}  score={} threshold={}", query, entry.name, score, threshold);
+                }
+                if score < threshold {
                     return None;
                 }
                 let base = if entry.is_dir {

@@ -136,8 +136,8 @@ fn fmt_remaining(secs: i64) -> String {
 fn hint_result() -> SearchResult {
     SearchResult {
         id: "timer:hint".to_string(),
-        title: "Set timer…".to_string(),
-        subtitle: Some("e.g.  30s · 5m · 1h30m".to_string()),
+        title: "Start a timer…".to_string(),
+        subtitle: Some("30s · 5m · 1h30m".to_string()),
         kind: "timer-create".to_string(),
         score: SCORE_TIMER,
         exec: None,
@@ -156,70 +156,73 @@ impl Provider for TimerProvider {
     fn search(&self, query: &str) -> Vec<SearchResult> {
         let q = query.trim().to_lowercase();
 
-        // "set timer" or "set timer <duration>"
-        if q == "set timer" || q.starts_with("set timer ") {
-            let duration_str = q.strip_prefix("set timer ").unwrap_or("").trim();
-            if duration_str.is_empty() {
-                return vec![hint_result()];
-            }
-            return match parse_duration(duration_str) {
-                Some((secs, label)) => vec![SearchResult {
-                    id: "timer:create".to_string(),
-                    title: format!("Set timer for {}", label),
-                    subtitle: Some("↵ to start".to_string()),
-                    kind: "timer-create".to_string(),
-                    score: SCORE_TIMER,
-                    exec: Some(format!("timer:create:{}:{}", secs, label)),
-                    icon_path: None,
-                    file_size: Some(secs),
-                    created: None,
-                    modified: None,
-                }],
-                None => vec![hint_result()],
-            };
+        // Trigger on "ti".."timer" prefix OR "timer <something>"
+        let is_prefix = q.len() >= 2 && "timer".starts_with(q.as_str());
+        let is_create = q.starts_with("timer ");
+
+        if !is_prefix && !is_create {
+            return vec![];
         }
 
-        // "ti" .. "timers" prefix — show running timers list
-        if q.len() >= 2 && "timers".starts_with(q.as_str()) {
-            let entries = self.state.entries.lock().unwrap().clone();
-            let now = unix_now();
+        let mut results = Vec::new();
 
-            let mut results: Vec<SearchResult> = entries
-                .iter()
-                .map(|e| {
-                    let elapsed = now.saturating_sub(e.started_at) as i64;
-                    let remaining = (e.duration_secs as i64) - elapsed;
-                    SearchResult {
-                        id: format!("timer:item:{}", e.id),
-                        title: format!("Timer — {}", e.label),
-                        subtitle: Some(format!("{} remaining", fmt_remaining(remaining))),
-                        kind: "timer-item".to_string(),
-                        score: SCORE_TIMER + e.id as f32,
-                        exec: Some(format!("timer:stop:{}", e.id)),
+        if is_create {
+            // Preserve original case for the user's label.
+            let rest = query.trim().get(6..).unwrap_or("").trim();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let dur_tok = parts.next().unwrap_or("").trim();
+            let label_str = parts.next().unwrap_or("").trim();
+
+            match parse_duration(dur_tok) {
+                Some((secs, dur_label)) => {
+                    let label = if label_str.is_empty() {
+                        dur_label.clone()
+                    } else {
+                        label_str.to_string()
+                    };
+                    results.push(SearchResult {
+                        id: "timer:create".to_string(),
+                        title: format!("Start {} timer", dur_label),
+                        subtitle: if label_str.is_empty() {
+                            Some("↵ to start".to_string())
+                        } else {
+                            Some(label_str.to_string())
+                        },
+                        kind: "timer-create".to_string(),
+                        score: SCORE_TIMER + 1.0,
+                        exec: Some(format!("timer:create:{}:{}", secs, label)),
                         icon_path: None,
-                        file_size: Some(e.duration_secs),
-                        created: Some(e.started_at),
+                        file_size: Some(secs),
+                        created: None,
                         modified: None,
-                    }
-                })
-                .collect();
+                    });
+                }
+                None => results.push(hint_result()),
+            }
+        } else {
+            results.push(hint_result());
+        }
 
+        // Append all running timers below the create row.
+        let entries = self.state.entries.lock().unwrap().clone();
+        let now = unix_now();
+        for e in &entries {
+            let elapsed = now.saturating_sub(e.started_at) as i64;
+            let remaining = (e.duration_secs as i64) - elapsed;
             results.push(SearchResult {
-                id: "timer:new".to_string(),
-                title: "New timer".to_string(),
-                subtitle: Some("Type  set timer 5m  to create".to_string()),
-                kind: "timer-new".to_string(),
-                score: SCORE_TIMER - 500.0,
-                exec: Some("timer:new".to_string()),
+                id: format!("timer:item:{}", e.id),
+                title: e.label.clone(),
+                subtitle: Some(format!("{} remaining", fmt_remaining(remaining))),
+                kind: "timer-item".to_string(),
+                score: SCORE_TIMER - e.id as f32,
+                exec: Some(format!("timer:stop:{}", e.id)),
                 icon_path: None,
-                file_size: None,
-                created: None,
+                file_size: Some(e.duration_secs),
+                created: Some(e.started_at),
                 modified: None,
             });
-
-            return results;
         }
 
-        vec![]
+        results
     }
 }

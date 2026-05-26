@@ -2,7 +2,7 @@ import { SearchResult } from "../types";
 import AppPreview from "./AppPreview";
 import FilePreview from "./FilePreview";
 import ClipboardPreview from "./ClipboardPreview";
-import { TimerPreview, TimerCreatePreview, TimerNewPreview, TimerExpiredPreview } from "./TimerPreviews";
+import { TimerPreview, TimerCreatePreview, TimerExpiredPreview } from "./TimerPreviews";
 
 interface Props {
   result: SearchResult | null;
@@ -22,9 +22,6 @@ export default function PreviewPanel({ result, onLaunch, onStopTimer }: Props) {
   }
   if (result?.kind === "timer-create") {
     return <TimerCreatePreview result={result} onStart={onLaunch} />;
-  }
-  if (result?.kind === "timer-new") {
-    return <TimerNewPreview />;
   }
   if (result?.kind === "timer-expired") {
     return <TimerExpiredPreview label={result.title} onDismiss={onLaunch} />;

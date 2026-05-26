@@ -112,7 +112,8 @@ export default function App() {
     if (q.trim()) invoke<SearchResult[]>("search", { query: q }).then(setResults);
   };
 
-  const launch = (exec?: string) => {
+  const launch = (result?: SearchResult) => {
+    const exec = result?.exec;
     if (!exec) return;
 
     if (exec.startsWith("clipboard:copy:")) {
@@ -126,17 +127,13 @@ export default function App() {
       const rest = exec.slice("timer:create:".length);
       const colon = rest.indexOf(":");
       invoke("create_timer", { durationSecs: parseInt(rest.slice(0, colon)), label: rest.slice(colon + 1) });
-      setQuery("timers");
+      setQuery("timer");
       setResults([]);
       return;
     }
     if (exec.startsWith("timer:stop:")) {
       invoke("stop_timer", { id: parseInt(exec.slice("timer:stop:".length)) });
       requery();
-      return;
-    }
-    if (exec === "timer:new") {
-      setQuery("set timer ");
       return;
     }
     if (exec.startsWith("timer:dismiss:")) {
@@ -147,7 +144,7 @@ export default function App() {
 
     setQuery("");
     setResults([]);
-    invoke("launch_app", { exec });
+    invoke("launch_app", { exec, id: result?.id, kind: result?.kind });
   };
 
   useEffect(() => {
@@ -161,12 +158,12 @@ export default function App() {
       } else if (e.key === "Enter") {
         const sel = displayResults[selectedIndex];
         // Don't stop a running timer accidentally with Enter — require Del for that.
-        if (sel?.kind !== "timer-item") launch(sel?.exec);
+        if (sel?.kind !== "timer-item") launch(sel);
       } else if (e.key === "Delete") {
         const sel = displayResults[selectedIndex];
         if (sel?.kind === "timer-item" || sel?.kind === "timer-expired") {
           e.preventDefault();
-          launch(sel.exec);
+          launch(sel);
         }
       } else if (e.ctrlKey && !e.altKey && e.key === "c") {
         const sel = displayResults[selectedIndex];
@@ -184,7 +181,7 @@ export default function App() {
         const target = displayResults[idx];
         if (!target) return;
         setSelectedIndex(idx);
-        if (target.kind !== "timer-item") launch(target.exec);
+        if (target.kind !== "timer-item") launch(target);
       } else if (e.key === "Escape") {
         e.preventDefault();
         setQuery("");
@@ -201,7 +198,7 @@ export default function App() {
 
   const stopSelectedTimer = () => {
     const sel = displayResults[selectedIndex];
-    if (sel?.kind === "timer-item" && sel.exec) launch(sel.exec);
+    if (sel?.kind === "timer-item" && sel.exec) launch(sel);
   };
 
   return (
@@ -244,7 +241,7 @@ export default function App() {
           <div className="preview-col">
             <PreviewPanel
               result={selected}
-              onLaunch={() => launch(selected?.exec)}
+              onLaunch={() => launch(selected ?? undefined)}
               onStopTimer={stopSelectedTimer}
             />
           </div>
