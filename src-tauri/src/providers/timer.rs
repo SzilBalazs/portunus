@@ -188,7 +188,7 @@ fn hint_result() -> SearchResult {
         id: "timer:hint".to_string(),
         title: "Start a timer…".to_string(),
         subtitle: Some("30s · 5m · 1h30m".to_string()),
-        kind: "timer-create".to_string(),
+        kind: "timer-hint".to_string(),
         score: SCORE_TIMER,
         exec: None,
         icon_path: None,

@@ -73,8 +73,55 @@ html, body, #root {
   color: var(--fg-mute);
 }
 
-.search-input {
+.search-input-area {
   flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.input-mirror {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+}
+
+.search-ghost {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--fg-dim);
+  opacity: 0.4;
+  pointer-events: none;
+  white-space: pre;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.search-hint-chip {
+  font: 500 12px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-left: 10px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.search-spacer { flex: 1; }
+
+.search-input {
   background: transparent;
   border: none;
   outline: none;
@@ -83,6 +130,7 @@ html, body, #root {
   color: var(--fg);
   caret-color: var(--accent);
   letter-spacing: -0.01em;
+  min-width: 2px;
 }
 
 .search-input::placeholder {
@@ -96,6 +144,7 @@ html, body, #root {
   color: var(--accent);
   letter-spacing: -0.01em;
   opacity: 0.85;
+  margin-left: 8px;
 }
 
 /* ---------- body ---------- */

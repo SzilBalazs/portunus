@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { ClockIcon, PlusIcon } from "../icons";
+import { ClockIcon, PlusIcon, BookIcon } from "../icons";
 
 interface Props {
   icon_path?: string;
@@ -64,8 +64,12 @@ export default function ResultIcon({ icon_path, title, kind }: Props) {
     );
   }
 
-  if (kind === "timer-item" || kind === "timer-create" || kind === "timer-expired") {
+  if (kind === "timer-item" || kind === "timer-create" || kind === "timer-expired" || kind === "timer-hint") {
     return <div className="result-icon"><ClockIcon /></div>;
+  }
+
+  if (kind === "dict" || kind === "dict-hint") {
+    return <div className="result-icon"><BookIcon /></div>;
   }
 
   if (kind === "timer-new") {

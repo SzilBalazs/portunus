@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useLayoutEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SearchResult, ExpiredTimer } from "./types";
@@ -10,6 +10,8 @@ import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers
 import "./providers";
 import "./App.css";
 
+const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint']);
+
 export default function App() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -17,9 +19,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const mirrorRef = useRef<HTMLSpanElement>(null);
+  const [inputWidth, setInputWidth] = useState(0);
   const queryRef = useRef(query);
 
   useEffect(() => { queryRef.current = query; }, [query]);
+
+  useLayoutEffect(() => {
+    setInputWidth(mirrorRef.current?.offsetWidth ?? 0);
+  }, [query]);
 
   useEffect(() => {
     let done = false;
@@ -132,11 +140,12 @@ export default function App() {
         setSelectedIndex(i => Math.max(i - 1, 0));
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const idx = parseInt(e.key) - 1;
-        const target = displayResults[idx];
+        const target = launchableResults[parseInt(e.key) - 1];
         if (!target) return;
-        setSelectedIndex(idx);
+        setSelectedIndex(displayResults.indexOf(target));
         if (target.kind !== "timer-item") launch(target);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
       } else if (e.key === "Escape") {
         e.preventDefault();
         setQuery("");
@@ -156,6 +165,32 @@ export default function App() {
   const selected = displayResults[selectedIndex] ?? null;
   const calcResult = results.find(r => r.kind === "calc");
 
+  const launchableResults = useMemo(
+    () => displayResults.filter(r => !NON_INDEXABLE_KINDS.has(r.kind)),
+    [displayResults]
+  );
+
+  const ghostSuffix = useMemo((): string | null => {
+    const q = query;
+    if (q.length < 2 || q.includes(' ')) return null;
+    if ('timer'.startsWith(q) && q.length < 5) return 'timer'.slice(q.length);
+    if ('define'.startsWith(q) && q.length < 6) return 'define'.slice(q.length);
+    if ('dict'.startsWith(q) && q.length < 4 && !'define'.startsWith(q)) return 'dict'.slice(q.length);
+    if ('clipboard'.startsWith(q) && q.length >= 4 && q.length < 9) return 'clipboard'.slice(q.length);
+    return null;
+  }, [query]);
+
+  const hintChip = useMemo((): string | null => {
+    const q = query;
+    if (q === 'timer' || q === 'timer ') return '<duration> [label]';
+    if (q === 'define' || q === 'define ') return '<word>';
+    if (q === 'dict' || q === 'dict ') return '<word>';
+    if (q === 'clipboard' || q === 'clipboard ') return '<search>';
+    return null;
+  }, [query]);
+
+  const contentSized = ghostSuffix !== null || hintChip !== null || calcResult != null;
+
   const stopSelectedTimer = () => {
     const sel = displayResults[selectedIndex];
     if (sel?.kind === "timer-item" && sel.exec) launch(sel);
@@ -163,7 +198,10 @@ export default function App() {
 
   return (
     <div className="launcher">
-      <div className="card">
+      <div className="card" onMouseDown={e => {
+        const t = e.target as HTMLElement;
+        if (t !== inputRef.current && !t.closest('pre, code')) e.preventDefault();
+      }}>
         <div className="search-bar">
           <svg
             className="search-icon"
@@ -177,17 +215,24 @@ export default function App() {
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
           </svg>
-          <input
-            ref={inputRef}
-            className="search-input"
-            type="text"
-            placeholder={loading ? "Loading…" : "Search…"}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            autoFocus
-            spellCheck={false}
-          />
-          {calcResult && <div className="calc-inline">= {calcResult.title}</div>}
+          <div className="search-input-area">
+            <span ref={mirrorRef} className="input-mirror" aria-hidden="true">{query}</span>
+            <input
+              ref={inputRef}
+              className="search-input"
+              type="text"
+              placeholder={loading ? "Loading…" : "Search…"}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              autoFocus
+              spellCheck={false}
+              style={contentSized ? { width: inputWidth + 4 } : { flex: 1 }}
+            />
+            {ghostSuffix && <span className="search-ghost">{ghostSuffix}</span>}
+            {hintChip && <span className="search-hint-chip">{hintChip}</span>}
+            {calcResult && <div className="calc-inline">= {calcResult.title}</div>}
+            <div className="search-spacer" />
+          </div>
         </div>
 
         <div className="body">
@@ -197,6 +242,7 @@ export default function App() {
             query={query}
             onSelect={setSelectedIndex}
             onLaunch={launch}
+            launchableResults={launchableResults}
           />
           <div className="preview-col">
             <PreviewPanel

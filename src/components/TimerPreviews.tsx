@@ -2,6 +2,49 @@ import { useState, useEffect } from "react";
 import { SearchResult } from "../types";
 import { ClockIconLg } from "../icons";
 
+const TIMER_HINT_STYLES = `
+.timer-hint {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+.timer-hint-hero { display: flex; align-items: center; gap: 14px; }
+.timer-hint-name { font-size: 15px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
+.timer-hint-desc { margin-top: 4px; font-size: 12px; color: var(--fg-mute); line-height: 1.55; }
+.timer-hint-divider { height: 1px; background: var(--line-soft); }
+.timer-hint-prose { font-size: 12px; color: var(--fg-mute); line-height: 1.7; }
+.timer-hint-token {
+  font: 500 11.5px/1 "JetBrains Mono","Fira Code",monospace;
+  color: var(--accent); background: var(--accent-soft);
+  padding: 2px 5px; border-radius: 3px;
+}
+.timer-hint-example {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 9px 12px; background: #15120f;
+  border-radius: var(--radius-sm); border-left: 2px solid var(--accent);
+}
+.timer-hint-ex-cmd { font: 600 13px/1 "JetBrains Mono","Fira Code",monospace; color: var(--accent); }
+.timer-hint-ex-word { font: 400 13px/1 "JetBrains Mono","Fira Code",monospace; color: var(--fg-mute); }
+.timer-hint-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.timer-hint-chip-tag {
+  font: 500 9px/1 "JetBrains Mono","Fira Code",monospace;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid rgba(214,163,112,0.2); padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+}
+`;
+
+if (typeof document !== 'undefined') {
+  const id = 'timer-hint-styles';
+  if (!document.getElementById(id)) {
+    const el = document.createElement('style');
+    el.id = id;
+    el.textContent = TIMER_HINT_STYLES;
+    document.head.appendChild(el);
+  }
+}
+
 function TimerDisplay({ secs }: { secs: number }) {
   const s = Math.max(0, Math.floor(secs));
   const h = Math.floor(s / 3600);
@@ -102,6 +145,41 @@ export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps)
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── timer hint (discovery panel) ─────────────────────────────────────────────
+
+export function TimerHintPreview() {
+  return (
+    <div className="timer-hint">
+      <div className="timer-hint-hero">
+        <div className="file-preview-icon-wrap">
+          <ClockIconLg />
+        </div>
+        <div>
+          <div className="timer-hint-name">Countdown Timer</div>
+          <div className="timer-hint-desc">
+            Start a timer with any duration. Get a chime when it finishes.
+          </div>
+        </div>
+      </div>
+      <div className="timer-hint-divider" />
+      <div className="timer-hint-prose">
+        Type{' '}
+        <span className="timer-hint-token">timer</span>
+        {' '}followed by a duration:
+      </div>
+      <div className="timer-hint-example">
+        <span className="timer-hint-ex-cmd">timer</span>
+        <span className="timer-hint-ex-word">30m workout</span>
+      </div>
+      <div className="timer-hint-chips">
+        {['30s', '5m', '1h', '1h30m'].map(chip => (
+          <span key={chip} className="timer-hint-chip-tag">{chip}</span>
+        ))}
+      </div>
     </div>
   );
 }

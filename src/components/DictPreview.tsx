@@ -282,7 +282,7 @@ if (typeof document !== 'undefined') {
   }
 }
 
-const dictCache = new Map<string, DictResult>();
+export const dictCache = new Map<string, DictResult>();
 
 function posStyle(pos: string): { bg: string; fg: string } {
   return POS_PALETTE[pos] ?? { bg: 'var(--accent-soft)', fg: 'var(--accent)' };

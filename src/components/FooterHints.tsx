@@ -31,6 +31,14 @@ export default function FooterHints({ selected }: Props) {
       </div>
     );
   }
+  if (selected?.kind === "timer-hint") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>|</kbd> start typing</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
   if (selected?.kind === "timer-expired") {
     return (
       <div className="hints">
@@ -55,7 +63,23 @@ export default function FooterHints({ selected }: Props) {
       <div className="hints">
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
         <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy value</span>
-        <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
+  if (selected?.kind === "dict-hint") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>|</kbd> start typing</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
+  if (selected?.kind === "dict") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy definition</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -66,6 +90,16 @@ export default function FooterHints({ selected }: Props) {
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
         <span className="hint"><kbd>↵</kbd> open</span>
         <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
+  if (selected?.kind === "app") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span className="hint"><kbd>↵</kbd> launch</span>
+        <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );

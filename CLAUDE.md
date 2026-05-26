@@ -20,7 +20,7 @@ macOS Spotlight-style app launcher for Linux (Hyprland).
 ```bash
 bun tauri dev       # dev mode (hot reload)
 bun tauri build     # production build (requires linuxdeploy for AppImage)
-cargo check         # type-check Rust only
+cargo check --manifest-path src-tauri/Cargo.toml  # type-check Rust only (must target src-tauri)
 bun x tsc --noEmit  # type-check TypeScript only
 ```
 

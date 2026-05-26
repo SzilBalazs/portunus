@@ -9,9 +9,10 @@ interface Props {
   query: string;
   onSelect: (index: number) => void;
   onLaunch: (result?: SearchResult) => void;
+  launchableResults: SearchResult[];
 }
 
-export default function ResultsList({ results, selectedIndex, query, onSelect, onLaunch }: Props) {
+export default function ResultsList({ results, selectedIndex, query, onSelect, onLaunch, launchableResults }: Props) {
   const selectedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -62,8 +63,8 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
                   ? formatBytes(result.file_size)
                   : ""}
               </div>
-              <div className="result-shortcut">
-                {i < 9 ? i + 1 : ""}
+              <div className="result-shortcut" style={launchableResults.indexOf(result) < 0 || launchableResults.indexOf(result) >= 9 ? { visibility: 'hidden' } : undefined}>
+                {launchableResults.indexOf(result) >= 0 && launchableResults.indexOf(result) < 9 ? launchableResults.indexOf(result) + 1 : ""}
               </div>
             </div>
           </Fragment>

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { TimerPreview, TimerCreatePreview, TimerExpiredPreview } from '../components/TimerPreviews';
+import { TimerPreview, TimerCreatePreview, TimerExpiredPreview, TimerHintPreview } from '../components/TimerPreviews';
 import { registerProvider, dispatchLaunch, type PreviewProps } from './registry';
 
 function TimerPreviewDispatcher({ result, onLaunch, onStopTimer }: PreviewProps) {
@@ -12,17 +12,20 @@ function TimerPreviewDispatcher({ result, onLaunch, onStopTimer }: PreviewProps)
   if (result.kind === 'timer-expired') {
     return <TimerExpiredPreview label={result.title} onDismiss={onLaunch} />;
   }
+  if (result.kind === 'timer-hint') {
+    return <TimerHintPreview />;
+  }
   return null;
 }
 
 registerProvider({
-  kinds: ['timer-item', 'timer-create', 'timer-expired'],
+  kinds: ['timer-item', 'timer-create', 'timer-expired', 'timer-hint'],
   Preview: TimerPreviewDispatcher,
 
   handleLaunch: (result, ctx) => {
     const exec = result.exec;
     if (!exec) {
-      if (result.kind === 'timer-create') {
+      if (result.kind === 'timer-create' || result.kind === 'timer-hint') {
         ctx.setQuery('timer ');
         return true;
       }
