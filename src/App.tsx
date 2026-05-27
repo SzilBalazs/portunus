@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { SearchResult, ExpiredTimer } from "./types";
 import { playTimerChime, audioCtxWarmup } from "./utils";
 import ResultsList from "./components/ResultsList";
@@ -18,6 +19,7 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
+  const [version, setVersion] = useState("");
   const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
@@ -25,6 +27,7 @@ export default function App() {
   const queryRef = useRef(query);
 
   useEffect(() => { queryRef.current = query; }, [query]);
+  useEffect(() => { getVersion().then(setVersion); }, []);
 
   useLayoutEffect(() => {
     setInputWidth(mirrorRef.current?.offsetWidth ?? 0);
@@ -314,7 +317,7 @@ export default function App() {
 
         <div className="footer">
           <FooterHints selected={selected} isContentSearch={isContentSearch} />
-          <div className="brand">Portunus</div>
+          <div className="brand">Portunus{version && <span className="brand-version">v{version}</span>}</div>
         </div>
       </div>
     </div>

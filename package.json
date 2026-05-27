@@ -1,5 +1,6 @@
 {
   "name": "portunus",
+  "description": "Application launcher and power-user search for Wayland",
   "private": true,
   "version": "0.1.0",
   "type": "module",

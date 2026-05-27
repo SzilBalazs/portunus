@@ -401,6 +401,8 @@ html, body, #root {
   font: 500 11px/1 "JetBrains Mono", "Fira Code", monospace;
 }
 
+.brand-version { margin-left: 6px; opacity: 0.45; font-size: 10px; }
+
 .hints { display: flex; gap: 16px; align-items: center; }
 
 .hint { display: inline-flex; align-items: center; gap: 6px; }

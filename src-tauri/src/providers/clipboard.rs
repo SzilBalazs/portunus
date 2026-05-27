@@ -73,6 +73,25 @@ fn list_entries() -> Vec<ClipEntry> {
 
 pub struct ClipboardProvider;
 
+impl ClipboardProvider {
+    pub fn is_available() -> bool {
+        fn in_path(bin: &str) -> bool {
+            std::env::var("PATH").ok().is_some_and(|path| {
+                path.split(':')
+                    .any(|dir| std::path::Path::new(dir).join(bin).is_file())
+            })
+        }
+        let cliphist = in_path("cliphist");
+        let wl_copy = in_path("wl-copy");
+        if !cliphist {
+            eprintln!("[portunus] clipboard: cliphist not found — clipboard provider disabled");
+        } else if !wl_copy {
+            eprintln!("[portunus] clipboard: wl-copy not found — clipboard provider disabled");
+        }
+        cliphist && wl_copy
+    }
+}
+
 impl Provider for ClipboardProvider {
     fn id(&self) -> &'static str { "clipboard" }
 

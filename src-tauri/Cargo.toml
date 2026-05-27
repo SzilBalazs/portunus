@@ -1,11 +1,13 @@
 [package]
 name = "portunus"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+license = "Apache-2.0"
+description = "Application launcher and power-user search for Wayland"
+authors = ["SzilBalazs"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+ocr = ["dep:leptess"]
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -31,6 +33,5 @@ roxmltree = "0.20"
 toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rayon = "1"
-leptess = "0.14"
+leptess = { version = "0.14", optional = true }
 notify-debouncer-full = "0.3"
-

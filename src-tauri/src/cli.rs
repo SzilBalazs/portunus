@@ -4,18 +4,24 @@ use crate::{config, content_index, ipc};
 
 /// Handle CLI flags. Returns true if a flag was handled and the process should exit.
 pub fn handle_cli_args() -> bool {
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("portunus {}", env!("CARGO_PKG_VERSION"));
+        return true;
+    }
+
     if std::env::args().any(|a| a == "--help" || a == "-h") {
-        println!("portunus — application launcher and poweruser search for Linux
+        println!("portunus {} — application launcher and poweruser search for Linux
 
 USAGE:
   portunus [FLAG]
 
 FLAGS:
-  --show            Show the launcher window (signals running instance)
-  --clipboard       Show the launcher pre-filled with \"clipboard\"
-  --reindex         Rebuild the content search index
-  --reload-config   Reload config from file without restarting
-  --help, -h        Show this help message");
+  --show              Show the launcher window (signals running instance)
+  --clipboard         Show the launcher pre-filled with \"clipboard\"
+  --reindex           Rebuild the content search index
+  --reload-config     Reload config from file without restarting
+  --version, -V       Print version and exit
+  --help, -h          Show this help message", env!("CARGO_PKG_VERSION"));
         return true;
     }
 

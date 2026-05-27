@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,6 +9,10 @@ use rusqlite::{params, Connection};
 
 use crate::config::ContentConfig;
 
+#[cfg(feature = "ocr")]
+use std::cell::RefCell;
+
+#[cfg(feature = "ocr")]
 static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 // ── database ──────────────────────────────────────────────────────────────────
@@ -215,10 +218,12 @@ fn pdftotext(path: &str) -> Result<String, String> {
     String::from_utf8(out.stdout).map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "ocr")]
 thread_local! {
     static LEPTESS: RefCell<Option<leptess::LepTess>> = RefCell::new(None);
 }
 
+#[cfg(feature = "ocr")]
 fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
     LEPTESS.with(|cell| {
         let mut api_opt = cell.borrow_mut();
@@ -233,62 +238,70 @@ fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
 
 fn extract_pdf(path: &str, ocr_fallback: bool, lang: &str) -> Result<String, String> {
     let text = pdftotext(path)?;
-    if text.trim().len() >= 50 || !ocr_fallback {
+    #[cfg(not(feature = "ocr"))]
+    {
+        let _ = (ocr_fallback, lang);
         return Ok(text);
     }
-
-    // No meaningful text layer — render pages to images via pdftoppm and OCR each
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "portunus_pdftoppm_{}_{}",
-        std::process::id(),
-        TMP_COUNTER.fetch_add(1, Ordering::Relaxed),
-    ));
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let prefix = tmp_dir.join("page");
-
-    let result = std::process::Command::new("pdftoppm")
-        .args(["-tiff", "-r", "150", path, prefix.to_str().unwrap_or("page")])
-        .output();
-
-    let ocr_text = match result {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::remove_dir_all(&tmp_dir).ok();
+    #[cfg(feature = "ocr")]
+    {
+        if text.trim().len() >= 50 || !ocr_fallback {
             return Ok(text);
         }
-        Err(e) => {
-            std::fs::remove_dir_all(&tmp_dir).ok();
-            return Err(e.to_string());
-        }
-        Ok(out) if !out.status.success() => {
-            std::fs::remove_dir_all(&tmp_dir).ok();
-            return Ok(text);
-        }
-        Ok(_) => {
-            let mut combined = String::new();
-            let mut page_files: Vec<_> = std::fs::read_dir(&tmp_dir)
-                .ok()
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path().extension().and_then(|x| x.to_str()) == Some("tif")
-                })
-                .collect();
-            page_files.sort_by_key(|e| e.file_name());
-            for entry in page_files {
-                if let Some(p) = entry.path().to_str() {
-                    match ocr_file(p, lang) {
-                        Ok(t) => combined.push_str(&t),
-                        Err(e) => eprintln!("[content] ocr page failed {p}: {e}"),
+
+        // No meaningful text layer — render pages to images via pdftoppm and OCR each
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "portunus_pdftoppm_{}_{}",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+        let prefix = tmp_dir.join("page");
+
+        let result = std::process::Command::new("pdftoppm")
+            .args(["-tiff", "-r", "150", path, prefix.to_str().unwrap_or("page")])
+            .output();
+
+        let ocr_text = match result {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::remove_dir_all(&tmp_dir).ok();
+                return Ok(text);
+            }
+            Err(e) => {
+                std::fs::remove_dir_all(&tmp_dir).ok();
+                return Err(e.to_string());
+            }
+            Ok(out) if !out.status.success() => {
+                std::fs::remove_dir_all(&tmp_dir).ok();
+                return Ok(text);
+            }
+            Ok(_) => {
+                let mut combined = String::new();
+                let mut page_files: Vec<_> = std::fs::read_dir(&tmp_dir)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path().extension().and_then(|x| x.to_str()) == Some("tif")
+                    })
+                    .collect();
+                page_files.sort_by_key(|e| e.file_name());
+                for entry in page_files {
+                    if let Some(p) = entry.path().to_str() {
+                        match ocr_file(p, lang) {
+                            Ok(t) => combined.push_str(&t),
+                            Err(e) => eprintln!("[content] ocr page failed {p}: {e}"),
+                        }
                     }
                 }
+                combined
             }
-            combined
-        }
-    };
+        };
 
-    std::fs::remove_dir_all(&tmp_dir).ok();
-    Ok(ocr_text)
+        std::fs::remove_dir_all(&tmp_dir).ok();
+        Ok(ocr_text)
+    }
 }
 
 // Internal dispatch: these define HOW text is extracted, not which extensions are indexed.
@@ -309,11 +322,11 @@ fn extract_text(path: &str, cfg: &ContentConfig) -> Result<String, String> {
     if ext == "pdf" {
         extract_pdf(path, cfg.ocr_pdf_fallback, &cfg.ocr_language)
     } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        #[cfg(feature = "ocr")]
         if cfg.ocr_images {
-            ocr_file(path, &cfg.ocr_language)
-        } else {
-            Err("image OCR disabled".to_string())
+            return ocr_file(path, &cfg.ocr_language);
         }
+        Err("image OCR disabled".to_string())
     } else if TEXT_EXTENSIONS.contains(&ext.as_str()) {
         std::fs::read_to_string(path).map_err(|e| e.to_string())
     } else {

@@ -257,10 +257,12 @@ pub fn run() {
             preview::setup(app.handle());
             providers::timer::setup(app.handle(), &bg_registry);
 
-            bg_registry
-                .write()
-                .unwrap()
-                .register(providers::clipboard::ClipboardProvider);
+            if providers::clipboard::ClipboardProvider::is_available() {
+                bg_registry
+                    .write()
+                    .unwrap()
+                    .register(providers::clipboard::ClipboardProvider);
+            }
             if providers_cfg.calc {
                 bg_registry
                     .write()
