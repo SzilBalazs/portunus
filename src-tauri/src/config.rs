@@ -1,10 +1,13 @@
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use serde::Deserialize;
 
+const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
+
 // ── top-level ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
@@ -12,7 +15,6 @@ pub struct Config {
     pub files: FilesConfig,
     pub recent: RecentConfig,
     pub search: SearchConfig,
-    pub pdf: PdfConfig,
     pub frecency: FrecencyConfig,
     pub debug: DebugConfig,
     pub content: ContentConfig,
@@ -26,7 +28,6 @@ impl Default for Config {
             files: FilesConfig::default(),
             recent: RecentConfig::default(),
             search: SearchConfig::default(),
-            pdf: PdfConfig::default(),
             frecency: FrecencyConfig::default(),
             debug: DebugConfig::default(),
             content: ContentConfig::default(),
@@ -36,7 +37,7 @@ impl Default for Config {
 
 // ── sections ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
     pub max_results: usize,
@@ -44,11 +45,11 @@ pub struct GeneralConfig {
 
 impl Default for GeneralConfig {
     fn default() -> Self {
-        Self { max_results: 9 }
+        Self { max_results: 20 }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ProvidersConfig {
     pub apps: bool,
@@ -70,7 +71,7 @@ impl Default for ProvidersConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct DirEntry {
     pub path: String,
     #[serde(default = "default_depth")]
@@ -81,7 +82,7 @@ fn default_depth() -> usize {
     2
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct FilesConfig {
     pub dirs: Vec<DirEntry>,
@@ -100,7 +101,7 @@ impl Default for FilesConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct RecentConfig {
     pub max_entries: usize,
@@ -112,7 +113,7 @@ impl Default for RecentConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct SearchConfig {
     pub min_score_file: u32,
@@ -130,7 +131,7 @@ impl Default for SearchConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct DebugConfig {
     pub log_scores: bool,
@@ -142,19 +143,7 @@ impl Default for DebugConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(default)]
-pub struct PdfConfig {
-    pub render_width: u32,
-}
-
-impl Default for PdfConfig {
-    fn default() -> Self {
-        Self { render_width: 800 }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct FrecencyConfig {
     pub enabled: bool,
@@ -172,16 +161,15 @@ impl Default for FrecencyConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ContentDirEntry {
     pub path: String,
     #[serde(default = "default_depth")]
     pub depth: usize,
-    /// If set, only these extensions are indexed in this directory (overrides the global list).
     pub extensions: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ContentConfig {
     pub enabled: bool,
@@ -213,8 +201,40 @@ impl Default for ContentConfig {
             ocr_images: true,
             ocr_pdf_fallback: true,
             ocr_language: "eng".to_string(),
-            threads: 0,
+            threads: 2,
         }
+    }
+}
+
+// ── shared runtime config ─────────────────────────────────────────────────────
+
+/// Per-search scalars shared across all indexed providers.
+/// Updated in-place on config reload; providers read it per search() call.
+#[derive(Debug, Clone)]
+pub struct SharedSearchConfig {
+    pub min_score_file: u32,
+    pub min_score_app: u32,
+    pub recency_weight: f32,
+    pub log_scores: bool,
+}
+
+pub type SharedConfig = Arc<RwLock<SharedSearchConfig>>;
+
+impl SharedSearchConfig {
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            min_score_file: cfg.search.min_score_file,
+            min_score_app: cfg.search.min_score_app,
+            recency_weight: cfg.search.recency_weight,
+            log_scores: cfg.debug.log_scores,
+        }
+    }
+
+    pub fn update_from(&mut self, cfg: &Config) {
+        self.min_score_file = cfg.search.min_score_file;
+        self.min_score_app = cfg.search.min_score_app;
+        self.recency_weight = cfg.search.recency_weight;
+        self.log_scores = cfg.debug.log_scores;
     }
 }
 
@@ -225,8 +245,14 @@ impl Config {
         let path = config_path();
         let content = match std::fs::read_to_string(&path) {
             Ok(s) => s,
-            Err(e) => {
-                eprintln!("[config] not found at {}: {e} — using defaults", path.display());
+            Err(_) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&path, DEFAULT_CONFIG) {
+                    Ok(_) => eprintln!("[config] wrote default config to {}", path.display()),
+                    Err(e) => eprintln!("[config] could not write default config to {}: {e}", path.display()),
+                }
                 return Self::default();
             }
         };

@@ -6,7 +6,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use tauri::Manager;
 
 use super::{Provider, SearchResult};
-use crate::config::{FilesConfig, SearchConfig};
+use crate::config::{FilesConfig, SharedConfig};
 
 // ── PDF worker ────────────────────────────────────────────────────────────────
 
@@ -16,7 +16,9 @@ pub struct PdfWorkerHandle {
     tx: std::sync::mpsc::SyncSender<PdfRenderMsg>,
 }
 
-fn start_pdf_worker(render_width: u32) -> PdfWorkerHandle {
+const PDF_RENDER_WIDTH: u32 = 800;
+
+fn start_pdf_worker() -> PdfWorkerHandle {
     let (tx, rx) = std::sync::mpsc::sync_channel::<PdfRenderMsg>(4);
     std::thread::spawn(move || {
         use image::ImageFormat;
@@ -45,7 +47,7 @@ fn start_pdf_worker(render_width: u32) -> PdfWorkerHandle {
                     })?;
                     let bitmap = page
                         .render_with_config(
-                            &PdfRenderConfig::new().set_target_width(render_width as i32),
+                            &PdfRenderConfig::new().set_target_width(PDF_RENDER_WIDTH as i32),
                         )
                         .map_err(|e| {
                             let msg = e.to_string();
@@ -72,8 +74,8 @@ fn start_pdf_worker(render_width: u32) -> PdfWorkerHandle {
     PdfWorkerHandle { tx }
 }
 
-pub fn setup(app: &tauri::AppHandle, render_width: u32) {
-    app.manage(start_pdf_worker(render_width));
+pub fn setup(app: &tauri::AppHandle) {
+    app.manage(start_pdf_worker());
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -183,13 +185,11 @@ struct FileEntry {
 
 pub struct FileProvider {
     entries: Vec<FileEntry>,
-    min_score: u32,
-    recency_weight: f32,
-    log_scores: bool,
+    shared: SharedConfig,
 }
 
 impl FileProvider {
-    pub fn new(files_cfg: &FilesConfig, search_cfg: &SearchConfig, log_scores: bool) -> Self {
+    pub fn new(files_cfg: &FilesConfig, shared: SharedConfig) -> Self {
         let roots: Vec<(PathBuf, usize)> = files_cfg
             .dirs
             .iter()
@@ -249,12 +249,7 @@ impl FileProvider {
                 });
             }
         }
-        Self {
-            entries,
-            min_score: search_cfg.min_score_file,
-            recency_weight: search_cfg.recency_weight,
-            log_scores,
-        }
+        Self { entries, shared }
     }
 }
 
@@ -268,6 +263,13 @@ impl Provider for FileProvider {
         if q.is_empty() || q.starts_with('!') {
             return vec![];
         }
+
+        let cfg = self.shared.read().unwrap();
+        let min_score = cfg.min_score_file;
+        let recency_weight = cfg.recency_weight;
+        let log_scores = cfg.log_scores;
+        drop(cfg);
+
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::new(
             query,
@@ -282,8 +284,8 @@ impl Provider for FileProvider {
             .filter_map(|entry| {
                 let score =
                     pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
-                let threshold = super::effective_min_score(self.min_score, query.chars().count());
-                if self.log_scores {
+                let threshold = super::effective_min_score(min_score, query.chars().count());
+                if log_scores {
                     eprintln!("[files] {:?} → {:?}  score={} threshold={}", query, entry.name, score, threshold);
                 }
                 if score < threshold {
@@ -295,7 +297,7 @@ impl Provider for FileProvider {
                     super::SCORE_FILE
                 };
                 let recency =
-                    super::recency_bonus(entry.created, entry.modified, self.recency_weight);
+                    super::recency_bonus(entry.created, entry.modified, recency_weight);
                 let escaped = entry.path.replace('"', "\\\"");
                 Some(SearchResult {
                     id: format!("file:{}", entry.path),

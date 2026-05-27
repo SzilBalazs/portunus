@@ -2,13 +2,14 @@
 # All keys are optional; defaults are shown below.
 
 [general]
-max_results = 8        # total results displayed in the launcher
+max_results = 20       # total results displayed in the launcher
 
 [providers]
-apps   = true          # .desktop application search
-files  = true          # file indexer (see [[files.dirs]])
-recent = true          # recently-used files from ~/.local/share/recently-used.xbel
-calc   = true          # inline calculator
+apps      = true       # .desktop application search
+files     = true       # file indexer (see [[files.dirs]])
+recent    = true       # recently-used files from ~/.local/share/recently-used.xbel
+calc      = true       # inline calculator
+dict      = true       # dictionary lookup (requires dictd; install: sudo pacman -S dictd)
 
 # Directories indexed by the file provider.
 # Each entry requires a `path`; `depth` defaults to 2.
@@ -29,9 +30,6 @@ min_score_app  = 95    # nucleo minimum match quality for apps at 4+ char querie
                        # (both thresholds scale down proportionally for shorter queries)
 recency_weight = 50.0  # max bonus added to file scores for recently modified items
 
-[pdf]
-render_width = 800     # pixel width used when rendering PDF preview pages
-
 [debug]
 log_scores = false     # print nucleo score + threshold for every match candidate to stderr
 
@@ -49,7 +47,7 @@ max_file_bytes   = 5242880 # skip files larger than this (bytes); default 5 MB
 ocr_images       = true    # run OCR on images
 ocr_pdf_fallback = true    # OCR PDFs that contain no extractable text layer
 ocr_language     = "eng"   # tesseract language code (requires tesseract-data-<lang>)
-threads          = 0       # rayon worker threads for parallel indexing; 0 = all CPU cores
+threads          = 2       # rayon worker threads for parallel indexing; 0 = all CPU cores
 
 # File formats to index. Remove any you don't need to speed up indexing.
 extensions = [

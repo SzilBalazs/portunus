@@ -5,7 +5,7 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use super::{Provider, SearchResult};
-use crate::config::{RecentConfig, SearchConfig};
+use crate::config::{RecentConfig, SharedConfig};
 
 struct RecentEntry {
     path: String,
@@ -20,18 +20,14 @@ struct RecentEntry {
 
 pub struct RecentProvider {
     entries: Vec<RecentEntry>,
-    min_score: u32,
-    recency_weight: f32,
-    log_scores: bool,
+    shared: SharedConfig,
 }
 
 impl RecentProvider {
-    pub fn new(recent_cfg: &RecentConfig, search_cfg: &SearchConfig, log_scores: bool) -> Self {
+    pub fn new(recent_cfg: &RecentConfig, shared: SharedConfig) -> Self {
         Self {
             entries: load_entries(recent_cfg.max_entries),
-            min_score: search_cfg.min_score_file,
-            recency_weight: search_cfg.recency_weight,
-            log_scores,
+            shared,
         }
     }
 }
@@ -46,6 +42,13 @@ impl Provider for RecentProvider {
         if q.is_empty() || q.starts_with('!') {
             return vec![];
         }
+
+        let cfg = self.shared.read().unwrap();
+        let min_score = cfg.min_score_file;
+        let recency_weight = cfg.recency_weight;
+        let log_scores = cfg.log_scores;
+        drop(cfg);
+
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::new(
             query,
@@ -60,8 +63,8 @@ impl Provider for RecentProvider {
             .filter_map(|entry| {
                 let score =
                     pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
-                let threshold = super::effective_min_score(self.min_score, query.chars().count());
-                if self.log_scores {
+                let threshold = super::effective_min_score(min_score, query.chars().count());
+                if log_scores {
                     eprintln!("[recent] {:?} → {:?}  score={} threshold={}", query, entry.name, score, threshold);
                 }
                 if score < threshold {
@@ -73,7 +76,7 @@ impl Provider for RecentProvider {
                     super::SCORE_FILE
                 };
                 let recency =
-                    super::recency_bonus(None, Some(entry.visited), self.recency_weight);
+                    super::recency_bonus(None, Some(entry.visited), recency_weight);
                 let escaped = entry.path.replace('"', "\\\"");
                 Some(SearchResult {
                     id: format!("recent:{}", entry.path),

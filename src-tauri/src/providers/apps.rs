@@ -6,7 +6,7 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use super::{Provider, SearchResult};
-use crate::config::SearchConfig;
+use crate::config::SharedConfig;
 
 // ── data types ───────────────────────────────────────────────────────────────
 
@@ -31,17 +31,12 @@ struct ParsedEntry {
 
 pub struct AppProvider {
     apps: Vec<DesktopEntry>,
-    min_score: u32,
-    log_scores: bool,
+    shared: SharedConfig,
 }
 
 impl AppProvider {
-    pub fn new(search_cfg: &SearchConfig, log_scores: bool) -> Self {
-        Self {
-            apps: load_apps(),
-            min_score: search_cfg.min_score_app,
-            log_scores,
-        }
+    pub fn new(shared: SharedConfig) -> Self {
+        Self { apps: load_apps(), shared }
     }
 }
 
@@ -302,6 +297,11 @@ impl Provider for AppProvider {
             return vec![];
         }
 
+        let cfg = self.shared.read().unwrap();
+        let min_score = cfg.min_score_app;
+        let log_scores = cfg.log_scores;
+        drop(cfg);
+
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::new(
             query,
@@ -311,7 +311,7 @@ impl Provider for AppProvider {
         );
         let mut char_buf = Vec::new();
 
-        let threshold = super::effective_min_score(self.min_score, query.chars().count());
+        let threshold = super::effective_min_score(min_score, query.chars().count());
 
         self.apps
             .iter()
@@ -328,7 +328,7 @@ impl Provider for AppProvider {
                     (None, Some(d)) => d,
                     (None, None) => return None,
                 };
-                if self.log_scores {
+                if log_scores {
                     eprintln!(
                         "[apps] {:?} → {:?}  name={:?} desc={:?} best={} threshold={}",
                         query, app.name, name_score, desc_score, score, threshold

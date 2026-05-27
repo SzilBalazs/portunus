@@ -32,4 +32,5 @@ toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rayon = "1"
 leptess = "0.14"
+notify-debouncer-full = "0.3"
 

@@ -103,9 +103,24 @@ impl PluginRegistry {
         self.providers.push(Box::new(provider));
     }
 
+    /// Replace a provider by id, or remove it if `new` is None.
+    /// Acquires the write lock only for the retain+push (microseconds),
+    /// so index building should happen before calling this.
+    pub fn replace(&mut self, id: &'static str, new: Option<Box<dyn Provider>>) {
+        self.providers.retain(|p| p.id() != id);
+        if let Some(p) = new {
+            self.providers.push(p);
+        }
+    }
+
     pub fn set_frecency(&mut self, store: Arc<FrecencyStore>, weight: f32) {
         self.frecency = Some(store);
         self.frecency_weight = weight;
+    }
+
+    pub fn update_settings(&mut self, max_results: usize, frecency_weight: f32) {
+        self.max_results = max_results;
+        self.frecency_weight = frecency_weight;
     }
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
