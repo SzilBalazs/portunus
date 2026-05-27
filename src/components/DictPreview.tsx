@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { PreviewProps } from '../providers/registry';
+import { CopyIcon, CheckIcon } from '../icons';
 
 interface DictDefinition {
   pos: string;
@@ -67,27 +68,20 @@ const STYLES = `
   white-space: nowrap;
 }
 
-.dict-copy {
-  height: 22px;
-  padding: 0 8px;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--fg-mute);
-  font: 400 10px/1 "JetBrains Mono","Fira Code",monospace;
-  cursor: pointer;
-  transition: color 0.1s, border-color 0.1s;
-}
-.dict-copy:hover { color: var(--accent); border-color: var(--accent); }
-
 .dict-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  animation: dict-list-in 0.18s ease both;
 }
 .dict-list::-webkit-scrollbar { width: 4px; }
 .dict-list::-webkit-scrollbar-thumb { background: #2a2521; border-radius: 2px; }
 .dict-list::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes dict-list-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
 .dict-def {
   padding: 9px 0;
@@ -95,14 +89,8 @@ const STYLES = `
   display: flex;
   flex-direction: column;
   gap: 4px;
-  animation: dict-in 0.16s ease both;
 }
 .dict-def:last-child { border-bottom: none; padding-bottom: 4px; }
-
-@keyframes dict-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
 
 .dict-def-top {
   display: flex;
@@ -111,7 +99,7 @@ const STYLES = `
 }
 
 .dict-num {
-  font: 600 9px/1.7 "JetBrains Mono","Fira Code",monospace;
+  font: 600 10px/1.7 "JetBrains Mono","Fira Code",monospace;
   color: var(--fg-dim);
   min-width: 12px;
   flex-shrink: 0;
@@ -134,7 +122,7 @@ const STYLES = `
 }
 
 .dict-text {
-  font-size: 12px;
+  font-size: 13.5px;
   color: var(--fg);
   line-height: 1.55;
 }
@@ -143,16 +131,16 @@ const STYLES = `
   margin-left: 19px;
   margin-top: 2px;
   padding-left: 8px;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid rgba(160,120,70,0.5);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
 .dict-quote {
-  font-size: 11px;
+  font-size: 12.5px;
   font-style: italic;
-  color: var(--fg-dim);
+  color: #9a7848;
   line-height: 1.45;
 }
 .dict-quote::before { content: '"'; margin-right: 1px; }
@@ -167,10 +155,10 @@ const STYLES = `
 }
 
 .dict-syn {
-  font: 400 9px/1 "JetBrains Mono","Fira Code",monospace;
-  color: var(--fg-dim);
+  font: 400 10.5px/1 "JetBrains Mono","Fira Code",monospace;
+  color: #857d72;
   background: #1e1b17;
-  border: 1px solid var(--line-soft);
+  border: 1px solid rgba(133,125,114,0.25);
   padding: 2px 5px;
   border-radius: 3px;
   white-space: nowrap;
@@ -282,7 +270,7 @@ if (typeof document !== 'undefined') {
   }
 }
 
-export const dictCache = new Map<string, DictResult>();
+export const dictCache = new Map<string, DictResult | null>();
 
 function posStyle(pos: string): { bg: string; fg: string } {
   return POS_PALETTE[pos] ?? { bg: 'var(--accent-soft)', fg: 'var(--accent)' };
@@ -330,12 +318,17 @@ function DefinitionView({ word }: { word: string }) {
   const [data, setData] = useState<DictResult | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const cached = dictCache.get(word);
-    if (cached) {
-      setData(cached);
-      setError(false);
+    if (dictCache.has(word)) {
+      const cached = dictCache.get(word) ?? null;
+      if (cached) {
+        setData(cached);
+        setError(false);
+      } else {
+        setError(true);
+      }
       setLoading(false);
       return;
     }
@@ -351,12 +344,22 @@ function DefinitionView({ word }: { word: string }) {
           setLoading(false);
         }
       })
-      .catch(() => { if (!cancelled) { setError(true); setLoading(false); } });
+      .catch(() => {
+        if (!cancelled) {
+          dictCache.set(word, null);
+          setError(true);
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, [word]);
 
   const copyFirst = () => {
-    if (data?.definitions[0]) navigator.clipboard.writeText(data.definitions[0].text);
+    if (data?.definitions[0]) {
+      navigator.clipboard.writeText(data.definitions[0].text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   if (!loading && error) {
@@ -379,7 +382,9 @@ function DefinitionView({ word }: { word: string }) {
             <span className="dict-count">
               {data.definitions.length} def{data.definitions.length !== 1 ? 's' : ''}
             </span>
-            <button className="dict-copy" onClick={copyFirst}>copy</button>
+            <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={copyFirst}>
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </button>
           </div>
         )}
       </div>
@@ -395,7 +400,7 @@ function DefinitionView({ word }: { word: string }) {
           {data.definitions.map((def, i) => {
             const { bg, fg } = posStyle(def.pos);
             return (
-              <div key={i} className="dict-def" style={{ animationDelay: `${i * 40}ms` }}>
+              <div key={i} className="dict-def">
                 <div className="dict-def-top">
                   <span className="dict-num">{def.num}</span>
                   <div className="dict-def-content">

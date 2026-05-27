@@ -112,11 +112,13 @@ fn launch_app(
         .collect();
 
     if let Some((program, rest)) = args.split_first() {
+        use std::os::unix::process::CommandExt;
         let _ = std::process::Command::new(program)
             .args(rest)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .process_group(0)
             .spawn();
     }
 
