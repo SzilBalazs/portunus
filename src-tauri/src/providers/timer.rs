@@ -194,7 +194,8 @@ fn hint_result() -> SearchResult {
         icon_path: None,
         file_size: None,
         created: None,
-        modified: None,
+        snippet: None,
+            modified: None,
     }
 }
 
@@ -244,7 +245,8 @@ impl Provider for TimerProvider {
                         icon_path: None,
                         file_size: Some(secs),
                         created: None,
-                        modified: None,
+                        snippet: None,
+            modified: None,
                     });
                 }
                 None => results.push(hint_result()),
@@ -269,7 +271,8 @@ impl Provider for TimerProvider {
                 icon_path: None,
                 file_size: Some(e.duration_secs),
                 created: Some(e.started_at),
-                modified: None,
+                snippet: None,
+            modified: None,
             });
         }
 

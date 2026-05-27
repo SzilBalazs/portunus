@@ -3,9 +3,16 @@ import { EnterIcon } from "../icons";
 
 interface Props {
   selected: SearchResult | null;
+  isContentSearch: boolean;
 }
 
-export default function FooterHints({ selected }: Props) {
+const TabHint = ({ isContentSearch }: { isContentSearch: boolean }) => (
+  <span className="hint">
+    <kbd>Tab</kbd>{isContentSearch ? " back" : " search contents"}
+  </span>
+);
+
+export default function FooterHints({ selected, isContentSearch }: Props) {
   if (selected?.kind === "timer-item") {
     return (
       <div className="hints">
@@ -85,6 +92,14 @@ export default function FooterHints({ selected }: Props) {
       </div>
     );
   }
+  if (selected?.kind === "content-hint") {
+    return (
+      <div className="hints">
+        <span className="hint"><kbd>Tab</kbd> or <kbd><EnterIcon /></kbd> search contents</span>
+        <span className="hint"><kbd>Esc</kbd> close</span>
+      </div>
+    );
+  }
   if (selected?.kind === "file" || selected?.kind === "folder") {
     return (
       <div className="hints">
@@ -92,6 +107,7 @@ export default function FooterHints({ selected }: Props) {
         <span className="hint"><kbd><EnterIcon /></kbd> open</span>
         <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>
         {selected.kind === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
+        <TabHint isContentSearch={isContentSearch} />
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -102,6 +118,7 @@ export default function FooterHints({ selected }: Props) {
         <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
         <span className="hint"><kbd><EnterIcon /></kbd> launch</span>
         <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
+        <TabHint isContentSearch={isContentSearch} />
         <span className="hint"><kbd>Esc</kbd> close</span>
       </div>
     );
@@ -111,6 +128,7 @@ export default function FooterHints({ selected }: Props) {
       <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
       <span className="hint"><kbd><EnterIcon /></kbd> open</span>
       <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>
+      <TabHint isContentSearch={isContentSearch} />
       <span className="hint"><kbd>Esc</kbd> close</span>
     </div>
   );

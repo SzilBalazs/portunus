@@ -39,3 +39,46 @@ log_scores = false     # print nucleo score + threshold for every match candidat
 enabled        = true
 half_life_days = 14.0  # frecency score halves every N days of non-use
 weight         = 5000.0 # multiplier applied to the frecency bonus on top of base scores
+
+# Full-text content search — query must start with ! to activate (e.g. "! invoice 2024").
+# system deps: poppler (pdftotext/pdftoppm), tesseract + tesseract-data-eng (OCR)
+# re-index on demand: portunus --reindex
+[content]
+enabled          = false   # master switch
+max_file_bytes   = 5242880 # skip files larger than this (bytes); default 5 MB
+ocr_images       = true    # run OCR on images
+ocr_pdf_fallback = true    # OCR PDFs that contain no extractable text layer
+ocr_language     = "eng"   # tesseract language code (requires tesseract-data-<lang>)
+threads          = 0       # rayon worker threads for parallel indexing; 0 = all CPU cores
+
+# File formats to index. Remove any you don't need to speed up indexing.
+extensions = [
+  "pdf",
+  "txt", "md", "rst", "csv", "log",
+  "toml", "yaml", "yml", "json", "xml",
+  "sh", "py", "rs", "js", "ts", "go", "c", "cpp", "h",
+  "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif",
+]
+
+# Directories to index for content search.
+# Each entry requires a `path`; `depth` defaults to 2.
+# `extensions` is optional — if set, only those formats are indexed in that directory,
+# overriding the global list above. Useful to avoid OCR-heavy formats in large dirs.
+[[content.dirs]]
+path  = "~/Pictures/Screenshots"
+depth = 3
+
+# [[content.dirs]]
+# path  = "~/Documents"
+# depth = 3
+# extensions = ["pdf"]
+
+# [[content.dirs]]
+# path  = "~/Downloads"
+# depth = 3
+# extensions = ["pdf"]
+
+# [[content.dirs]]
+# path       = "~/Projects"
+# depth      = 4
+# extensions = ["rs", "toml", "md"]   # code only, no PDFs or images

@@ -30,4 +30,6 @@ image = "0.25"
 roxmltree = "0.20"
 toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
+rayon = "1"
+leptess = "0.14"
 

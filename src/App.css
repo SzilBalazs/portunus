@@ -64,6 +64,25 @@ html, body, #root {
   border-bottom: 1px solid var(--line);
   background: #272320;
   box-shadow: inset 0 -1px 0 var(--line-soft), 0 2px 8px rgba(0,0,0,0.25);
+  position: relative;
+}
+
+.content-index-bar {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--line);
+  z-index: 2;
+  overflow: hidden;
+}
+
+.content-index-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+  opacity: 0.75;
 }
 
 .search-icon {
@@ -258,6 +277,23 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
+.result-snippet {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--fg-dim);
+  line-height: 1.3;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.snippet-hl {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* ---------- preview column ---------- */
 
 .preview-col {
@@ -403,7 +439,7 @@ kbd {
 
 .file-preview-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
 }
 
@@ -470,6 +506,13 @@ kbd {
   margin-top: 5px;
   font: 400 11px/1 "JetBrains Mono", "Fira Code", monospace;
   color: var(--fg-mute);
+}
+
+.file-preview-path {
+  margin-top: 4px;
+  font: 400 10px/1.3 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-dim);
+  word-break: break-all;
 }
 
 .file-preview-meta {

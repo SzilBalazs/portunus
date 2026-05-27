@@ -288,6 +288,7 @@ export default function FilePreview({ result, onLaunch, onReveal }: Props) {
         <div className="file-preview-head-text">
           <div className="file-preview-title">{result.title}</div>
           <div className="file-preview-tag">{tag}</div>
+          {result.snippet && <div className="file-preview-path">{filePath}</div>}
         </div>
         <div className="file-preview-actions">
           <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={handleCopy} title="Copy path">

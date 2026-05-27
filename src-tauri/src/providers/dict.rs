@@ -82,6 +82,7 @@ impl Provider for DictProvider {
             icon_path: None,
             file_size: None,
             created: None,
+            snippet: None,
             modified: None,
         }]
     }
@@ -98,7 +99,8 @@ fn hint_result(subtitle: &str) -> SearchResult {
         icon_path: None,
         file_size: None,
         created: None,
-        modified: None,
+        snippet: None,
+            modified: None,
     }
 }
 

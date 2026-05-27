@@ -15,6 +15,7 @@ pub struct Config {
     pub pdf: PdfConfig,
     pub frecency: FrecencyConfig,
     pub debug: DebugConfig,
+    pub content: ContentConfig,
 }
 
 impl Default for Config {
@@ -28,6 +29,7 @@ impl Default for Config {
             pdf: PdfConfig::default(),
             frecency: FrecencyConfig::default(),
             debug: DebugConfig::default(),
+            content: ContentConfig::default(),
         }
     }
 }
@@ -79,7 +81,7 @@ fn default_depth() -> usize {
     2
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FilesConfig {
     pub dirs: Vec<DirEntry>,
@@ -166,6 +168,52 @@ impl Default for FrecencyConfig {
             enabled: true,
             half_life_days: 14.0,
             weight: 5000.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentDirEntry {
+    pub path: String,
+    #[serde(default = "default_depth")]
+    pub depth: usize,
+    /// If set, only these extensions are indexed in this directory (overrides the global list).
+    pub extensions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ContentConfig {
+    pub enabled: bool,
+    pub dirs: Vec<ContentDirEntry>,
+    pub extensions: Vec<String>,
+    pub max_file_bytes: u64,
+    pub ocr_images: bool,
+    pub ocr_pdf_fallback: bool,
+    pub ocr_language: String,
+    pub threads: usize,
+}
+
+impl Default for ContentConfig {
+    fn default() -> Self {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        Self {
+            enabled: false,
+            dirs: vec![ContentDirEntry { path: format!("{home}/Documents"), depth: 3, extensions: None }],
+            extensions: vec![
+                "pdf".into(),
+                "txt".into(), "md".into(), "rst".into(), "csv".into(), "log".into(),
+                "toml".into(), "yaml".into(), "yml".into(), "json".into(), "xml".into(),
+                "sh".into(), "py".into(), "rs".into(), "js".into(), "ts".into(),
+                "go".into(), "c".into(), "cpp".into(), "h".into(),
+                "jpg".into(), "jpeg".into(), "png".into(), "webp".into(),
+                "bmp".into(), "tiff".into(), "tif".into(),
+            ],
+            max_file_bytes: 5 * 1024 * 1024,
+            ocr_images: true,
+            ocr_pdf_fallback: true,
+            ocr_language: "eng".to_string(),
+            threads: 0,
         }
     }
 }

@@ -2,6 +2,7 @@ export interface SearchResult {
   id: string;
   title: string;
   subtitle?: string;
+  snippet?: string;
   kind: string;
   score: number;
   exec?: string;

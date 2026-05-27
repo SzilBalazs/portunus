@@ -1,4 +1,5 @@
 mod config;
+mod content_index;
 mod frecency;
 mod providers;
 
@@ -10,6 +11,12 @@ static APPS_READY: AtomicBool = AtomicBool::new(false);
 
 type Registry = Arc<RwLock<providers::PluginRegistry>>;
 type FrecencyState = Option<Arc<frecency::FrecencyStore>>;
+
+#[derive(serde::Serialize, Clone)]
+struct ContentIndexProgress {
+    indexed: usize,
+    total: usize,
+}
 
 fn socket_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -24,7 +31,10 @@ fn try_signal_running(cmd: &str) -> bool {
     }
 }
 
-fn start_socket_listener(app: tauri::AppHandle) {
+fn start_socket_listener(
+    app: tauri::AppHandle,
+    reindex_fn: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
     use std::io::BufRead;
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
@@ -59,6 +69,11 @@ fn start_socket_listener(app: tauri::AppHandle) {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
+                }
+            } else if cmd == "reindex" {
+                if let Some(f) = &reindex_fn {
+                    let f = Arc::clone(f);
+                    std::thread::spawn(move || f());
                 }
             }
         }
@@ -139,6 +154,12 @@ fn hide_window(app: tauri::AppHandle) {
     }
 }
 
+fn make_progress_cb(handle: tauri::AppHandle) -> Arc<dyn Fn(usize, usize) + Send + Sync> {
+    Arc::new(move |indexed, total| {
+        let _ = handle.emit("content-index-progress", ContentIndexProgress { indexed, total });
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|a| a == "--show") {
@@ -155,6 +176,35 @@ pub fn run() {
         }
         return;
     }
+    if std::env::args().any(|a| a == "--reindex") {
+        if !try_signal_running("reindex") {
+            // No running instance — run standalone with stderr progress
+            let cfg = config::Config::load();
+            if cfg.content.enabled {
+                match content_index::ContentIndex::open() {
+                    Ok(index) => {
+                        let index = Arc::new(index);
+                        index.clear().ok();
+                        content_index::run_content_indexer(
+                            Arc::clone(&index),
+                            &cfg.content,
+                            Some(Arc::new(|indexed, total| {
+                                eprint!("\r[content] {indexed}/{total}");
+                                if indexed >= total {
+                                    eprintln!();
+                                }
+                            })),
+                        );
+                        eprintln!("[content] reindex complete");
+                    }
+                    Err(e) => eprintln!("[content] failed to open index: {e}"),
+                }
+            } else {
+                eprintln!("[content] content indexing is disabled in config");
+            }
+        }
+        return;
+    }
 
     let cfg = config::Config::load();
     let search_cfg = cfg.search.clone();
@@ -165,6 +215,20 @@ pub fn run() {
     let pdf_render_width = cfg.pdf.render_width;
     let max_results = cfg.general.max_results;
     let log_scores = cfg.debug.log_scores;
+    let content_cfg = cfg.content;
+
+    // Open content index early (fast — just opens/creates the SQLite file).
+    let content_index: Option<Arc<content_index::ContentIndex>> = if content_cfg.enabled {
+        match content_index::ContentIndex::open() {
+            Ok(idx) => Some(Arc::new(idx)),
+            Err(e) => {
+                eprintln!("[content] failed to open index: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let registry: Registry = Arc::new(RwLock::new(providers::PluginRegistry::new(max_results)));
     let bg_registry = Arc::clone(&registry);
@@ -195,7 +259,30 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
             }
-            start_socket_listener(app.handle().clone());
+
+            // Build reindex closure here so it can capture the AppHandle for progress events.
+            let reindex_fn: Option<Arc<dyn Fn() + Send + Sync>> =
+                content_index.as_ref().map(|idx| {
+                    let idx = Arc::clone(idx);
+                    let cc = content_cfg.clone();
+                    let h = app.handle().clone();
+                    Arc::new(move || {
+                        eprintln!("[content] reindex requested");
+                        idx.clear().ok();
+                        let idx2 = Arc::clone(&idx);
+                        let cc2 = cc.clone();
+                        let h2 = h.clone();
+                        std::thread::spawn(move || {
+                            content_index::run_content_indexer(
+                                idx2,
+                                &cc2,
+                                Some(make_progress_cb(h2)),
+                            );
+                        });
+                    }) as Arc<dyn Fn() + Send + Sync>
+                });
+
+            start_socket_listener(app.handle().clone(), reindex_fn);
 
             providers::files::setup(app.handle(), pdf_render_width);
             providers::timer::setup(app.handle(), &bg_registry);
@@ -225,14 +312,37 @@ pub fn run() {
                     bg_registry.write().unwrap().register(file_provider);
                 }
                 if providers_cfg.recent {
-                    let recent_provider =
-                        providers::recent::RecentProvider::new(&recent_cfg, &search_cfg, log_scores);
+                    let recent_provider = providers::recent::RecentProvider::new(
+                        &recent_cfg,
+                        &search_cfg,
+                        log_scores,
+                    );
                     bg_registry.write().unwrap().register(recent_provider);
                 }
                 if providers_cfg.apps {
-                    let app_provider = providers::apps::AppProvider::new(&search_cfg, log_scores);
+                    let app_provider =
+                        providers::apps::AppProvider::new(&search_cfg, log_scores);
                     bg_registry.write().unwrap().register(app_provider);
                 }
+
+                // Register ContentProvider immediately so existing index is searchable,
+                // then run the indexer in a sub-thread so it doesn't block apps-ready.
+                if let Some(idx) = content_index {
+                    bg_registry
+                        .write()
+                        .unwrap()
+                        .register(providers::content::ContentProvider::new(Arc::clone(&idx)));
+                    let cc = content_cfg.clone();
+                    let h = handle.clone();
+                    std::thread::spawn(move || {
+                        content_index::run_content_indexer(
+                            idx,
+                            &cc,
+                            Some(make_progress_cb(h)),
+                        );
+                    });
+                }
+
                 APPS_READY.store(true, Ordering::Release);
                 let _ = handle.emit("apps-ready", ());
             });

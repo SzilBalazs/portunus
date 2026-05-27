@@ -297,7 +297,8 @@ impl Provider for AppProvider {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        if query.trim().is_empty() {
+        let q = query.trim();
+        if q.is_empty() || q.starts_with('!') {
             return vec![];
         }
 
@@ -346,7 +347,8 @@ impl Provider for AppProvider {
                     icon_path: app.icon_path.clone(),
                     file_size: None,
                     created: None,
-                    modified: None,
+                    snippet: None,
+            modified: None,
                 })
             })
             .collect()

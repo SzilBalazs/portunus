@@ -10,7 +10,7 @@ import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers
 import "./providers";
 import "./App.css";
 
-const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint']);
+const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint', 'content-hint']);
 
 export default function App() {
   const [query, setQuery] = useState("");
@@ -18,6 +18,7 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
+  const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const [inputWidth, setInputWidth] = useState(0);
@@ -35,6 +36,23 @@ export default function App() {
     const promise = listen("apps-ready", markReady);
     invoke<boolean>("is_apps_ready").then(ready => { if (ready) markReady(); });
     return () => { done = true; promise.then(ul => ul()); };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    let doneTimer: ReturnType<typeof setTimeout> | undefined;
+    listen<{ indexed: number; total: number }>("content-index-progress", event => {
+      const p = event.payload;
+      setIndexingProgress(p);
+      clearTimeout(doneTimer);
+      if (p.indexed >= p.total && p.total > 0) {
+        doneTimer = setTimeout(() => setIndexingProgress(null), 1200);
+      }
+    }).then(fn => {
+      if (active) unlisten = fn; else fn();
+    });
+    return () => { active = false; clearTimeout(doneTimer); unlisten?.(); };
   }, []);
 
   useEffect(() => {
@@ -75,7 +93,19 @@ export default function App() {
   useEffect(() => { setSelectedIndex(0); }, [query]);
 
   const displayResults = useMemo<SearchResult[]>(() => {
-    if (query.trim()) return results;
+    if (query.trim()) {
+      const isContent = query.trimStart().startsWith('!');
+      if (results.length === 0 && !isContent) {
+        return [{
+          id: "content:hint",
+          title: "Search file contents",
+          subtitle: `Search for "${query.trim()}" inside files`,
+          kind: "content-hint",
+          score: 0,
+        }];
+      }
+      return results;
+    }
     if (expiredTimers.length === 0) return [];
     return expiredTimers.map(t => ({
       id: `timer:expired:${t.id}`,
@@ -122,6 +152,10 @@ export default function App() {
 
   const launch = (result?: SearchResult) => {
     if (!result) return;
+    if (result.kind === "content-hint") {
+      setQuery('! ' + queryRef.current.trim());
+      return;
+    }
     const ctx = makeCtx();
     if (dispatchLaunch(result, ctx)) return;
     if (!result.exec) return;
@@ -146,6 +180,12 @@ export default function App() {
         if (target.kind !== "timer-item") launch(target);
       } else if (e.key === "Tab") {
         e.preventDefault();
+        const q = queryRef.current;
+        if (/^!\s*/.test(q)) {
+          setQuery(q.replace(/^!\s*/, ''));
+        } else {
+          setQuery('! ' + q.trim());
+        }
       } else if (e.key === "Escape") {
         e.preventDefault();
         setQuery("");
@@ -164,6 +204,7 @@ export default function App() {
 
   const selected = displayResults[selectedIndex] ?? null;
   const calcResult = results.find(r => r.kind === "calc");
+  const isContentSearch = query.trimStart().startsWith('!');
 
   const launchableResults = useMemo(
     () => displayResults.filter(r => !NON_INDEXABLE_KINDS.has(r.kind)),
@@ -203,6 +244,14 @@ export default function App() {
         if (t !== inputRef.current && !t.closest('pre, code')) e.preventDefault();
       }}>
         <div className="search-bar">
+          {indexingProgress && (
+            <div className="content-index-bar">
+              <div
+                className="content-index-fill"
+                style={{ width: `${Math.min(100, (indexingProgress.indexed / Math.max(1, indexingProgress.total)) * 100)}%` }}
+              />
+            </div>
+          )}
           <svg
             className="search-icon"
             viewBox="0 0 24 24"
@@ -255,7 +304,7 @@ export default function App() {
         </div>
 
         <div className="footer">
-          <FooterHints selected={selected} />
+          <FooterHints selected={selected} isContentSearch={isContentSearch} />
           <div className="brand">Portunus</div>
         </div>
       </div>

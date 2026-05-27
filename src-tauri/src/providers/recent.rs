@@ -42,7 +42,8 @@ impl Provider for RecentProvider {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        if query.trim().is_empty() {
+        let q = query.trim();
+        if q.is_empty() || q.starts_with('!') {
             return vec![];
         }
         let mut matcher = Matcher::new(Config::DEFAULT);
@@ -84,7 +85,8 @@ impl Provider for RecentProvider {
                     icon_path: None,
                     file_size: entry.file_size,
                     created: entry.created,
-                    modified: entry.modified,
+                    snippet: None,
+                modified: entry.modified,
                 })
             })
             .collect()

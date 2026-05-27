@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod calc;
 pub mod clipboard;
+pub mod content;
 pub mod dict;
 pub mod files;
 pub mod recent;
@@ -14,8 +15,9 @@ use serde::Serialize;
 use crate::frecency::FrecencyStore;
 
 // Category base scores (not user-tunable; define search priority ordering).
-pub const SCORE_TIMER: f32 = 4_000_000.0;
+pub const SCORE_CONTENT: f32 = 6_000_000.0;
 pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
+pub const SCORE_TIMER: f32 = 4_000_000.0;
 pub const SCORE_CALC: f32 = 3_000_000.0;
 pub const SCORE_DICT: f32 = 3_000_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
@@ -63,6 +65,8 @@ pub struct SearchResult {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
+    /// FTS snippet with \x02/\x03 as highlight start/end markers.
+    pub snippet: Option<String>,
     pub kind: String,
     pub score: f32,
     pub exec: Option<String>,
@@ -112,9 +116,14 @@ impl PluginRegistry {
             .collect();
 
         // Apply frecency bonus before sort so heavily-used items surface correctly.
+        // Skip content results — they are already ranked by FTS5/BM25 relevance and
+        // frecency (O(1000) points) would completely override text relevance (O(1) points).
         if let Some(store) = &self.frecency {
             let scores = store.all_scores();
             for r in &mut results {
+                if r.score >= SCORE_CONTENT {
+                    continue;
+                }
                 if let Some(&fs) = scores.get(&r.id) {
                     r.score += fs * self.frecency_weight;
                 }

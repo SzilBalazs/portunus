@@ -123,7 +123,8 @@ impl Provider for ClipboardProvider {
                     icon_path: None,
                     file_size: None,
                     created: None,
-                    modified: None,
+                    snippet: None,
+            modified: None,
                 })
             })
             .collect()

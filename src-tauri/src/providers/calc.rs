@@ -45,6 +45,7 @@ impl Provider for CalcProvider {
             icon_path: None,
             file_size: None,
             created: None,
+            snippet: None,
             modified: None,
         }]
     }
