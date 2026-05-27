@@ -249,6 +249,7 @@ export default function App() {
               result={selected}
               onLaunch={() => launch(selected ?? undefined)}
               onStopTimer={stopSelectedTimer}
+              onReveal={() => { setQuery(""); setResults([]); }}
             />
           </div>
         </div>

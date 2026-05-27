@@ -242,9 +242,10 @@ function TextPreview({ path, lang }: { path: string; lang: string }) {
 interface Props {
   result: SearchResult;
   onLaunch: () => void;
+  onReveal?: () => void;
 }
 
-export default function FilePreview({ result, onLaunch }: Props) {
+export default function FilePreview({ result, onLaunch, onReveal }: Props) {
   const isFolder = result.kind === "folder";
   const kind = fileKind(result.title, isFolder);
   const tag = [kind, !isFolder && result.file_size != null ? formatBytes(result.file_size) : null]
@@ -266,6 +267,7 @@ export default function FilePreview({ result, onLaunch }: Props) {
   const handleReveal = () => {
     const parent = result.subtitle ?? '.';
     invoke('launch_app', { exec: `xdg-open "${parent}"`, id: undefined, kind: undefined });
+    onReveal?.();
   };
 
   const icon = isFolder ? (

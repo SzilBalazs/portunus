@@ -12,6 +12,7 @@ export interface PreviewProps {
   result: SearchResult;
   onLaunch: () => void;
   onStopTimer?: () => void;
+  onReveal?: () => void;
 }
 
 export interface ProviderPlugin {

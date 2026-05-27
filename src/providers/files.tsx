@@ -2,15 +2,15 @@ import { invoke } from '@tauri-apps/api/core';
 import FilePreview from '../components/FilePreview';
 import { registerProvider, type PreviewProps } from './registry';
 
-function FilePreviewWrapper({ result, onLaunch }: PreviewProps) {
-  return <FilePreview result={result} onLaunch={onLaunch} />;
+function FilePreviewWrapper({ result, onLaunch, onReveal }: PreviewProps) {
+  return <FilePreview result={result} onLaunch={onLaunch} onReveal={onReveal} />;
 }
 
 registerProvider({
   kinds: ['file', 'folder'],
   Preview: FilePreviewWrapper,
 
-  handleKeyDown: (e, result) => {
+  handleKeyDown: (e, result, ctx) => {
     if (e.ctrlKey && !e.altKey && e.key === 'c' && (result?.kind === 'file' || result?.kind === 'folder')) {
       e.preventDefault();
       const path = result.subtitle ? `${result.subtitle}/${result.title}` : result.title;
@@ -21,6 +21,8 @@ registerProvider({
       e.preventDefault();
       const parent = result.subtitle ?? '.';
       invoke('launch_app', { exec: `xdg-open "${parent}"`, id: undefined, kind: undefined });
+      ctx.setQuery('');
+      ctx.setResults([]);
       return true;
     }
     return false;
