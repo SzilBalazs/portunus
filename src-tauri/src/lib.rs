@@ -22,6 +22,9 @@ pub(crate) type FileWatcherTx =
     Arc<Mutex<Option<std::sync::mpsc::Sender<config::FilesConfig>>>>;
 pub(crate) type SharedFileEntries = Arc<RwLock<Vec<providers::files::FileEntry>>>;
 pub(crate) type ConfigState = Arc<Mutex<config::Config>>;
+pub(crate) type ContentState = Arc<Mutex<Option<Arc<content_index::ContentIndex>>>>;
+
+pub struct TriggerFullReindexFn(pub Arc<dyn Fn() + Send + Sync>);
 
 #[derive(serde::Serialize, Clone)]
 struct ContentIndexProgress {
@@ -125,6 +128,76 @@ fn open_settings_window(app: tauri::AppHandle) {
     }
 }
 
+#[tauri::command]
+fn trigger_full_reindex(reindex: tauri::State<'_, TriggerFullReindexFn>) {
+    let f = Arc::clone(&reindex.0);
+    std::thread::spawn(move || f());
+}
+
+/// Reports whether the content index currently holds no documents.
+/// Used by the settings UI to decide whether enabling content search is a
+/// (potentially slow) first-time build that needs confirmation, or a cheap
+/// incremental run over an already-populated index.
+#[tauri::command]
+fn is_content_index_empty(state: tauri::State<'_, ContentState>) -> bool {
+    // try_lock so we never block the UI behind an in-progress reindex (which
+    // holds this lock for its full duration). A live index is only contended
+    // while content is enabled — exactly the case where the answer is moot.
+    if let Ok(guard) = state.try_lock() {
+        if let Some(idx) = guard.as_ref() {
+            return idx.is_empty();
+        }
+    }
+    // No open index (content disabled) — count rows in the on-disk DB directly.
+    match content_index::ContentIndex::open() {
+        Ok(idx) => idx.is_empty(),
+        Err(_) => true,
+    }
+}
+
+/// Full clear-and-rebuild of the content index using the current on-disk config.
+/// Shared by the `--reindex` socket command and the settings "Apply & Reindex"
+/// trigger. Loads the config fresh so it always reflects the latest saved state,
+/// opens the index if it isn't open yet (first-time enable), and re-registers the
+/// provider so results are searchable. Holds the content lock for the whole run
+/// so concurrent config-triggered rebuilds serialise rather than racing the DB.
+fn run_full_reindex(
+    content_state: &ContentState,
+    registry: &Registry,
+    progress_cb: &Arc<dyn Fn(usize, usize) + Send + Sync>,
+    notify_cb: &Arc<dyn Fn() + Send + Sync>,
+) {
+    let cfg = config::Config::load();
+    if !cfg.content.enabled {
+        eprintln!("[content] reindex requested but content indexing is disabled");
+        return;
+    }
+    let mut guard = content_state.lock().unwrap();
+    let idx = match guard.as_ref() {
+        Some(idx) => Arc::clone(idx),
+        None => match content_index::ContentIndex::open() {
+            Ok(idx) => {
+                let arc = Arc::new(idx);
+                *guard = Some(Arc::clone(&arc));
+                arc
+            }
+            Err(e) => {
+                eprintln!("[content] reindex: failed to open index: {e}");
+                return;
+            }
+        },
+    };
+    registry.write().unwrap().replace(
+        "content",
+        Some(Box::new(providers::content::ContentProvider::new(Arc::clone(&idx)))),
+    );
+    eprintln!("[content] full reindex started");
+    idx.clear().ok();
+    content_index::run_content_indexer(idx, &cfg.content, Some(Arc::clone(progress_cb)));
+    eprintln!("[content] full reindex complete");
+    notify_cb();
+}
+
 fn make_progress_cb(handle: tauri::AppHandle) -> Arc<dyn Fn(usize, usize) + Send + Sync> {
     Arc::new(move |indexed, total| {
         let _ = handle.emit("content-index-progress", ContentIndexProgress { indexed, total });
@@ -152,8 +225,13 @@ pub fn run() {
     let max_results = cfg.general.max_results;
     let content_cfg = cfg.content.clone();
 
-    // last_cfg is shared between the config watcher and the socket reload_fn.
+    // last_cfg is used by the config watcher and reload_fn as the diff baseline.
+    // Must be a separate Arc from config_state so that save_config (which updates
+    // config_state) doesn't also advance last_cfg, which would cause the watcher
+    // to see no diff and skip provider rebuilds.
     let last_cfg: Arc<Mutex<config::Config>> = Arc::new(Mutex::new(cfg.clone()));
+    // config_state is the frontend-visible config (read by get_config, written by save_config).
+    let config_state: ConfigState = Arc::new(Mutex::new(cfg.clone()));
 
     // Populated once the content watcher thread starts; None until then.
     let content_watcher_tx: ContentWatcherTx = Arc::new(Mutex::new(None));
@@ -202,7 +280,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(registry)
         .manage(frecency_state)
-        .manage(Arc::clone(&last_cfg))
+        .manage(config_state)
+        .manage(Arc::clone(&content_state))
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
@@ -234,24 +313,26 @@ pub fn run() {
                 let _ = notify_handle.emit("search-invalidated", ());
             });
 
-            // reindex_fn: used by the --reindex socket command.
+            // reindex_fn: used by the --reindex socket command. Always called from
+            // a spawned thread (socket handler), so blocking on the content lock is fine.
             let reindex_ci = Arc::clone(&content_state);
-            let reindex_cc = content_cfg.clone();
+            let reindex_reg = Arc::clone(&bg_registry);
             let reindex_cb = Arc::clone(&progress_cb);
+            let reindex_notify = Arc::clone(&notify_cb);
             let reindex_fn: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || {
-                // Hold content_state for the full clear+index to serialise with config-triggered rebuilds.
-                // reindex_fn is always called inside a spawned thread (socket handler), so blocking is fine.
-                let guard = reindex_ci.lock().unwrap();
-                if let Some(idx) = guard.as_ref().map(Arc::clone) {
-                    eprintln!("[content] reindex requested");
-                    idx.clear().ok();
-                    content_index::run_content_indexer(idx, &reindex_cc, Some(Arc::clone(&reindex_cb)));
-                    eprintln!("[content] reindex complete");
-                } else {
-                    eprintln!("[content] reindex requested but content indexing is disabled");
-                }
-                // guard drops here, releasing the lock
+                run_full_reindex(&reindex_ci, &reindex_reg, &reindex_cb, &reindex_notify);
             }));
+
+            // trigger_reindex_fn: called by the trigger_full_reindex Tauri command
+            // (settings "Apply & Reindex"). Identical full clear+rebuild as --reindex.
+            let tri_ci = Arc::clone(&content_state);
+            let tri_reg = Arc::clone(&bg_registry);
+            let tri_cb = Arc::clone(&progress_cb);
+            let tri_notify = Arc::clone(&notify_cb);
+            let trigger_reindex_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                run_full_reindex(&tri_ci, &tri_reg, &tri_cb, &tri_notify);
+            });
+            app.manage(TriggerFullReindexFn(Arc::clone(&trigger_reindex_fn)));
 
             // Build reload_fn closure shared between socket listener and config watcher.
             let reload_shared = Arc::clone(&shared_config);
@@ -282,6 +363,31 @@ pub fn run() {
             });
 
             ipc::start_socket_listener(app.handle().clone(), reindex_fn, Arc::clone(&reload_fn));
+
+            // Start watchers before start_config_watcher so that file_watcher_tx /
+            // content_watcher_tx are populated before any config-change event can fire.
+            // (Previously both were started inside the background startup thread, which
+            // created a race where a config change during startup found tx = None.)
+            if providers_cfg.files {
+                let tx = watcher::start_file_watcher(
+                    Arc::clone(&file_entries),
+                    files_cfg.clone(),
+                    Arc::clone(&notify_cb),
+                );
+                *file_watcher_tx.lock().unwrap() = Some(tx);
+            }
+            // Always start the content watcher, even if content is currently disabled,
+            // so that re-enabling later will immediately receive filesystem events.
+            {
+                let tx = watcher::start_content_watcher(
+                    Arc::clone(&content_state),
+                    content_cfg.clone(),
+                    Arc::clone(&notify_cb),
+                    Arc::clone(&shared_config),
+                );
+                *content_watcher_tx.lock().unwrap() = Some(tx);
+            }
+
             watcher::start_config_watcher(
                 Arc::clone(&shared_config),
                 Arc::clone(&bg_registry),
@@ -320,10 +426,7 @@ pub fn run() {
             let shared_bg = Arc::clone(&shared_config);
             let startup_ci = Arc::clone(&content_state);
             let startup_cb = Arc::clone(&progress_cb);
-            let startup_cb_notify = Arc::clone(&notify_cb);
-            let startup_watcher_tx = Arc::clone(&content_watcher_tx);
             let startup_file_entries = Arc::clone(&file_entries);
-            let startup_file_watcher_tx = Arc::clone(&file_watcher_tx);
             std::thread::spawn(move || {
                 if providers_cfg.files {
                     let entries_vec = providers::files::FileProvider::walk_dirs(&files_cfg);
@@ -333,12 +436,6 @@ pub fn run() {
                         Arc::clone(&shared_bg),
                     );
                     bg_registry.write().unwrap().register(file_provider);
-                    let tx = watcher::start_file_watcher(
-                        Arc::clone(&startup_file_entries),
-                        files_cfg.clone(),
-                        Arc::clone(&startup_cb_notify),
-                    );
-                    *startup_file_watcher_tx.lock().unwrap() = Some(tx);
                 }
                 if providers_cfg.recent {
                     let recent_provider = providers::recent::RecentProvider::new(
@@ -368,19 +465,6 @@ pub fn run() {
                     });
                 }
 
-                // Start the filesystem watcher for live content index updates.
-                if content_cfg.enabled {
-                    let watcher_ci = Arc::clone(&startup_ci);
-                    let watcher_notify = Arc::clone(&startup_cb_notify);
-                    let tx = watcher::start_content_watcher(
-                        watcher_ci,
-                        content_cfg.clone(),
-                        watcher_notify,
-                        Arc::clone(&shared_bg),
-                    );
-                    *startup_watcher_tx.lock().unwrap() = Some(tx);
-                }
-
                 APPS_READY.store(true, Ordering::Release);
                 let _ = handle.emit("apps-ready", ());
             });
@@ -396,6 +480,8 @@ pub fn run() {
             get_config,
             save_config,
             open_settings_window,
+            trigger_full_reindex,
+            is_content_index_empty,
             // Timer provider
             providers::timer::create_timer,
             providers::timer::stop_timer,

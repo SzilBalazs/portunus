@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::{config, content_index, providers, ContentWatcherTx, FileWatcherTx, Registry, SharedFileEntries};
@@ -27,6 +28,7 @@ pub fn rebuild_providers(
 
     if new_cfg.files != old_cfg.files || new_cfg.providers.files != old_cfg.providers.files {
         let files_cfg = new_cfg.files.clone();
+        let old_files_cfg = old_cfg.files.clone();
         let was_enabled = old_cfg.providers.files;
         let now_enabled = new_cfg.providers.files;
         let shared2 = Arc::clone(shared);
@@ -36,8 +38,36 @@ pub fn rebuild_providers(
         let fw_tx = Arc::clone(file_watcher_tx);
         std::thread::spawn(move || {
             if now_enabled {
-                let new_vec = providers::files::FileProvider::walk_dirs(&files_cfg);
-                *fe.write().unwrap() = new_vec;
+                let old_by_path: HashMap<&str, &config::DirEntry> =
+                    old_files_cfg.dirs.iter().map(|d| (d.path.as_str(), d)).collect();
+                let new_by_path: HashMap<&str, &config::DirEntry> =
+                    files_cfg.dirs.iter().map(|d| (d.path.as_str(), d)).collect();
+
+                // Case A: pure additions only — walk new dirs and extend.
+                // Case B: any removal or depth change — full re-walk to avoid
+                //         nested-dir prefix-removal bugs (e.g. removing ~/Docs
+                //         when ~/Docs/Projects is still configured).
+                let only_additions = old_files_cfg.dirs.iter().all(|d| new_by_path.contains_key(d.path.as_str()))
+                    && files_cfg.dirs.iter().all(|d| {
+                        match old_by_path.get(d.path.as_str()) {
+                            Some(old) => old.depth == d.depth,
+                            None => true,
+                        }
+                    });
+
+                if only_additions {
+                    let added_cfg = config::FilesConfig {
+                        dirs: files_cfg.dirs.iter()
+                            .filter(|d| !old_by_path.contains_key(d.path.as_str()))
+                            .cloned()
+                            .collect(),
+                    };
+                    let new_entries = providers::files::FileProvider::walk_dirs(&added_cfg);
+                    fe.write().unwrap().extend(new_entries);
+                } else {
+                    *fe.write().unwrap() = providers::files::FileProvider::walk_dirs(&files_cfg);
+                }
+
                 if !was_enabled {
                     let p = providers::files::FileProvider::with_entries(Arc::clone(&fe), shared2);
                     reg2.write().unwrap().replace("files", Some(Box::new(p)));
@@ -130,8 +160,8 @@ pub fn rebuild_providers(
         let cb = Arc::clone(progress_cb);
         let ncb = Arc::clone(notify_cb);
         std::thread::spawn(move || {
-            // Hold the lock for the full operation (register → index) so
-            // two rapid config saves can't race each other on the same DB tables.
+            // Hold the lock for the full operation so two rapid config saves
+            // can't race each other on the same DB tables.
             let mut guard = ci_state.lock().unwrap();
             if new_content_cfg.enabled {
                 let idx = match guard.as_ref() {
@@ -148,21 +178,41 @@ pub fn rebuild_providers(
                         }
                     },
                 };
-                // OCR settings change the extracted text without touching mtime/size,
-                // so the incremental check would wrongly skip affected files.
-                let ocr_changed = old_content_cfg.ocr_images != new_content_cfg.ocr_images
-                    || old_content_cfg.ocr_pdf_fallback != new_content_cfg.ocr_pdf_fallback
-                    || old_content_cfg.ocr_language != new_content_cfg.ocr_language;
-                if ocr_changed {
-                    idx.clear().ok();
-                }
+
+                // Register provider with the current index so existing data is
+                // immediately searchable, even before any reindex completes.
                 reg2.write().unwrap().replace(
                     "content",
                     Some(Box::new(providers::content::ContentProvider::new(Arc::clone(&idx)))),
                 );
-                content_index::run_content_indexer(idx, &new_content_cfg, Some(cb));
-                eprintln!("[content] reindex complete");
-                ncb();
+
+                // "Heavy" changes require a full clear+rebuild, which is expensive.
+                // We never trigger that automatically — the settings UI stages these
+                // edits and the user confirms via "Apply & Reindex" (trigger_full_reindex),
+                // or a poweruser runs `portunus --reindex` after a manual config edit.
+                // Here we only register the provider (above) and apply cheap incremental
+                // changes; heavy changes are left for the explicit reindex path.
+                let ocr_changed = old_content_cfg.ocr_images != new_content_cfg.ocr_images
+                    || old_content_cfg.ocr_pdf_fallback != new_content_cfg.ocr_pdf_fallback
+                    || old_content_cfg.ocr_language != new_content_cfg.ocr_language;
+                // First-enable: content was disabled before AND the index is empty.
+                // Re-enabling a populated index is just a cheap incremental run.
+                let first_enable = !old_content_cfg.enabled && idx.is_empty();
+                let max_bytes_increased =
+                    new_content_cfg.max_file_bytes > old_content_cfg.max_file_bytes;
+
+                if ocr_changed || first_enable || max_bytes_increased {
+                    eprintln!(
+                        "[content] heavy settings change detected; full reindex deferred \
+                         (apply via Settings or `portunus --reindex`)"
+                    );
+                } else {
+                    // Cheap, non-destructive incremental update — same as the startup routine.
+                    // Picks up added dirs, extension/depth changes, and removed dirs.
+                    content_index::run_content_indexer(idx, &new_content_cfg, Some(cb));
+                    eprintln!("[content] incremental reindex complete");
+                    ncb();
+                }
             } else {
                 *guard = None;
                 reg2.write().unwrap().replace("content", None);

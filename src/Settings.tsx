@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Config } from "./types";
 import GeneralSection from "./components/settings/GeneralSection";
@@ -103,12 +103,54 @@ const NAV: NavItem[] = [
 
 const AUTOSAVE_DELAY_MS = 800;
 
+// "Heavy" content changes force an expensive full reindex, so they are never
+// auto-saved. Instead they are staged: the Content section shows an Apply/Revert
+// strip, and only "Apply & Reindex" persists them + kicks off the rebuild.
+//   - any OCR setting (re-runs extraction over every file)
+//   - first-time enable when the index is empty (initial build from scratch)
+//   - raising the max file size (previously-skipped large files now need indexing)
+// `indexEmpty` reflects whether the on-disk index currently has zero documents.
+function contentHeavyPending(cur: Config, base: Config, indexEmpty: boolean): boolean {
+  const c = cur.content, b = base.content;
+  return (
+    c.ocr_images !== b.ocr_images ||
+    c.ocr_pdf_fallback !== b.ocr_pdf_fallback ||
+    c.ocr_language !== b.ocr_language ||
+    (c.enabled && !b.enabled && indexEmpty) ||
+    c.max_file_bytes > b.max_file_bytes
+  );
+}
+
+// Returns `cur` with its heavy content fields forced back to `base`, so an
+// autosave persists the cheap edits (dirs, extensions, depth…) while leaving
+// the staged heavy edits untouched on disk until the user applies them.
+function stripHeavy(cur: Config, base: Config, indexEmpty: boolean): Config {
+  const content = {
+    ...cur.content,
+    ocr_images: base.content.ocr_images,
+    ocr_pdf_fallback: base.content.ocr_pdf_fallback,
+    ocr_language: base.content.ocr_language,
+  };
+  if (cur.content.enabled && !base.content.enabled && indexEmpty) {
+    content.enabled = base.content.enabled;
+  }
+  if (cur.content.max_file_bytes > base.content.max_file_bytes) {
+    content.max_file_bytes = base.content.max_file_bytes;
+  }
+  return { ...cur, content };
+}
+
 export default function Settings() {
   const [config, setConfig] = useState<Config | null>(null);
   const [activeSection, setActiveSection] = useState<Section>("general");
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether the content index is currently empty (drives first-enable detection).
+  const [indexEmpty, setIndexEmpty] = useState(true);
+  // Live reindex progress, mirrored from the backend so the user gets feedback
+  // here even though the launcher (which also shows it) is hidden.
+  const [reindexProgress, setReindexProgress] = useState<{ indexed: number; total: number } | null>(null);
 
   // Tracks the config object reference as it came from disk.
   // Reference equality check lets us skip the auto-save on initial load.
@@ -123,10 +165,19 @@ export default function Settings() {
       setConfig(cfg);
       applyTheme(cfg.appearance);
       setError(null);
+      invoke<boolean>("is_content_index_empty").then(setIndexEmpty).catch(() => {});
     } catch (e) {
       setError(String(e));
     }
   }, []);
+
+  // Staged heavy content edits awaiting "Apply & Reindex". Derived each render;
+  // mirrored into a ref so the focus handler can read it without a stale closure.
+  const pendingReindex =
+    !!config && !!diskConfigRef.current &&
+    contentHeavyPending(config, diskConfigRef.current, indexEmpty);
+  const pendingRef = useRef(false);
+  useEffect(() => { pendingRef.current = pendingReindex; }, [pendingReindex]);
 
   // Load config whenever the window gains focus (i.e. every time the user opens it).
   // Debounced because show() + set_focus() each fire the event in quick succession.
@@ -136,6 +187,8 @@ export default function Settings() {
     let lastLoad = 0;
     win.onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
+      // Don't reload over staged heavy edits — that would silently discard them.
+      if (pendingRef.current) return;
       const now = Date.now();
       if (now - lastLoad < 300) return;
       lastLoad = now;
@@ -143,6 +196,22 @@ export default function Settings() {
     }).then(fn => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, [loadConfig]);
+
+  // Mirror reindex progress from the backend (broadcast to all windows).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    let doneTimer: ReturnType<typeof setTimeout> | undefined;
+    listen<{ indexed: number; total: number }>("content-index-progress", event => {
+      const p = event.payload;
+      setReindexProgress(p);
+      clearTimeout(doneTimer);
+      if (p.indexed >= p.total && p.total > 0) {
+        doneTimer = setTimeout(() => setReindexProgress(null), 400);
+      }
+    }).then(fn => { if (active) unlisten = fn; else fn(); });
+    return () => { active = false; clearTimeout(doneTimer); unlisten?.(); };
+  }, []);
 
 
   // Escape closes the window
@@ -164,17 +233,26 @@ export default function Settings() {
     }
   }, [config?.appearance]);
 
-  // Auto-save: fires 800ms after the last config change, skips on initial load
+  // Auto-save: fires 800ms after the last config change, skips on initial load.
+  // Heavy content edits are stripped out so only cheap changes hit disk; the
+  // heavy ones stay staged until the user clicks "Apply & Reindex".
   useEffect(() => {
     if (!config || config === diskConfigRef.current) return;
+    const base = diskConfigRef.current;
+    if (!base) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
+      const toSave = stripHeavy(config, base, indexEmpty);
+      // Nothing cheap actually changed (only heavy edits are pending) — don't
+      // touch disk, but leave the staged change visible via the Apply strip.
+      if (JSON.stringify(toSave) === JSON.stringify(base)) return;
+
       setSaving(true);
       setError(null);
       try {
-        await invoke("save_config", { config });
-        diskConfigRef.current = config;
+        await invoke("save_config", { config: toSave });
+        diskConfigRef.current = toSave;
         setSavedFlash(true);
         if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
         flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1800);
@@ -188,6 +266,46 @@ export default function Settings() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
+  }, [config, indexEmpty]);
+
+  // "Apply & Reindex": persist the staged heavy change in full, then trigger the
+  // backend's clear-and-rebuild. Progress streams back via content-index-progress.
+  const applyReindex = useCallback(async () => {
+    if (!config) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaving(true);
+    setError(null);
+    try {
+      await invoke("save_config", { config });
+      diskConfigRef.current = config;
+      await invoke("trigger_full_reindex");
+      // A rebuild populates the index, so a subsequent enable is no longer "first".
+      setIndexEmpty(false);
+      setSavedFlash(true);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1800);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [config]);
+
+  // "Revert": discard the staged heavy edits, restoring the last-applied values.
+  const revertReindex = useCallback(() => {
+    const base = diskConfigRef.current;
+    if (!base || !config) return;
+    setConfig({
+      ...config,
+      content: {
+        ...config.content,
+        ocr_images: base.content.ocr_images,
+        ocr_pdf_fallback: base.content.ocr_pdf_fallback,
+        ocr_language: base.content.ocr_language,
+        enabled: base.content.enabled,
+        max_file_bytes: base.content.max_file_bytes,
+      },
+    });
   }, [config]);
 
   const handleClose = () => getCurrentWindow().hide();
@@ -246,7 +364,16 @@ export default function Settings() {
                 {activeSection === "files"     && <FilesSection     config={config} onChange={setConfig} />}
                 {activeSection === "search"    && <SearchSection    config={config} onChange={setConfig} />}
                 {activeSection === "frecency"  && <FrecencySection  config={config} onChange={setConfig} />}
-                {activeSection === "content"   && <ContentSection   config={config} onChange={setConfig} />}
+                {activeSection === "content"   && (
+                  <ContentSection
+                    config={config}
+                    onChange={setConfig}
+                    pendingReindex={pendingReindex}
+                    reindexProgress={reindexProgress}
+                    onApply={applyReindex}
+                    onRevert={revertReindex}
+                  />
+                )}
                 {activeSection === "debug"      && <DebugSection      config={config} onChange={setConfig} />}
                 {activeSection === "appearance" && <AppearanceSection config={config} onChange={setConfig} />}
               </>

@@ -265,7 +265,7 @@ export default function App() {
     <div className="launcher">
       <div className="card" onMouseDown={e => {
         const t = e.target as HTMLElement;
-        if (t !== inputRef.current && !t.closest('pre, code')) e.preventDefault();
+        if (t !== inputRef.current && !t.closest('pre, code, button')) e.preventDefault();
       }}>
         <div className="search-bar">
           {indexingProgress && (

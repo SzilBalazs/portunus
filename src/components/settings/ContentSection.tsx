@@ -1,9 +1,13 @@
-import { useState, KeyboardEvent } from "react";
+import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import { Config, ContentDirEntry } from "../../types";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
+  pendingReindex: boolean;
+  reindexProgress: { indexed: number; total: number } | null;
+  onApply: () => void;
+  onRevert: () => void;
 }
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -51,8 +55,30 @@ function ExtensionEditor({ extensions, onChange }: { extensions: string[]; onCha
   );
 }
 
-export default function ContentSection({ config, onChange }: Props) {
+export default function ContentSection({ config, onChange, pendingReindex, reindexProgress, onApply, onRevert }: Props) {
   const cc = config.content;
+  const reindexing = reindexProgress != null && reindexProgress.total > 0 && reindexProgress.indexed < reindexProgress.total;
+  const pct = reindexProgress && reindexProgress.total > 0
+    ? Math.min(100, (reindexProgress.indexed / reindexProgress.total) * 100)
+    : 0;
+
+  const [draft, setDraft] = useState<ContentDirEntry | null>(null);
+  const draftInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (draft !== null) draftInputRef.current?.focus();
+  }, [draft !== null]);
+
+  const commitDraft = () => {
+    if (!draft || draft.path.trim() === "") return;
+    set({ dirs: [...cc.dirs, draft] });
+    setDraft(null);
+  };
+
+  const onDraftKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") { e.preventDefault(); commitDraft(); }
+    if (e.key === "Escape") { e.preventDefault(); setDraft(null); }
+  };
   const set = (patch: Partial<Config["content"]>) =>
     onChange({ ...config, content: { ...config.content, ...patch } });
 
@@ -63,8 +89,7 @@ export default function ContentSection({ config, onChange }: Props) {
 
   const removeDir = (i: number) => set({ dirs: cc.dirs.filter((_, idx) => idx !== i) });
 
-  const addDir = () =>
-    set({ dirs: [...cc.dirs, { path: "~/", depth: 3, extensions: null }] });
+  const addDir = () => setDraft({ path: "", depth: 3, extensions: null });
 
   const bytesToMb = (b: number) => +(b / (1024 * 1024)).toFixed(1);
   const mbToBytes = (mb: number) => Math.round(mb * 1024 * 1024);
@@ -79,6 +104,31 @@ export default function ContentSection({ config, onChange }: Props) {
       <div className="settings-section-note">
         Requires: <strong>poppler</strong> (pdftotext/pdftoppm) for PDF text extraction. OCR additionally requires <strong>tesseract</strong> + <strong>tesseract-data-eng</strong>. Re-index on demand: <code style={{ fontFamily: "monospace" }}>portunus --reindex</code>
       </div>
+
+      {pendingReindex && !reindexing && (
+        <div className="settings-reindex-strip">
+          <svg className="settings-reindex-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span className="settings-reindex-msg">
+            These changes need a full reindex to take effect. Other settings are saved automatically.
+          </span>
+          <button className="settings-reindex-revert" onClick={onRevert}>Revert</button>
+          <button className="settings-reindex-apply" onClick={onApply}>Apply &amp; Reindex</button>
+        </div>
+      )}
+
+      {reindexing && (
+        <div className="settings-reindex-strip settings-reindex-strip--progress">
+          <span className="settings-reindex-msg">
+            Reindexing… {reindexProgress!.indexed} / {reindexProgress!.total}
+          </span>
+          <div className="settings-reindex-bar">
+            <div className="settings-reindex-bar-fill" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
 
       <div className="settings-field">
         <div className="settings-field-label">
@@ -218,9 +268,47 @@ export default function ContentSection({ config, onChange }: Props) {
               </div>
             </div>
           ))}
-          <button className="settings-dir-add" onClick={addDir}>
-            <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add directory
-          </button>
+
+          {draft !== null && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", background: "var(--kbd-bg)", borderRadius: 6, border: "1px solid var(--accent-border)" }}>
+              <div className="settings-dir-row settings-dir-row--draft">
+                <input
+                  ref={draftInputRef}
+                  className="settings-dir-path"
+                  value={draft.path}
+                  placeholder="~/path/to/dir"
+                  onChange={e => setDraft({ ...draft, path: e.target.value })}
+                  onKeyDown={onDraftKey}
+                />
+                <div className="settings-dir-depth">
+                  <button className="settings-dir-depth-btn" onClick={() => setDraft({ ...draft, depth: Math.max(1, draft.depth - 1) })}>−</button>
+                  <span className="settings-dir-depth-val" title="Search depth">{draft.depth}</span>
+                  <button className="settings-dir-depth-btn" onClick={() => setDraft({ ...draft, depth: Math.min(10, draft.depth + 1) })}>+</button>
+                </div>
+                <button
+                  className="settings-dir-confirm"
+                  onClick={commitDraft}
+                  disabled={draft.path.trim() === ""}
+                  title="Confirm"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                </button>
+                <button className="settings-dir-remove" onClick={() => setDraft(null)} title="Discard">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {draft === null && (
+            <button className="settings-dir-add" onClick={addDir}>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add directory
+            </button>
+          )}
         </div>
       </div>
     </div>

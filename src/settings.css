@@ -526,6 +526,32 @@ html, body, #root {
   color: var(--accent);
 }
 
+.settings-dir-confirm {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+
+.settings-dir-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: var(--accent);
+}
+
+.settings-dir-confirm:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 /* ---------- extension tag editor ---------- */
 
 .settings-ext-editor {
@@ -599,6 +625,81 @@ html, body, #root {
   border: 1px solid var(--line-soft);
   border-radius: 6px;
   margin-bottom: 14px;
+}
+
+/* ---------- content reindex strip ---------- */
+
+.settings-reindex-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.settings-reindex-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.settings-reindex-msg {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.settings-reindex-revert,
+.settings-reindex-apply {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 5px;
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: filter 0.1s, background 0.1s;
+}
+
+.settings-reindex-revert {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-desc);
+}
+
+.settings-reindex-revert:hover {
+  color: var(--fg);
+  border-color: var(--fg-desc);
+}
+
+.settings-reindex-apply {
+  border: none;
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.settings-reindex-apply:hover { filter: brightness(1.08); }
+
+.settings-reindex-strip--progress {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.settings-reindex-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.settings-reindex-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.15s ease-out;
 }
 
 /* ---------- footer ---------- */

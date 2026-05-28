@@ -207,6 +207,12 @@ impl ContentIndex {
              DELETE FROM file_meta;",
         )
     }
+
+    pub fn is_empty(&self) -> bool {
+        let db = self.db.lock().unwrap();
+        db.query_row("SELECT COUNT(*) FROM file_meta", [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0) == 0
+    }
 }
 
 // ── text extraction ───────────────────────────────────────────────────────────
