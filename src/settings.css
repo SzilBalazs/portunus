@@ -427,6 +427,10 @@ html, body, #root {
   align-items: center;
 }
 
+.settings-dir-row--draft {
+  grid-template-columns: 1fr 80px auto auto;
+}
+
 .settings-dir-path {
   height: 28px;
   background: var(--kbd-bg);
