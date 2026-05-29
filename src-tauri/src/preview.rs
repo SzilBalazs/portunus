@@ -94,6 +94,27 @@ pub async fn render_pdf_page(
 }
 
 #[tauri::command]
+pub fn read_office_preview(path: String) -> Result<String, String> {
+    const MAX_LINES: usize = 300;
+    const MAX_BYTES: usize = 32 * 2048;
+    let text = crate::office::extract_office_text(&path)?;
+    let mut out = String::new();
+    for (i, line) in text.lines().enumerate() {
+        if i >= MAX_LINES || out.len() + line.len() + 1 > MAX_BYTES {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    Ok(out.trim_end().to_string())
+}
+
+#[tauri::command]
+pub fn read_spreadsheet_preview(path: String) -> Result<Vec<Vec<String>>, String> {
+    crate::office::extract_spreadsheet_grid(&path)
+}
+
+#[tauri::command]
 pub fn read_text_preview(path: String) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
     const MAX_LINES: usize = 300;

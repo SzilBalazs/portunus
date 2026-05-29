@@ -3,6 +3,7 @@ mod config;
 mod content_index;
 mod frecency;
 mod ipc;
+mod office;
 mod preview;
 mod provider_reload;
 mod providers;
@@ -579,6 +580,8 @@ pub fn run() {
             preview::read_text_preview,
             preview::render_image_preview,
             preview::list_folder,
+            preview::read_office_preview,
+            preview::read_spreadsheet_preview,
             // Clipboard provider
             providers::clipboard::paste_clipboard,
             providers::clipboard::decode_clipboard_entry,

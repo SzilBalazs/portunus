@@ -57,6 +57,7 @@ extensions = [
   "toml", "yaml", "yml", "json", "xml",
   "sh", "py", "rs", "js", "ts", "go", "c", "cpp", "h",
   "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif",
+  "docx", "xlsx", "pptx", "odt", "ods", "odp",
 ]
 
 # Directories to index for content search.

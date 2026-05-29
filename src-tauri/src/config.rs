@@ -199,6 +199,8 @@ impl Default for ContentConfig {
                 "go".into(), "c".into(), "cpp".into(), "h".into(),
                 "jpg".into(), "jpeg".into(), "png".into(), "webp".into(),
                 "bmp".into(), "tiff".into(), "tif".into(),
+                "docx".into(), "xlsx".into(), "pptx".into(),
+                "odt".into(), "ods".into(), "odp".into(),
             ],
             max_file_bytes: 5 * 1024 * 1024,
             ocr_images: true,

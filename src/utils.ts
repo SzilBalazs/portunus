@@ -99,6 +99,17 @@ export function isCsv(filename: string): boolean {
   return ext === "csv" || ext === "tsv";
 }
 
+const OFFICE_TEXT_EXTS = new Set(["docx", "pptx", "odt", "odp"]);
+const SPREADSHEET_EXTS = new Set(["xlsx", "ods"]);
+
+export function isOfficeText(filename: string): boolean {
+  return OFFICE_TEXT_EXTS.has(filename.split(".").pop()?.toLowerCase() ?? "");
+}
+
+export function isSpreadsheet(filename: string): boolean {
+  return SPREADSHEET_EXTS.has(filename.split(".").pop()?.toLowerCase() ?? "");
+}
+
 const TEXT_PREVIEW_LANGS: Record<string, string> = {
   rs: "rust",
   ts: "typescript", tsx: "typescript",
@@ -145,6 +156,10 @@ export function fileKind(title: string, isFolder: boolean): string {
     ts: "TypeScript Source", tsx: "TypeScript Source",
     js: "JavaScript Source", jsx: "JavaScript Source",
     rs: "Rust Source", py: "Python Source", go: "Go Source",
+    docx: "Word Document", xlsx: "Excel Spreadsheet",
+    pptx: "PowerPoint Presentation",
+    odt: "OpenDocument Text", ods: "OpenDocument Spreadsheet",
+    odp: "OpenDocument Presentation",
     java: "Java Source", rb: "Ruby Source",
     kt: "Kotlin Source", kts: "Kotlin Script",
     swift: "Swift Source", php: "PHP Source", lua: "Lua Source",

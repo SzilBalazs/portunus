@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { SearchResult } from "../types";
-import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv } from "../utils";
+import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, isOfficeText, isSpreadsheet } from "../utils";
 import { EnterIcon, CopyIcon, FolderOpenIcon, CheckIcon } from "../icons";
 import hljs from "highlight.js/lib/core";
 import langRust       from "highlight.js/lib/languages/rust";
@@ -196,15 +196,32 @@ function ImagePreview({ path }: { path: string }) {
 
 // ── svg preview ───────────────────────────────────────────────────────────────
 
-// SVG is a vector format the image crate can't decode, but WebKit renders it
-// natively — so we load it straight through the asset protocol instead of the
-// raster pipeline used by ImagePreview.
-function SvgPreview({ path }: { path: string }) {
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-  const src = convertFileSrc(path);
+// The asset protocol scope is restricted to icon dirs, so we can't use
+// convertFileSrc for arbitrary paths. Instead, read the SVG markup via the
+// existing read_text_preview command and create a blob URL from it.
+const svgBlobCache = new Map<string, string>();
 
-  useEffect(() => { setLoaded(false); setError(false); }, [path]);
+function SvgPreview({ path }: { path: string }) {
+  const [src, setSrc] = useState<string | null>(() => svgBlobCache.get(path) ?? null);
+  const [loaded, setLoaded] = useState(() => svgBlobCache.has(path));
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    const cached = svgBlobCache.get(path);
+    if (cached) { setSrc(cached); setLoaded(true); setError(false); return; }
+    let cancelled = false;
+    setSrc(null); setLoaded(false); setError(false);
+    invoke<string>("read_text_preview", { path })
+      .then(markup => {
+        if (cancelled) return;
+        const blob = new Blob([markup], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        svgBlobCache.set(path, url);
+        setSrc(url);
+      })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [path]);
 
   return (
     <div className={`pdf-preview-wrap${!loaded && !error ? " is-loading" : ""}`}>
@@ -214,14 +231,16 @@ function SvgPreview({ path }: { path: string }) {
           style={{ opacity: loaded ? 0 : 1, animation: loaded ? "none" : undefined }}
         />
       )}
-      <img
-        src={src}
-        alt="SVG preview"
-        className={loaded ? "pdf-img-revealed" : undefined}
-        style={{ opacity: loaded ? undefined : 0 }}
-        onLoad={() => setLoaded(true)}
-        onError={() => setError(true)}
-      />
+      {src && (
+        <img
+          src={src}
+          alt="SVG preview"
+          className={loaded ? "pdf-img-revealed" : undefined}
+          style={{ opacity: loaded ? undefined : 0 }}
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+        />
+      )}
       {error && <span className="pdf-preview-msg">Preview unavailable</span>}
     </div>
   );
@@ -270,6 +289,71 @@ function CsvPreview({ path, delim }: { path: string; delim: string }) {
       .catch(() => { if (!cancelled) setRows([]); });
     return () => { cancelled = true; };
   }, [path, delim]);
+
+  if (rows === null) return <div className="text-preview-wrap" />;
+  if (rows.length === 0) return <div className="text-preview-wrap" />;
+
+  const [header, ...body] = rows;
+  return (
+    <div className="text-preview-wrap">
+      <table className="csv-preview">
+        <thead>
+          <tr>{header.map((cell, i) => <th key={i}>{cell}</th>)}</tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri}>{r.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── office text preview (docx / pptx / odt / odp) ────────────────────────────
+
+function OfficeTextPreview({ path }: { path: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHtml(null);
+    invoke<string>("read_office_preview", { path })
+      .then(text => {
+        if (cancelled) return;
+        // Render as plain preformatted text; no syntax highlighting needed.
+        const escaped = text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        setHtml(escaped);
+      })
+      .catch(() => { if (!cancelled) setHtml(""); });
+    return () => { cancelled = true; };
+  }, [path]);
+
+  if (html === null) return <div className="text-preview-wrap" />;
+
+  return (
+    <div className="text-preview-wrap">
+      <pre className="text-preview-code" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+}
+
+// ── spreadsheet preview (xlsx / ods) ─────────────────────────────────────────
+
+function SpreadsheetPreview({ path }: { path: string }) {
+  const [rows, setRows] = useState<string[][] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    invoke<string[][]>("read_spreadsheet_preview", { path })
+      .then(r => { if (!cancelled) setRows(r); })
+      .catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, [path]);
 
   if (rows === null) return <div className="text-preview-wrap" />;
   if (rows.length === 0) return <div className="text-preview-wrap" />;
@@ -431,7 +515,9 @@ export default function FilePreview({ result, onLaunch, onReveal }: Props) {
   const isImage = !isFolder && isImagePreviewable(result.title);
   const isSvgFile = !isFolder && isSvg(result.title);
   const isCsvFile = !isFolder && isCsv(result.title);
-  const textLang = !isFolder && !isImage && !isSvgFile && !isCsvFile
+  const isOfficeTextFile = !isFolder && isOfficeText(result.title);
+  const isSpreadsheetFile = !isFolder && isSpreadsheet(result.title);
+  const textLang = !isFolder && !isImage && !isSvgFile && !isCsvFile && !isOfficeTextFile && !isSpreadsheetFile
     ? textPreviewLang(result.title)
     : null;
 
@@ -488,6 +574,8 @@ export default function FilePreview({ result, onLaunch, onReveal }: Props) {
       {isImage && <ImagePreview path={filePath} />}
       {isSvgFile && <SvgPreview path={filePath} />}
       {isCsvFile && <CsvPreview path={filePath} delim={result.title.toLowerCase().endsWith(".tsv") ? "\t" : ","} />}
+      {isOfficeTextFile && <OfficeTextPreview path={filePath} />}
+      {isSpreadsheetFile && <SpreadsheetPreview path={filePath} />}
       {textLang === "markdown" && <MarkdownPreview path={filePath} />}
       {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} />}
       {isFolder && <FolderContents path={filePath} />}

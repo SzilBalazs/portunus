@@ -340,6 +340,8 @@ fn extract_text(path: &str, cfg: &ContentConfig) -> Result<String, String> {
         Err("image OCR disabled".to_string())
     } else if TEXT_EXTENSIONS.contains(&ext.as_str()) {
         std::fs::read_to_string(path).map_err(|e| e.to_string())
+    } else if crate::office::is_office_ext(&ext) {
+        crate::office::extract_office_text(path)
     } else {
         Err(format!("unsupported extension: {ext}"))
     }

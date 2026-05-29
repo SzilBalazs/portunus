@@ -35,3 +35,4 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 rayon = "1"
 leptess = { version = "0.14", optional = true }
 notify-debouncer-full = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
