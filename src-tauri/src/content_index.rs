@@ -43,7 +43,7 @@ impl ContentIndex {
         std::fs::create_dir_all(&dir).ok();
         let db_path = dir.join("content_index.db");
 
-        let conn = Connection::open(&db_path)?;
+        let conn = crate::util::open_sqlite_resilient(&db_path)?;
 
         // Detect old schema (has `hash` column) and drop if found — triggers one-time reindex.
         let has_hash: bool = conn

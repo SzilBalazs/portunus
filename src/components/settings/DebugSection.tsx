@@ -1,17 +1,9 @@
 import { Config } from "../../types";
+import Toggle from "./Toggle";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="toggle-wrap">
-      <input type="checkbox" className="toggle-input" checked={checked} onChange={e => onChange(e.target.checked)} />
-      <span className="toggle-track"><span className="toggle-thumb" /></span>
-    </label>
-  );
 }
 
 export default function DebugSection({ config, onChange }: Props) {
@@ -31,7 +23,7 @@ export default function DebugSection({ config, onChange }: Props) {
           <div className="settings-field-desc">Print fuzzy match scores and thresholds for every candidate to stderr</div>
         </div>
         <div className="settings-field-control">
-          <Toggle checked={config.debug.log_scores} onChange={v => set({ log_scores: v })} />
+          <Toggle label="Log match scores" checked={config.debug.log_scores} onChange={v => set({ log_scores: v })} />
         </div>
       </div>
 
@@ -41,7 +33,7 @@ export default function DebugSection({ config, onChange }: Props) {
           <div className="settings-field-desc">Print filesystem watcher events and index update decisions to stderr</div>
         </div>
         <div className="settings-field-control">
-          <Toggle checked={config.debug.log_watcher} onChange={v => set({ log_watcher: v })} />
+          <Toggle label="Log watcher events" checked={config.debug.log_watcher} onChange={v => set({ log_watcher: v })} />
         </div>
       </div>
     </div>

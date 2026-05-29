@@ -1,42 +1,9 @@
 import { Config } from "../../types";
+import NumberField from "./NumberField";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
-}
-
-function NumberField({
-  label, desc, value, min, max, step, onChange,
-}: {
-  label: string; desc: string; value: number; min?: number; max?: number; step?: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className="settings-field">
-      <div className="settings-field-label">
-        <div className="settings-field-name">{label}</div>
-        <div className="settings-field-desc">{desc}</div>
-      </div>
-      <div className="settings-field-control">
-        <div className="settings-number-wrap">
-          <button className="settings-number-btn" onClick={() => onChange(Math.max(min ?? 0, value - (step ?? 1)))}>−</button>
-          <input
-            type="number"
-            className="settings-number-input"
-            value={value}
-            min={min}
-            max={max}
-            step={step}
-            onChange={e => {
-              const v = parseFloat(e.target.value);
-              if (!isNaN(v)) onChange(v);
-            }}
-          />
-          <button className="settings-number-btn" onClick={() => onChange(Math.min(max ?? Infinity, value + (step ?? 1)))}>+</button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export default function SearchSection({ config, onChange }: Props) {

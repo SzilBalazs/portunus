@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Config, DepStatus } from "../../types";
+import Toggle from "./Toggle";
 
 interface Props {
   config: Config;
@@ -22,20 +23,6 @@ const PROVIDERS: ProviderDef[] = [
   { key: "calc",   label: "Calculator",    desc: "Inline math expression evaluator" },
   { key: "dict",   label: "Dictionary",    desc: "Word definitions via dict", dep: "dict" },
 ];
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="toggle-wrap">
-      <input
-        type="checkbox"
-        className="toggle-input"
-        checked={checked}
-        onChange={e => onChange(e.target.checked)}
-      />
-      <span className="toggle-track"><span className="toggle-thumb" /></span>
-    </label>
-  );
-}
 
 export default function ProvidersSection({ config, onChange }: Props) {
   const set = (key: keyof Config["providers"], value: boolean) =>
@@ -71,7 +58,7 @@ export default function ProvidersSection({ config, onChange }: Props) {
               )}
             </div>
             <div className="settings-field-control">
-              <Toggle checked={enabled} onChange={v => set(key, v)} />
+              <Toggle label={label} checked={enabled} onChange={v => set(key, v)} />
             </div>
           </div>
         );

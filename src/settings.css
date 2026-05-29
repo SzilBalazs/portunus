@@ -11,6 +11,18 @@ html, body, #root {
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Suppress WebKit's default focus ring (the cyan box that lingers after a
+   mouse click) everywhere, and add a themed keyboard-focus ring only on
+   interactive controls. Scoped to buttons/links/tabbables on purpose: text
+   inputs already signal focus via their border, so they don't need a ring. */
+:focus { outline: none; }
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 :root {
   --bg-card:        #221e1a;
   --bg-preview:     #191613;
@@ -761,6 +773,46 @@ html, body, #root {
   align-items: stretch;
   gap: 8px;
 }
+
+.settings-reindex-strip--error {
+  background: var(--bg-card);
+  border-color: var(--danger-fg);
+  color: var(--danger-fg);
+}
+
+.settings-reindex-strip--error .settings-reindex-icon { color: var(--danger-fg); }
+
+/* ---------- config parse-error banner ---------- */
+
+.settings-config-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--danger-fg);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger-fg);
+}
+
+.settings-config-error-msg { flex: 1; white-space: pre-wrap; }
+
+.settings-config-error-dismiss {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-desc);
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 5px;
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.settings-config-error-dismiss:hover { color: var(--fg); border-color: var(--fg-desc); }
 
 .settings-reindex-bar {
   height: 4px;

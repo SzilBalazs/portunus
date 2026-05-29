@@ -1,22 +1,16 @@
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import { Config, ContentDirEntry } from "../../types";
+import Toggle from "./Toggle";
+import NumberField from "./NumberField";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
   pendingReindex: boolean;
   reindexProgress: { indexed: number; total: number } | null;
+  reindexError: string | null;
   onApply: () => void;
   onRevert: () => void;
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="toggle-wrap">
-      <input type="checkbox" className="toggle-input" checked={checked} onChange={e => onChange(e.target.checked)} />
-      <span className="toggle-track"><span className="toggle-thumb" /></span>
-    </label>
-  );
 }
 
 function ExtensionEditor({ extensions, onChange }: { extensions: string[]; onChange: (e: string[]) => void }) {
@@ -55,7 +49,7 @@ function ExtensionEditor({ extensions, onChange }: { extensions: string[]; onCha
   );
 }
 
-export default function ContentSection({ config, onChange, pendingReindex, reindexProgress, onApply, onRevert }: Props) {
+export default function ContentSection({ config, onChange, pendingReindex, reindexProgress, reindexError, onApply, onRevert }: Props) {
   const cc = config.content;
   const reindexing = reindexProgress != null && reindexProgress.total > 0 && reindexProgress.indexed < reindexProgress.total;
   const pct = reindexProgress && reindexProgress.total > 0
@@ -105,7 +99,19 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
         Requires: <strong>poppler</strong> (pdftotext/pdftoppm) for PDF text extraction. OCR additionally requires <strong>tesseract</strong> + <strong>tesseract-data-eng</strong>. Re-index on demand: <code style={{ fontFamily: "monospace" }}>portunus --reindex</code>
       </div>
 
-      {pendingReindex && !reindexing && (
+      {reindexError && !reindexing && (
+        <div className="settings-reindex-strip settings-reindex-strip--error">
+          <svg className="settings-reindex-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span className="settings-reindex-msg">
+            Reindex failed: {reindexError}
+          </span>
+          <button className="settings-reindex-apply" onClick={onApply}>Retry</button>
+        </div>
+      )}
+
+      {pendingReindex && !reindexing && !reindexError && (
         <div className="settings-reindex-strip">
           <svg className="settings-reindex-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -136,31 +142,19 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           <div className="settings-field-desc">Master switch for full-text indexing. The index is built in the background after startup.</div>
         </div>
         <div className="settings-field-control">
-          <Toggle checked={cc.enabled} onChange={v => set({ enabled: v })} />
+          <Toggle label="Enable content search" checked={cc.enabled} onChange={v => set({ enabled: v })} />
         </div>
       </div>
 
-      <div className="settings-field">
-        <div className="settings-field-label">
-          <div className="settings-field-name">Max file size</div>
-          <div className="settings-field-desc">Skip files larger than this limit to avoid long indexing times</div>
-        </div>
-        <div className="settings-field-control">
-          <div className="settings-number-wrap">
-            <button className="settings-number-btn" onClick={() => set({ max_file_bytes: mbToBytes(Math.max(0.5, bytesToMb(cc.max_file_bytes) - 1)) })}>−</button>
-            <input
-              type="number"
-              className="settings-number-input"
-              style={{ width: 64 }}
-              value={bytesToMb(cc.max_file_bytes)}
-              min={0.5} max={512} step={1}
-              onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0) set({ max_file_bytes: mbToBytes(v) }); }}
-            />
-            <button className="settings-number-btn" onClick={() => set({ max_file_bytes: mbToBytes(Math.min(512, bytesToMb(cc.max_file_bytes) + 1) ) })}>+</button>
-          </div>
-          <span style={{ marginLeft: 8, fontSize: 11, color: "var(--fg-mute)" }}>MB</span>
-        </div>
-      </div>
+      <NumberField
+        label="Max file size"
+        desc="Skip files larger than this limit to avoid long indexing times"
+        value={bytesToMb(cc.max_file_bytes)}
+        min={0.5} max={512} step={1}
+        suffix="MB"
+        width={64}
+        onChange={mb => set({ max_file_bytes: mbToBytes(mb) })}
+      />
 
       <div className="settings-field">
         <div className="settings-field-label">
@@ -168,7 +162,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           <div className="settings-field-desc">Run OCR on image files (jpg, png, webp…) using Tesseract — requires tesseract installed</div>
         </div>
         <div className="settings-field-control">
-          <Toggle checked={cc.ocr_images} onChange={v => set({ ocr_images: v })} />
+          <Toggle label="OCR images" checked={cc.ocr_images} onChange={v => set({ ocr_images: v })} />
         </div>
       </div>
 
@@ -178,7 +172,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           <div className="settings-field-desc">Run OCR on PDFs that contain no extractable text layer (scanned documents)</div>
         </div>
         <div className="settings-field-control">
-          <Toggle checked={cc.ocr_pdf_fallback} onChange={v => set({ ocr_pdf_fallback: v })} />
+          <Toggle label="OCR PDF fallback" checked={cc.ocr_pdf_fallback} onChange={v => set({ ocr_pdf_fallback: v })} />
         </div>
       </div>
 
@@ -198,25 +192,13 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
         </div>
       </div>
 
-      <div className="settings-field">
-        <div className="settings-field-label">
-          <div className="settings-field-name">Indexer threads</div>
-          <div className="settings-field-desc">Rayon worker threads for parallel indexing. Set to 0 to use all CPU cores.</div>
-        </div>
-        <div className="settings-field-control">
-          <div className="settings-number-wrap">
-            <button className="settings-number-btn" onClick={() => set({ threads: Math.max(0, cc.threads - 1) })}>−</button>
-            <input
-              type="number"
-              className="settings-number-input"
-              value={cc.threads}
-              min={0} max={64} step={1}
-              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0) set({ threads: v }); }}
-            />
-            <button className="settings-number-btn" onClick={() => set({ threads: Math.min(64, cc.threads + 1) })}>+</button>
-          </div>
-        </div>
-      </div>
+      <NumberField
+        label="Indexer threads"
+        desc="Rayon worker threads for parallel indexing. Set to 0 to use all CPU cores."
+        value={cc.threads}
+        min={0} max={64} step={1}
+        onChange={v => set({ threads: Math.round(v) })}
+      />
 
       <div style={{ marginTop: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-mute)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>

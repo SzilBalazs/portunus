@@ -18,6 +18,9 @@ const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint', 
 export default function App() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  // True between scheduling a search and its results arriving, so the results
+  // list can distinguish "still loading" from a genuine zero-result query.
+  const [searching, setSearching] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
@@ -102,10 +105,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!query.trim()) { setResults([]); return; }
+    if (!query.trim()) { setResults([]); setSearching(false); return; }
     let cancelled = false;
+    setSearching(true);
     const t = setTimeout(() => {
-      invoke<SearchResult[]>("search", { query }).then(r => { if (!cancelled) setResults(r); });
+      invoke<SearchResult[]>("search", { query }).then(r => {
+        if (!cancelled) { setResults(r); setSearching(false); }
+      });
     }, 40);
     return () => { cancelled = true; clearTimeout(t); };
   }, [query]);
@@ -115,16 +121,26 @@ export default function App() {
   const displayResults = useMemo<SearchResult[]>(() => {
     if (query.trim()) {
       const isContent = query.trimStart().startsWith('!');
-      if (isContent && !contentEnabled) {
-        return [{
-          id: "content:disabled",
-          title: "Content search is disabled",
-          subtitle: "Open Settings → Content to enable",
-          kind: "content-disabled",
-          score: 0,
-        }];
+      if (isContent) {
+        // Strip the '!' prefix; with no term yet ("!", "!  ") there is nothing to
+        // search, so show nothing rather than a stray disabled hint or empty state.
+        const term = query.trimStart().slice(1).trim();
+        if (!term) return [];
+        if (!contentEnabled) {
+          return [{
+            id: "content:disabled",
+            title: "Content search is disabled",
+            subtitle: "Open Settings → Content to enable",
+            kind: "content-disabled",
+            score: 0,
+          }];
+        }
+        return results;
       }
-      if (results.length === 0 && !isContent) {
+      if (results.length === 0) {
+        // Suggest content search only once the regular search has resolved with
+        // nothing — otherwise the hint flashes before the first debounce lands.
+        if (searching) return [];
         return [{
           id: "content:hint",
           title: "Search file contents",
@@ -144,7 +160,7 @@ export default function App() {
       score: 0,
       exec: `timer:dismiss:${t.id}`,
     }));
-  }, [query, results, expiredTimers, contentEnabled]);
+  }, [query, results, expiredTimers, contentEnabled, searching]);
 
   const hasTimerItems = displayResults.some(r => r.kind === "timer-item");
   useEffect(() => {
@@ -254,6 +270,11 @@ export default function App() {
   const selected = displayResults[selectedIndex] ?? null;
   const calcResult = results.find(r => r.kind === "calc");
   const isContentSearch = query.trimStart().startsWith('!');
+  // Whether there's an actual term to search. For content queries that means
+  // something after the '!'; a bare "!"/"!  " has no term (so no "No results").
+  const hasSearchTerm = isContentSearch
+    ? query.trimStart().slice(1).trim().length > 0
+    : query.trim().length > 0;
 
   const launchableResults = useMemo(
     () => displayResults.filter(r => !NON_INDEXABLE_KINDS.has(r.kind)),
@@ -337,7 +358,8 @@ export default function App() {
           <ResultsList
             results={displayResults}
             selectedIndex={selectedIndex}
-            query={query}
+            active={hasSearchTerm}
+            searching={searching}
             onSelect={setSelectedIndex}
             onLaunch={launch}
             launchableResults={launchableResults}

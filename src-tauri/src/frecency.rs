@@ -24,7 +24,7 @@ impl FrecencyStore {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let conn = Connection::open(&path)?;
+        let conn = crate::util::open_sqlite_resilient(&path)?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS frecency (

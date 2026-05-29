@@ -259,6 +259,11 @@ impl SharedSearchConfig {
 
 // ── loader ────────────────────────────────────────────────────────────────────
 
+/// Set when `load()` finds an unparseable config file. Drained by the
+/// `take_config_error` command so the settings UI can warn the user that their
+/// file failed to parse (and was backed up) rather than silently resetting it.
+pub static LAST_LOAD_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 impl Config {
     pub fn load() -> Self {
         let path = config_path();
@@ -282,6 +287,23 @@ impl Config {
             }
             Err(e) => {
                 eprintln!("[config] failed to parse {}: {e} — using defaults", path.display());
+                // Preserve the unparseable file so a clobbering autosave can't destroy
+                // it, and record the error so the settings UI can warn the user rather
+                // than silently resetting every setting to defaults.
+                let backup = path.with_extension("toml.bak");
+                let detail = match std::fs::copy(&path, &backup) {
+                    Ok(_) => {
+                        eprintln!("[config] backed up unparseable config to {}", backup.display());
+                        format!("{e}\n\nYour previous config was backed up to {}.", backup.display())
+                    }
+                    Err(err) => {
+                        eprintln!("[config] could not back up config: {err}");
+                        format!("{e}")
+                    }
+                };
+                if let Ok(mut slot) = LAST_LOAD_ERROR.lock() {
+                    *slot = Some(detail);
+                }
                 Self::default()
             }
         }

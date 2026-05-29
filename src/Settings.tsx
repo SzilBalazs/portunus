@@ -146,6 +146,10 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when "Apply & Reindex" fails, shown inline in the Content strip with a retry.
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  // Set when the backend reports the on-disk config failed to parse (and was reset).
+  const [configError, setConfigError] = useState<string | null>(null);
   // Whether the content index is currently empty (drives first-enable detection).
   const [indexEmpty, setIndexEmpty] = useState(true);
   // Live reindex progress, mirrored from the backend so the user gets feedback
@@ -166,6 +170,11 @@ export default function Settings() {
       applyTheme(cfg.appearance);
       setError(null);
       invoke<boolean>("is_content_index_empty").then(setIndexEmpty).catch(() => {});
+      // Surface a one-time warning if the backend had to fall back to defaults
+      // because the on-disk config couldn't be parsed.
+      invoke<string | null>("take_config_error").then(msg => {
+        if (msg) setConfigError(msg);
+      }).catch(() => {});
     } catch (e) {
       setError(String(e));
     }
@@ -284,6 +293,7 @@ export default function Settings() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaving(true);
     setError(null);
+    setReindexError(null);
     try {
       await invoke("save_config", { config });
       diskConfigRef.current = config;
@@ -294,7 +304,8 @@ export default function Settings() {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1800);
     } catch (e) {
-      setError(String(e));
+      // Keep the staged edits intact so the user can fix the cause and retry.
+      setReindexError(String(e));
     } finally {
       setSaving(false);
     }
@@ -304,6 +315,7 @@ export default function Settings() {
   const revertReindex = useCallback(() => {
     const base = diskConfigRef.current;
     if (!base || !config) return;
+    setReindexError(null);
     setConfig({
       ...config,
       content: {
@@ -347,10 +359,14 @@ export default function Settings() {
         {/* Body */}
         <div className="settings-body">
           {/* Sidebar */}
-          <div className="settings-sidebar">
+          <div className="settings-sidebar" role="tablist" aria-orientation="vertical">
             {NAV.map(item => (
               <button
                 key={item.id}
+                role="tab"
+                aria-selected={activeSection === item.id}
+                id={`settings-tab-${item.id}`}
+                aria-controls="settings-tabpanel"
                 className={`settings-nav-item${activeSection === item.id ? " active" : ""}`}
                 onClick={() => setActiveSection(item.id)}
               >
@@ -361,7 +377,20 @@ export default function Settings() {
           </div>
 
           {/* Content */}
-          <div className="settings-content">
+          <div
+            className="settings-content"
+            role="tabpanel"
+            id="settings-tabpanel"
+            aria-labelledby={`settings-tab-${activeSection}`}
+          >
+            {configError && (
+              <div className="settings-config-error">
+                <span className="settings-config-error-msg">
+                  Your config file couldn’t be parsed, so defaults are in use:{"\n"}{configError}
+                </span>
+                <button className="settings-config-error-dismiss" onClick={() => setConfigError(null)}>Dismiss</button>
+              </div>
+            )}
             {!config ? (
               <div style={{ padding: "24px 0", color: "var(--fg-dim)", fontSize: 13 }}>
                 {error ? `Error: ${error}` : "Loading…"}
@@ -379,6 +408,7 @@ export default function Settings() {
                     onChange={setConfig}
                     pendingReindex={pendingReindex}
                     reindexProgress={reindexProgress}
+                    reindexError={reindexError}
                     onApply={applyReindex}
                     onRevert={revertReindex}
                   />

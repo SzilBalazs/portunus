@@ -218,10 +218,27 @@ fn is_content_index_empty(state: tauri::State<'_, ContentState>) -> bool {
         }
     }
     // No open index (content disabled) — count rows in the on-disk DB directly.
+    // `open` is resilient: a corrupt DB is recreated empty rather than surfacing an
+    // error, so a `true` here means genuinely empty (the first-build prompt is then
+    // accurate). A residual Err is a hard I/O/permission failure with no rebuild
+    // recovery, so we log it loudly instead of silently pretending the index is empty.
     match content_index::ContentIndex::open() {
         Ok(idx) => idx.is_empty(),
-        Err(_) => true,
+        Err(e) => {
+            eprintln!("[content] is_content_index_empty: failed to open index: {e}");
+            true
+        }
     }
+}
+
+/// Drains the last config parse error (set by `Config::load`) so the settings UI
+/// can show a one-time banner. Returns None when the config loaded cleanly.
+#[tauri::command]
+fn take_config_error() -> Option<String> {
+    config::LAST_LOAD_ERROR
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
 }
 
 /// Full clear-and-rebuild of the content index using the current on-disk config.
@@ -554,6 +571,7 @@ pub fn run() {
             trigger_full_reindex,
             is_content_index_empty,
             check_dependencies,
+            take_config_error,
             // Timer provider
             providers::timer::create_timer,
             providers::timer::stop_timer,

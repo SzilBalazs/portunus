@@ -35,13 +35,15 @@ function Snippet({ text }: { text: string }) {
 interface Props {
   results: SearchResult[];
   selectedIndex: number;
-  query: string;
+  /** Whether the user has entered a meaningful search term (drives the empty state). */
+  active: boolean;
+  searching?: boolean;
   onSelect: (index: number) => void;
   onLaunch: (result?: SearchResult) => void;
   launchableResults: SearchResult[];
 }
 
-export default function ResultsList({ results, selectedIndex, query, onSelect, onLaunch, launchableResults }: Props) {
+export default function ResultsList({ results, selectedIndex, active, searching, onSelect, onLaunch, launchableResults }: Props) {
   const selectedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,7 +52,7 @@ export default function ResultsList({ results, selectedIndex, query, onSelect, o
 
   return (
     <div className="results-col" role="listbox">
-      {query.trim() && results.length === 0 && (
+      {active && results.length === 0 && !searching && (
         <div className="results-empty">No results</div>
       )}
       {results.map((result, i) => {
