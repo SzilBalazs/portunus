@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
-use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
+use nucleo_matcher::Utf32Str;
 
 use super::{Provider, SearchResult};
 use crate::config::{RecentConfig, SharedConfig};
@@ -49,14 +48,7 @@ impl Provider for RecentProvider {
         let log_scores = cfg.log_scores;
         drop(cfg);
 
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let pattern = Pattern::new(
-            query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
-        let mut char_buf = Vec::new();
+        let (pattern, mut matcher, mut char_buf) = super::fuzzy_setup(query);
 
         self.entries
             .iter()
@@ -85,11 +77,10 @@ impl Provider for RecentProvider {
                     kind: if entry.is_dir { "folder" } else { "file" }.to_string(),
                     score: base + score as f32 + recency,
                     exec: Some(format!("xdg-open \"{}\"", escaped)),
-                    icon_path: None,
                     file_size: entry.file_size,
                     created: entry.created,
-                    snippet: None,
-                modified: entry.modified,
+                    modified: entry.modified,
+                    ..Default::default()
                 })
             })
             .collect()

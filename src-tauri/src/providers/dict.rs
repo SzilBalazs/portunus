@@ -78,12 +78,7 @@ impl Provider for DictProvider {
             subtitle: Some("WordNet dictionary".to_string()),
             kind: "dict".to_string(),
             score: super::SCORE_DICT,
-            exec: None,
-            icon_path: None,
-            file_size: None,
-            created: None,
-            snippet: None,
-            modified: None,
+            ..Default::default()
         }]
     }
 }
@@ -95,12 +90,7 @@ fn hint_result(subtitle: &str) -> SearchResult {
         subtitle: Some(subtitle.to_string()),
         kind: "dict-hint".to_string(),
         score: super::SCORE_DICT,
-        exec: None,
-        icon_path: None,
-        file_size: None,
-        created: None,
-        snippet: None,
-            modified: None,
+        ..Default::default()
     }
 }
 

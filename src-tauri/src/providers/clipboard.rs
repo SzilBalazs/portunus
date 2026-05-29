@@ -134,11 +134,7 @@ impl Provider for ClipboardProvider {
                     kind: kind.to_string(),
                     score: SCORE_CLIPBOARD - rank as f32,
                     exec: Some(format!("clipboard:copy:{}", entry.id)),
-                    icon_path: None,
-                    file_size: None,
-                    created: None,
-                    snippet: None,
-            modified: None,
+                    ..Default::default()
                 })
             })
             .collect()

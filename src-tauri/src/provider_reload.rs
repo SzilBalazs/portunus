@@ -3,6 +3,27 @@ use std::sync::{Arc, Mutex};
 
 use crate::{config, content_index, providers, ContentWatcherTx, FileWatcherTx, Registry, SharedFileEntries};
 
+/// Spawn a thread that calls `build()` to produce an optional provider, replaces
+/// it in the registry under `id`, logs `name`, then fires `notify_cb`.
+/// Used for the simple (recent, apps) rebuild cases where the only difference is
+/// what gets constructed.
+fn spawn_rebuild(
+    registry: &Registry,
+    notify_cb: &Arc<dyn Fn() + Send + Sync>,
+    id: &'static str,
+    name: &'static str,
+    build: impl FnOnce() -> Option<Box<dyn providers::Provider>> + Send + 'static,
+) {
+    let reg = Arc::clone(registry);
+    let ncb = Arc::clone(notify_cb);
+    std::thread::spawn(move || {
+        let new = build();
+        reg.write().unwrap().replace(id, new);
+        eprintln!("[config] {name} provider rebuilt");
+        ncb();
+    });
+}
+
 pub fn rebuild_providers(
     new_cfg: &config::Config,
     old_cfg: &config::Config,
@@ -88,34 +109,16 @@ pub fn rebuild_providers(
         let recent_cfg = new_cfg.recent.clone();
         let enabled = new_cfg.providers.recent;
         let shared2 = Arc::clone(shared);
-        let reg2 = Arc::clone(registry);
-        let ncb = Arc::clone(notify_cb);
-        std::thread::spawn(move || {
-            let new: Option<Box<dyn providers::Provider>> = if enabled {
-                Some(Box::new(providers::recent::RecentProvider::new(&recent_cfg, shared2)))
-            } else {
-                None
-            };
-            reg2.write().unwrap().replace("recent", new);
-            eprintln!("[config] recent provider rebuilt");
-            ncb();
+        spawn_rebuild(registry, notify_cb, "recent", "recent", move || {
+            enabled.then(|| Box::new(providers::recent::RecentProvider::new(&recent_cfg, shared2)) as _)
         });
     }
 
     if new_cfg.providers.apps != old_cfg.providers.apps {
         let enabled = new_cfg.providers.apps;
         let shared2 = Arc::clone(shared);
-        let reg2 = Arc::clone(registry);
-        let ncb = Arc::clone(notify_cb);
-        std::thread::spawn(move || {
-            let new: Option<Box<dyn providers::Provider>> = if enabled {
-                Some(Box::new(providers::apps::AppProvider::new(shared2)))
-            } else {
-                None
-            };
-            reg2.write().unwrap().replace("apps", new);
-            eprintln!("[config] apps provider rebuilt");
-            ncb();
+        spawn_rebuild(registry, notify_cb, "apps", "apps", move || {
+            enabled.then(|| Box::new(providers::apps::AppProvider::new(shared2)) as _)
         });
     }
 

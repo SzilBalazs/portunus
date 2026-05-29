@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { Config, SearchResult, ExpiredTimer } from "./types";
 import { playTimerChime, audioCtxWarmup } from "./utils";
@@ -9,6 +10,7 @@ import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
 import FooterHints from "./components/FooterHints";
 import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers/registry";
+import { useTauriListener } from "./hooks/useTauriListener";
 import "./providers";
 import "./App.css";
 import "./themes.css";
@@ -77,32 +79,27 @@ export default function App() {
     return () => { active = false; clearTimeout(doneTimer); unlisten?.(); };
   }, []);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let active = true;
-    listen("window-show", () => {
-      inputRef.current?.focus();
-      audioCtxWarmup();
-      invoke<Config>("get_config").then(cfg => setContentEnabled(cfg.content.enabled));
-    }).then(fn => {
-      if (active) unlisten = fn; else fn();
-    });
-    return () => { active = false; unlisten?.(); };
-  }, []);
+  useTauriListener("window-show", () => {
+    inputRef.current?.focus();
+    audioCtxWarmup();
+    invoke<Config>("get_config").then(cfg => setContentEnabled(cfg.content.enabled));
+  });
 
   useEffect(() => {
+    const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
-    let active = true;
-    listen<string>("window-show-query", event => {
-      setQuery(event.payload);
-      // Don't manually clear results — the query useEffect will re-search immediately.
-      inputRef.current?.focus();
-      audioCtxWarmup();
-    }).then(fn => {
-      if (active) unlisten = fn; else fn();
-    });
-    return () => { active = false; unlisten?.(); };
+    win.onFocusChanged(({ payload: focused }) => {
+      if (focused) inputRef.current?.focus();
+    }).then(fn => { unlisten = fn; });
+    return () => { unlisten?.(); };
   }, []);
+
+  useTauriListener<string>("window-show-query", payload => {
+    setQuery(payload);
+    // Don't manually clear results — the query useEffect will re-search immediately.
+    inputRef.current?.focus();
+    audioCtxWarmup();
+  });
 
   useEffect(() => {
     if (!query.trim()) { setResults([]); setSearching(false); return; }
@@ -172,37 +169,23 @@ export default function App() {
     return () => clearInterval(id);
   }, [hasTimerItems]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let active = true;
-    listen<ExpiredTimer>("timer-expired", event => {
-      playTimerChime();
-      setExpiredTimers(prev => [...prev, event.payload]);
-      setQuery("");
-    }).then(fn => { if (active) unlisten = fn; else fn(); });
-    return () => { active = false; unlisten?.(); };
-  }, []);
+  useTauriListener<ExpiredTimer>("timer-expired", payload => {
+    playTimerChime();
+    setExpiredTimers(prev => [...prev, payload]);
+    setQuery("");
+  });
 
   const requery = () => {
     const q = queryRef.current;
     if (q.trim()) invoke<SearchResult[]>("search", { query: q }).then(setResults);
   };
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let active = true;
-    listen("search-invalidated", () => {
-      requery();
-      // Also refresh content.enabled so the disabled hint appears/disappears
-      // immediately when the user toggles content search in Settings.
-      invoke<Config>("get_config").then(cfg => {
-        if (active) setContentEnabled(cfg.content.enabled);
-      });
-    }).then(fn => {
-      if (active) unlisten = fn; else fn();
-    });
-    return () => { active = false; unlisten?.(); };
-  }, []);
+  useTauriListener("search-invalidated", () => {
+    requery();
+    // Also refresh content.enabled so the disabled hint appears/disappears
+    // immediately when the user toggles content search in Settings.
+    invoke<Config>("get_config").then(cfg => setContentEnabled(cfg.content.enabled));
+  });
 
   const makeCtx = (): LaunchContext => ({
     setQuery,
@@ -311,7 +294,7 @@ export default function App() {
     <div className="launcher">
       <div className="card" onMouseDown={e => {
         const t = e.target as HTMLElement;
-        if (t !== inputRef.current && !t.closest('pre, code, button')) e.preventDefault();
+        if (t !== inputRef.current && !t.closest('pre, code')) e.preventDefault();
       }}>
         <div className="search-bar">
           {indexingProgress && (

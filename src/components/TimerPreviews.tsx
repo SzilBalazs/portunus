@@ -100,7 +100,7 @@ export function TimerPreview({ result, onStop }: TimerPreviewProps) {
         <div className="timer-progress-fill" style={{ width: `${progress * 100}%` }} />
       </div>
       <div className="timer-preview-actions">
-        <button className="btn-primary btn-danger" onClick={onStop}>
+        <button className="btn-primary btn-danger" onClick={onStop} tabIndex={-1}>
           Stop timer <span className="btn-kbd">Del</span>
         </button>
       </div>
@@ -140,7 +140,7 @@ export function TimerCreatePreview({ result, onStart }: TimerCreatePreviewProps)
       )}
       {hasAction && (
         <div className="timer-preview-actions">
-          <button className="btn-primary" onClick={onStart}>
+          <button className="btn-primary" onClick={onStart} tabIndex={-1}>
             Start <span className="btn-kbd"><EnterIcon /></span>
           </button>
         </div>
@@ -206,7 +206,7 @@ export function TimerExpiredPreview({ label, onDismiss }: TimerExpiredPreviewPro
         <div className="timer-progress-fill" style={{ width: "100%" }} />
       </div>
       <div className="timer-preview-actions">
-        <button className="btn-primary" onClick={onDismiss}>
+        <button className="btn-primary" onClick={onDismiss} tabIndex={-1}>
           Dismiss <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>

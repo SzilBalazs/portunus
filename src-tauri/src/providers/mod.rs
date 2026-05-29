@@ -76,6 +76,34 @@ pub struct SearchResult {
     pub modified: Option<u64>,
 }
 
+impl Default for SearchResult {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            subtitle: None,
+            snippet: None,
+            kind: String::new(),
+            score: 0.0,
+            exec: None,
+            icon_path: None,
+            file_size: None,
+            created: None,
+            modified: None,
+        }
+    }
+}
+
+/// Returns a configured `(Pattern, Matcher, char_buf)` for fuzzy matching `query`.
+/// All three fuzzy providers (apps, files, recent) use identical nucleo settings.
+pub fn fuzzy_setup(query: &str) -> (nucleo_matcher::pattern::Pattern, nucleo_matcher::Matcher, Vec<char>) {
+    use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+    use nucleo_matcher::{Config, Matcher};
+    let pattern = Pattern::new(query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
+    let matcher = Matcher::new(Config::DEFAULT);
+    (pattern, matcher, Vec::new())
+}
+
 pub trait Provider: Send + Sync {
     #[allow(dead_code)]
     fn id(&self) -> &'static str;

@@ -30,7 +30,7 @@ export default function AppPreview({ result, onLaunch }: Props) {
         </div>
       </div>
       <div className="app-preview-actions">
-        <button className="btn-primary" onClick={onLaunch}>
+        <button className="btn-primary" onClick={onLaunch} tabIndex={-1}>
           Launch <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>

@@ -382,7 +382,7 @@ function DefinitionView({ word }: { word: string }) {
             <span className="dict-count">
               {data.definitions.length} def{data.definitions.length !== 1 ? 's' : ''}
             </span>
-            <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={copyFirst}>
+            <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={copyFirst} tabIndex={-1}>
               {copied ? <CheckIcon /> : <CopyIcon />}
             </button>
           </div>

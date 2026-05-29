@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import { Config, ContentDirEntry } from "../../types";
 import Toggle from "./Toggle";
 import NumberField from "./NumberField";
+import DirRow from "./DirRow";
 
 interface Props {
   config: Config;
@@ -223,24 +224,13 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
         <div className="settings-dir-list">
           {cc.dirs.map((dir, i) => (
             <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", background: "var(--kbd-bg)", borderRadius: 6, border: "1px solid var(--line-soft)" }}>
-              <div className="settings-dir-row">
-                <input
-                  className="settings-dir-path"
-                  value={dir.path}
-                  placeholder="~/path/to/dir"
-                  onChange={e => updateDir(i, { path: e.target.value })}
-                />
-                <div className="settings-dir-depth">
-                  <button className="settings-dir-depth-btn" onClick={() => updateDir(i, { depth: Math.max(1, dir.depth - 1) })}>−</button>
-                  <span className="settings-dir-depth-val" title="Search depth">{dir.depth}</span>
-                  <button className="settings-dir-depth-btn" onClick={() => updateDir(i, { depth: Math.min(10, dir.depth + 1) })}>+</button>
-                </div>
-                <button className="settings-dir-remove" onClick={() => removeDir(i)} title="Remove">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-                  </svg>
-                </button>
-              </div>
+              <DirRow
+                path={dir.path}
+                depth={dir.depth}
+                onPathChange={path => updateDir(i, { path })}
+                onDepthChange={depth => updateDir(i, { depth })}
+                onRemove={() => removeDir(i)}
+              />
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 11, color: "var(--fg-dim)", whiteSpace: "nowrap" }}>Override extensions:</span>
                 <ExtensionEditor
@@ -253,36 +243,18 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
 
           {draft !== null && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", background: "var(--kbd-bg)", borderRadius: 6, border: "1px solid var(--accent-border)" }}>
-              <div className="settings-dir-row settings-dir-row--draft">
-                <input
-                  ref={draftInputRef}
-                  className="settings-dir-path"
-                  value={draft.path}
-                  placeholder="~/path/to/dir"
-                  onChange={e => setDraft({ ...draft, path: e.target.value })}
-                  onKeyDown={onDraftKey}
-                />
-                <div className="settings-dir-depth">
-                  <button className="settings-dir-depth-btn" onClick={() => setDraft({ ...draft, depth: Math.max(1, draft.depth - 1) })}>−</button>
-                  <span className="settings-dir-depth-val" title="Search depth">{draft.depth}</span>
-                  <button className="settings-dir-depth-btn" onClick={() => setDraft({ ...draft, depth: Math.min(10, draft.depth + 1) })}>+</button>
-                </div>
-                <button
-                  className="settings-dir-confirm"
-                  onClick={commitDraft}
-                  disabled={draft.path.trim() === ""}
-                  title="Confirm"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                </button>
-                <button className="settings-dir-remove" onClick={() => setDraft(null)} title="Discard">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
-              </div>
+              <DirRow
+                draft
+                inputRef={draftInputRef}
+                path={draft.path}
+                depth={draft.depth}
+                onPathChange={path => setDraft({ ...draft, path })}
+                onDepthChange={depth => setDraft({ ...draft, depth })}
+                onRemove={() => setDraft(null)}
+                onKeyDown={onDraftKey}
+                onCommit={commitDraft}
+                onDiscard={() => setDraft(null)}
+              />
             </div>
           )}
 

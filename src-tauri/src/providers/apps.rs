@@ -2,8 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
-use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
+use nucleo_matcher::Utf32Str;
 
 use super::{Provider, SearchResult};
 use crate::config::SharedConfig;
@@ -302,14 +301,7 @@ impl Provider for AppProvider {
         let log_scores = cfg.log_scores;
         drop(cfg);
 
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let pattern = Pattern::new(
-            query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
-        let mut char_buf = Vec::new();
+        let (pattern, mut matcher, mut char_buf) = super::fuzzy_setup(query);
 
         let threshold = super::effective_min_score(min_score, query.chars().count());
 
@@ -345,10 +337,7 @@ impl Provider for AppProvider {
                     score: super::SCORE_APP + score as f32,
                     exec: Some(app.exec.clone()),
                     icon_path: app.icon_path.clone(),
-                    file_size: None,
-                    created: None,
-                    snippet: None,
-            modified: None,
+                    ..Default::default()
                 })
             })
             .collect()

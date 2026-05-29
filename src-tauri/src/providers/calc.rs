@@ -41,12 +41,7 @@ impl Provider for CalcProvider {
             subtitle: Some(q.to_string()),
             kind: "calc".to_string(),
             score: super::SCORE_CALC,
-            exec: None,
-            icon_path: None,
-            file_size: None,
-            created: None,
-            snippet: None,
-            modified: None,
+            ..Default::default()
         }]
     }
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useTauriListener } from "./hooks/useTauriListener";
 import { Config } from "./types";
 import GeneralSection from "./components/settings/GeneralSection";
 import ProvidersSection from "./components/settings/ProvidersSection";
@@ -233,13 +234,9 @@ export default function Settings() {
   }, []);
 
   // Jump to a specific section when the launcher opens settings with a target.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen<string>("navigate-to-section", e => {
-      setActiveSection(e.payload as Section);
-    }).then(fn => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, []);
+  useTauriListener<string>("navigate-to-section", payload => {
+    setActiveSection(payload as Section);
+  });
 
   // Apply theme immediately on any appearance change.
   // Only broadcast to main window when it's a user-driven change, not the initial disk load.

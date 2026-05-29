@@ -71,10 +71,10 @@ impl Provider for ContentProvider {
                         kind: "file".to_string(),
                         score: SCORE_CONTENT + (-rank as f32) * 1000.0,
                         exec: Some(format!("xdg-open \"{escaped}\"")),
-                        icon_path: None,
                         file_size: if size > 0 { Some(size) } else { None },
                         created,
                         modified: if mtime > 0 { Some(mtime as u64) } else { None },
+                        ..Default::default()
                     }
                 })
                 .collect(),

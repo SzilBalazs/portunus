@@ -49,7 +49,7 @@ export default function ClipboardPreview({ result, onPaste }: Props) {
         <span className="clipboard-preview-label">
           {isImage ? result.title : result.subtitle ?? "Text"}
         </span>
-        <button className="btn-primary" onClick={onPaste}>
+        <button className="btn-primary" onClick={onPaste} tabIndex={-1}>
           Paste <span className="btn-kbd"><EnterIcon /></span>
         </button>
       </div>

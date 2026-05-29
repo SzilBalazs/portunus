@@ -347,15 +347,15 @@ export default function FilePreview({ result, onLaunch, onReveal }: Props) {
           {result.snippet && <div className="file-preview-path">{filePath}</div>}
         </div>
         <div className="file-preview-actions">
-          <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={handleCopy} title="Copy path">
+          <button className={`file-btn-icon${copied ? ' copied' : ''}`} onClick={handleCopy} title="Copy path" tabIndex={-1}>
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
           {!isFolder && (
-            <button className="file-btn-icon" onClick={handleReveal} title="Reveal in folder">
+            <button className="file-btn-icon" onClick={handleReveal} title="Reveal in folder" tabIndex={-1}>
               <FolderOpenIcon />
             </button>
           )}
-          <button className="btn-primary" onClick={onLaunch}>
+          <button className="btn-primary" onClick={onLaunch} tabIndex={-1}>
             Open <span className="btn-kbd"><EnterIcon /></span>
           </button>
         </div>

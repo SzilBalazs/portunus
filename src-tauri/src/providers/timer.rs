@@ -190,12 +190,7 @@ fn hint_result() -> SearchResult {
         subtitle: Some("30s · 5m · 1h30m".to_string()),
         kind: "timer-hint".to_string(),
         score: SCORE_TIMER,
-        exec: None,
-        icon_path: None,
-        file_size: None,
-        created: None,
-        snippet: None,
-            modified: None,
+        ..Default::default()
     }
 }
 
@@ -242,11 +237,8 @@ impl Provider for TimerProvider {
                         kind: "timer-create".to_string(),
                         score: SCORE_TIMER + 1.0,
                         exec: Some(format!("timer:create:{}:{}", secs, label)),
-                        icon_path: None,
                         file_size: Some(secs),
-                        created: None,
-                        snippet: None,
-            modified: None,
+                        ..Default::default()
                     });
                 }
                 None => results.push(hint_result()),
@@ -268,11 +260,9 @@ impl Provider for TimerProvider {
                 kind: "timer-item".to_string(),
                 score: SCORE_TIMER - e.id as f32,
                 exec: Some(format!("timer:stop:{}", e.id)),
-                icon_path: None,
                 file_size: Some(e.duration_secs),
                 created: Some(e.started_at),
-                snippet: None,
-            modified: None,
+                ..Default::default()
             });
         }
 
