@@ -65,7 +65,7 @@ pub fn rebuild_providers(
                     let new_entries = providers::files::FileProvider::walk_dirs(&added_cfg);
                     fe.write().unwrap().extend(new_entries);
                 } else {
-                    *fe.write().unwrap() = providers::files::FileProvider::walk_dirs(&files_cfg);
+                    providers::files::FileProvider::populate(&fe, &files_cfg);
                 }
 
                 if !was_enabled {

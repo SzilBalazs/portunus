@@ -7,6 +7,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use super::{Provider, SearchResult};
 use crate::config::{FilesConfig, SharedConfig};
+use crate::util;
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,12 @@ impl FileProvider {
     pub fn with_entries(entries: Arc<RwLock<Vec<FileEntry>>>, shared: SharedConfig) -> Self {
         Self { entries, shared }
     }
+
+    /// Full-walk `files_cfg` and replace `entries` with the result. Shared by
+    /// the startup build and the config-reload full-rewalk path.
+    pub fn populate(entries: &Arc<RwLock<Vec<FileEntry>>>, files_cfg: &FilesConfig) {
+        *util::write(entries) = Self::walk_dirs(files_cfg);
+    }
 }
 
 impl Provider for FileProvider {
@@ -173,7 +180,7 @@ impl Provider for FileProvider {
             return vec![];
         }
 
-        let cfg = self.shared.read().unwrap();
+        let cfg = util::read(&self.shared);
         let min_score = cfg.min_score_file;
         let recency_weight = cfg.recency_weight;
         let log_scores = cfg.log_scores;
@@ -187,7 +194,7 @@ impl Provider for FileProvider {
             AtomKind::Fuzzy,
         );
         let mut char_buf = Vec::new();
-        let entries = self.entries.read().unwrap();
+        let entries = util::read(&self.entries);
 
         entries
             .iter()

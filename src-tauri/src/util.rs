@@ -1,8 +1,27 @@
 //! Small shared helpers.
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use rusqlite::Connection;
+
+/// Locks a `Mutex`, recovering rather than panicking if a previous holder
+/// panicked and poisoned it. Our locks guard caches/indexes where the worst a
+/// stale-after-panic read can do is return slightly-off data — far better than
+/// cascading a single background panic into a crash on every later access.
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Read-locks an `RwLock`, recovering from poisoning. See [`lock`].
+pub fn read<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    l.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Write-locks an `RwLock`, recovering from poisoning. See [`lock`].
+pub fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    l.write().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Returns true if `bin` is found as an executable file on any PATH entry.
 /// Used both to gate providers at startup and to report dependency status

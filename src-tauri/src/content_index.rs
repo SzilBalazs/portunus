@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use rusqlite::{params, Connection};
 
 use crate::config::ContentConfig;
+use crate::util;
 
 #[cfg(feature = "ocr")]
 use std::cell::RefCell;
@@ -80,7 +81,7 @@ impl ContentIndex {
     }
 
     fn all_meta(&self) -> rusqlite::Result<HashMap<String, StoredMeta>> {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         let mut stmt = db.prepare("SELECT path, mtime, size FROM file_meta")?;
         let map = stmt
             .query_map([], |row| {
@@ -105,7 +106,7 @@ impl ContentIndex {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let mut db = self.db.lock().unwrap();
+        let mut db = util::lock(&self.db);
         let tx = db.transaction()?;
         for u in updates {
             tx.execute("DELETE FROM content_fts WHERE path = ?", [u.path.as_str()])?;
@@ -122,7 +123,7 @@ impl ContentIndex {
     }
 
     pub fn remove_stale(&self, live_paths: &HashSet<String>) -> rusqlite::Result<usize> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = util::lock(&self.db);
         let stale: Vec<String> = {
             let mut stmt = db.prepare("SELECT path FROM file_meta")?;
             let paths: Vec<String> = stmt
@@ -145,7 +146,7 @@ impl ContentIndex {
     }
 
     pub fn search(&self, fts_query: &str, limit: usize) -> rusqlite::Result<Vec<(String, f64, String, i64, u64)>> {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         // \x02 = STX, \x03 = ETX — used as highlight start/end markers in the snippet.
         let mut stmt = db.prepare(
             "SELECT content_fts.path, rank, snippet(content_fts, 1, '\x02', '\x03', '…', 20), \
@@ -169,7 +170,7 @@ impl ContentIndex {
     }
 
     pub fn remove_path(&self, path: &str) -> rusqlite::Result<()> {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         db.execute("DELETE FROM content_fts WHERE path = ?", [path])?;
         db.execute("DELETE FROM file_meta WHERE path = ?", [path])?;
         Ok(())
@@ -179,7 +180,7 @@ impl ContentIndex {
     /// deleted or moved out of the watched tree and no individual file events are fired.
     pub fn remove_prefix(&self, dir_path: &str) -> rusqlite::Result<usize> {
         let pattern = format!("{dir_path}/%");
-        let mut db = self.db.lock().unwrap();
+        let mut db = util::lock(&self.db);
         let tx = db.transaction()?;
         let removed = tx.execute("DELETE FROM content_fts WHERE path LIKE ?", [&pattern])?;
         tx.execute("DELETE FROM file_meta WHERE path LIKE ?", [&pattern])?;
@@ -188,7 +189,7 @@ impl ContentIndex {
     }
 
     fn get_meta(&self, path: &str) -> rusqlite::Result<Option<StoredMeta>> {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         match db.query_row(
             "SELECT mtime, size FROM file_meta WHERE path = ?",
             [path],
@@ -201,7 +202,7 @@ impl ContentIndex {
     }
 
     pub fn clear(&self) -> rusqlite::Result<()> {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         db.execute_batch(
             "DELETE FROM content_fts;
              DELETE FROM file_meta;",
@@ -209,7 +210,7 @@ impl ContentIndex {
     }
 
     pub fn is_empty(&self) -> bool {
-        let db = self.db.lock().unwrap();
+        let db = util::lock(&self.db);
         db.query_row("SELECT COUNT(*) FROM file_meta", [], |r| r.get::<_, i64>(0))
             .unwrap_or(0) == 0
     }

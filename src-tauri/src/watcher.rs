@@ -103,7 +103,14 @@ pub fn start_config_watcher(
         // Watch the DIRECTORY (not the file directly) because many editors save via
         // atomic rename: write temp file → rename over target. Watching the directory
         // catches IN_MOVED_TO which inotify fires on rename.
+        // The config dir normally exists by now (Config::load creates it at startup),
+        // so this retry loop is a safety net. Bound it instead of spinning forever:
+        // if it never appears, give up and disable live reload rather than leaking a
+        // thread that wakes every 2s for the life of the process.
+        const MAX_ATTEMPTS: u32 = 30; // ~60s
+        let mut attempts = 0;
         let debouncer = loop {
+            attempts += 1;
             let tx2 = tx.clone();
             match new_debouncer(Duration::from_millis(500), None, move |res| {
                 let _ = tx2.send(res);
@@ -113,6 +120,14 @@ pub fn start_config_watcher(
                         if d.watcher().watch(&config_dir, RecursiveMode::NonRecursive).is_ok() {
                             break d;
                         }
+                    }
+                    if attempts >= MAX_ATTEMPTS {
+                        eprintln!(
+                            "[config-watcher] {} did not appear after {attempts} attempts; \
+                             live config reload disabled",
+                            config_dir.display()
+                        );
+                        return;
                     }
                     std::thread::sleep(Duration::from_secs(2));
                 }

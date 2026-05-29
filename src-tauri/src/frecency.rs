@@ -1,13 +1,19 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, Result};
 
+use crate::util;
+
 pub struct FrecencyStore {
     conn: Mutex<Connection>,
     half_life_days: f32,
+    // In-memory mirror of the (id → score) table, so a search can apply frecency
+    // bonuses without hitting SQLite on every keystroke. Kept in sync by
+    // record_launch and rebuilt from disk on open.
+    cache: RwLock<HashMap<String, f32>>,
 }
 
 fn db_path() -> PathBuf {
@@ -34,10 +40,27 @@ impl FrecencyStore {
                  last_launched INTEGER NOT NULL
              );",
         )?;
-        Ok(Self {
+        let store = Self {
             conn: Mutex::new(conn),
             half_life_days,
-        })
+            cache: RwLock::new(HashMap::new()),
+        };
+        store.reload_cache();
+        Ok(store)
+    }
+
+    /// Rebuilds the in-memory score cache from the database.
+    fn reload_cache(&self) {
+        let conn = util::lock(&self.conn);
+        let mut map = HashMap::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT id, score FROM frecency") {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)? as f32))
+            }) {
+                map.extend(rows.flatten());
+            }
+        }
+        *util::write(&self.cache) = map;
     }
 
     pub fn record_launch(&self, id: &str, kind: &str) {
@@ -56,7 +79,7 @@ impl FrecencyStore {
             .map(|d| d.as_secs())
             .unwrap_or(0) as i64;
 
-        let conn = self.conn.lock().unwrap();
+        let conn = util::lock(&self.conn);
 
         let existing = conn
             .query_row(
@@ -74,23 +97,20 @@ impl FrecencyStore {
             None => 1.0,
         };
 
-        let _ = conn.execute(
+        let written = conn.execute(
             "INSERT INTO frecency (id, kind, score, last_launched) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(id) DO UPDATE SET score = ?3, last_launched = ?4",
             params![normalized, kind, new_score, now],
         );
+        drop(conn);
+        // Mirror the new score into the cache so the next search sees it without
+        // a DB round-trip. Only on a successful write, to avoid drift from disk.
+        if written.is_ok() {
+            util::write(&self.cache).insert(normalized, new_score as f32);
+        }
     }
 
     pub fn all_scores(&self) -> HashMap<String, f32> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = match conn.prepare("SELECT id, score FROM frecency") {
-            Ok(s) => s,
-            Err(_) => return HashMap::new(),
-        };
-        stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)? as f32))
-        })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default()
+        util::read(&self.cache).clone()
     }
 }

@@ -174,14 +174,14 @@ fn hide_window(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn get_config(state: tauri::State<ConfigState>) -> config::Config {
-    state.lock().unwrap().clone()
+    util::lock(&state).clone()
 }
 
 #[tauri::command]
 fn save_config(config: config::Config, state: tauri::State<ConfigState>) -> Result<(), String> {
     let result = config.save();
     if result.is_ok() {
-        *state.lock().unwrap() = config;
+        *util::lock(&state) = config;
     }
     result
 }
@@ -258,7 +258,7 @@ fn run_full_reindex(
         eprintln!("[content] reindex requested but content indexing is disabled");
         return;
     }
-    let mut guard = content_state.lock().unwrap();
+    let mut guard = util::lock(content_state);
     let idx = match guard.as_ref() {
         Some(idx) => Arc::clone(idx),
         None => match content_index::ContentIndex::open() {
@@ -517,8 +517,7 @@ pub fn run() {
             let startup_file_entries = Arc::clone(&file_entries);
             std::thread::spawn(move || {
                 if providers_cfg.files {
-                    let entries_vec = providers::files::FileProvider::walk_dirs(&files_cfg);
-                    *startup_file_entries.write().unwrap() = entries_vec;
+                    providers::files::FileProvider::populate(&startup_file_entries, &files_cfg);
                     let file_provider = providers::files::FileProvider::with_entries(
                         Arc::clone(&startup_file_entries),
                         Arc::clone(&shared_bg),
