@@ -13,6 +13,7 @@ const Esc = () => <span className="hint"><kbd>Esc</kbd> close</span>;
 const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
 const Jump = () => <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>;
 const CopyPath = () => <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>;
+const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
 
 const TabHint = ({ isContentSearch }: { isContentSearch: boolean }) => (
   <span className="hint"><kbd>Tab</kbd>{isContentSearch ? " back" : " search contents"}</span>
@@ -37,12 +38,18 @@ function hints(selected: SearchResult | null, isContentSearch: boolean): ReactNo
   if (k === "content-disabled") return <><span className="hint"><kbd><EnterIcon /></kbd> open settings</span><span className="hint"><kbd>Tab</kbd> back</span><Esc /></>;
   if (k === "content-hint") return <><span className="hint"><kbd>Tab</kbd> or <kbd><EnterIcon /></kbd> search contents</span><Esc /></>;
 
-  if (k === "file" || k === "folder") return (
-    <><Nav /><Open /><CopyPath />
-      {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
-      <TabHint isContentSearch={isContentSearch} /><Esc />
-    </>
-  );
+  if (k === "file" || k === "folder") {
+    const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
+    return (
+      <><Nav /><Open />
+        {/* Drop "copy path" for PDFs to make room for the page-nav hint. */}
+        {!isPdf && <CopyPath />}
+        {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
+        {isPdf && <PdfPageNav />}
+        <TabHint isContentSearch={isContentSearch} /><Esc />
+      </>
+    );
+  }
   if (k === "app") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> launch</span><Jump /><TabHint isContentSearch={isContentSearch} /><Esc /></>;
 
   // Default: generic result row

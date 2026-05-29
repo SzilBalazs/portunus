@@ -74,6 +74,10 @@ pub struct SearchResult {
     pub file_size: Option<u64>,
     pub created: Option<u64>,
     pub modified: Option<u64>,
+    /// 0-based page of a PDF where the content query mainly matched. Set only by
+    /// the content provider for PDF results; drives which page the preview opens on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_page: Option<u32>,
 }
 
 impl Default for SearchResult {
@@ -90,6 +94,7 @@ impl Default for SearchResult {
             file_size: None,
             created: None,
             modified: None,
+            match_page: None,
         }
     }
 }

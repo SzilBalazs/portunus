@@ -13,6 +13,8 @@ export interface PreviewProps {
   onLaunch: () => void;
   onStopTimer?: () => void;
   onReveal?: () => void;
+  /** Matched content-search terms to highlight in the preview (empty otherwise). */
+  terms?: string[];
 }
 
 export interface ProviderPlugin {

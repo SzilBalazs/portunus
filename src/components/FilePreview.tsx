@@ -1,9 +1,47 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { SearchResult } from "../types";
 import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, isOfficeText, isSpreadsheet } from "../utils";
+import { highlightInElement, cellMatches, buildTermRegex } from "../highlight";
+
+/**
+ * After the referenced element renders, wraps matched terms in `<mark>` and
+ * scrolls the first into view. The caller must remount the highlighted subtree
+ * (via a `key`) whenever content or terms change, so the effect always runs on
+ * clean, React-untouched DOM.
+ */
+function useTermHighlight<T extends HTMLElement>(terms: string[], dep: unknown) {
+  const ref = useRef<T>(null);
+  // Layout effect so the marks + scroll land before the browser paints — using a
+  // plain effect leaves one frame of un-highlighted, top-scrolled content (a jump).
+  useLayoutEffect(() => {
+    if (!ref.current || !terms.length) return;
+    const first = highlightInElement(ref.current, terms);
+    first?.scrollIntoView({ block: "center" });
+  }, [dep, terms]);
+  return ref;
+}
+
+/** Splits text into nodes with matched terms wrapped in `<mark class="preview-hl">`. */
+function highlightText(text: string, terms: string[]): ReactNode {
+  const re = buildTermRegex(terms);
+  if (!re) return text;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<mark key={key++} className="preview-hl">{m[0]}</mark>);
+    last = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 import { EnterIcon, CopyIcon, FolderOpenIcon, CheckIcon } from "../icons";
 import hljs from "highlight.js/lib/core";
 import langRust       from "highlight.js/lib/languages/rust";
@@ -62,53 +100,86 @@ hljs.registerLanguage("plaintext",  langPlain);
 
 // ── pdf ───────────────────────────────────────────────────────────────────────
 
+// Cache keyed by `path#page` so the same PDF previewed on different pages doesn't
+// collide. Page count is cached per path (independent of which page is rendered).
 const pdfPromiseCache = new Map<string, Promise<string>>();
 const pdfUrlCache = new Map<string, string>();
+const pdfPageCount = new Map<string, number>();
 
-function getPdfUrl(path: string): Promise<string> {
-  if (!pdfPromiseCache.has(path)) {
+function pdfKey(path: string, page: number): string {
+  return `${path}#${page}`;
+}
+
+function getPdfUrl(path: string, page: number): Promise<string> {
+  const key = pdfKey(path, page);
+  if (!pdfPromiseCache.has(key)) {
     pdfPromiseCache.set(
-      path,
-      invoke<number[]>("render_pdf_page", { path })
-        .then((bytes) => {
+      key,
+      invoke<[number[], number]>("render_pdf_page", { path, page })
+        .then(([bytes, count]) => {
+          pdfPageCount.set(path, count);
           const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
-          pdfUrlCache.set(path, url);
+          pdfUrlCache.set(key, url);
           return url;
         })
         .catch((e) => {
-          pdfPromiseCache.delete(path);
+          pdfPromiseCache.delete(key);
           throw e;
         }),
     );
   }
-  return pdfPromiseCache.get(path)!;
+  return pdfPromiseCache.get(key)!;
 }
 
-function PdfPreview({ path }: { path: string }) {
-  const [src, setSrc] = useState<string | null>(() => pdfUrlCache.get(path) ?? null);
-  const [loaded, setLoaded] = useState(() => pdfUrlCache.has(path));
+function PdfPreview({ path, page }: { path: string; page: number }) {
+  // `cur` is the displayed page; starts at the matched page and moves with Ctrl+←/→.
+  const [cur, setCur] = useState(page);
+  const [count, setCount] = useState<number | null>(() => pdfPageCount.get(path) ?? null);
+  const key = pdfKey(path, cur);
+  const [src, setSrc] = useState<string | null>(() => pdfUrlCache.get(key) ?? null);
+  const [loaded, setLoaded] = useState(() => pdfUrlCache.has(key));
   const [error, setError] = useState(false);
 
+  // Reset to the matched page when the previewed file changes.
+  useEffect(() => { setCur(page); }, [path, page]);
+
   useEffect(() => {
-    const cached = pdfUrlCache.get(path);
+    const cached = pdfUrlCache.get(key);
     if (cached) {
       setSrc(cached);
       setLoaded(true);
       setError(false);
+      setCount(pdfPageCount.get(path) ?? null);
       return;
     }
     let cancelled = false;
     setSrc(null);
     setLoaded(false);
     setError(false);
-    getPdfUrl(path)
-      .then((url) => { if (!cancelled) setSrc(url); })
+    getPdfUrl(path, cur)
+      .then((url) => { if (!cancelled) { setSrc(url); setCount(pdfPageCount.get(path) ?? null); } })
       .catch((e) => {
         console.error("[pdf] render_pdf_page failed:", e);
         if (!cancelled) setError(true);
       });
     return () => { cancelled = true; };
-  }, [path]);
+  }, [key, path, cur]);
+
+  // Ctrl+←/→ flips pages, clamped to [0, count-1] once the count is known.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      const max = count != null ? count - 1 : Infinity;
+      setCur((c) => {
+        const next = e.key === "ArrowRight" ? Math.min(c + 1, max) : Math.max(c - 1, 0);
+        return next;
+      });
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [count]);
 
   return (
     <div className={`pdf-preview-wrap${!loaded && !error ? " is-loading" : ""}`}>
@@ -126,6 +197,11 @@ function PdfPreview({ path }: { path: string }) {
           style={{ opacity: loaded ? undefined : 0 }}
           onLoad={() => setLoaded(true)}
         />
+      )}
+      {loaded && (
+        <span className="pdf-page-label">
+          {count != null ? `Page ${cur + 1} / ${count}` : `Page ${cur + 1}`}
+        </span>
       )}
       {error && <span className="pdf-preview-msg">Preview unavailable</span>}
     </div>
@@ -278,7 +354,52 @@ function parseDelimited(text: string, delim: string): string[][] {
   return rows;
 }
 
-function CsvPreview({ path, delim }: { path: string; delim: string }) {
+// Shared table renderer for CSV/TSV and spreadsheet previews. Highlights matched
+// terms per cell and scrolls the first matching cell into view.
+function DataTable({ rows, terms }: { rows: string[][]; terms: string[] }) {
+  const firstMatch = useRef<HTMLTableCellElement | null>(null);
+
+  useEffect(() => {
+    firstMatch.current?.scrollIntoView({ block: "center" });
+  }, [rows, terms]);
+
+  let found = false;
+  // Returns a ref callback for the first term-matching cell, undefined otherwise.
+  const refForCell = (text: string) => {
+    if (found || !terms.length || !cellMatches(text, terms)) return undefined;
+    found = true;
+    return (el: HTMLTableCellElement | null) => { firstMatch.current = el; };
+  };
+
+  const cellClass = (text: string) =>
+    terms.length && cellMatches(text, terms) ? "preview-hl-cell" : undefined;
+
+  const [header, ...body] = rows;
+  return (
+    <div className="text-preview-wrap">
+      <table className="csv-preview">
+        <thead>
+          <tr>
+            {header.map((cell, i) => (
+              <th key={i} ref={refForCell(cell)} className={cellClass(cell)}>{highlightText(cell, terms)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri}>
+              {r.map((cell, ci) => (
+                <td key={ci} ref={refForCell(cell)} className={cellClass(cell)}>{highlightText(cell, terms)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CsvPreview({ path, delim, terms }: { path: string; delim: string; terms: string[] }) {
   const [rows, setRows] = useState<string[][] | null>(null);
 
   useEffect(() => {
@@ -290,30 +411,15 @@ function CsvPreview({ path, delim }: { path: string; delim: string }) {
     return () => { cancelled = true; };
   }, [path, delim]);
 
-  if (rows === null) return <div className="text-preview-wrap" />;
-  if (rows.length === 0) return <div className="text-preview-wrap" />;
-
-  const [header, ...body] = rows;
-  return (
-    <div className="text-preview-wrap">
-      <table className="csv-preview">
-        <thead>
-          <tr>{header.map((cell, i) => <th key={i}>{cell}</th>)}</tr>
-        </thead>
-        <tbody>
-          {body.map((r, ri) => (
-            <tr key={ri}>{r.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  if (rows === null || rows.length === 0) return <div className="text-preview-wrap" />;
+  return <DataTable rows={rows} terms={terms} />;
 }
 
 // ── office text preview (docx / pptx / odt / odp) ────────────────────────────
 
-function OfficeTextPreview({ path }: { path: string }) {
+function OfficeTextPreview({ path, terms }: { path: string; terms: string[] }) {
   const [source, setSource] = useState<string | null>(null);
+  const ref = useTermHighlight<HTMLDivElement>(terms, source);
 
   useEffect(() => {
     let cancelled = false;
@@ -329,7 +435,7 @@ function OfficeTextPreview({ path }: { path: string }) {
 
   return (
     <div className="text-preview-wrap">
-      <div className="md-preview-wrap">
+      <div className="md-preview-wrap" ref={ref} key={`${source}${terms.join("")}`}>
         <ReactMarkdown components={mdComponents}>{source}</ReactMarkdown>
       </div>
     </div>
@@ -338,7 +444,7 @@ function OfficeTextPreview({ path }: { path: string }) {
 
 // ── spreadsheet preview (xlsx / ods) ─────────────────────────────────────────
 
-function SpreadsheetPreview({ path }: { path: string }) {
+function SpreadsheetPreview({ path, terms }: { path: string; terms: string[] }) {
   const [rows, setRows] = useState<string[][] | null>(null);
 
   useEffect(() => {
@@ -350,24 +456,8 @@ function SpreadsheetPreview({ path }: { path: string }) {
     return () => { cancelled = true; };
   }, [path]);
 
-  if (rows === null) return <div className="text-preview-wrap" />;
-  if (rows.length === 0) return <div className="text-preview-wrap" />;
-
-  const [header, ...body] = rows;
-  return (
-    <div className="text-preview-wrap">
-      <table className="csv-preview">
-        <thead>
-          <tr>{header.map((cell, i) => <th key={i}>{cell}</th>)}</tr>
-        </thead>
-        <tbody>
-          {body.map((r, ri) => (
-            <tr key={ri}>{r.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  if (rows === null || rows.length === 0) return <div className="text-preview-wrap" />;
+  return <DataTable rows={rows} terms={terms} />;
 }
 
 // ── folder contents ───────────────────────────────────────────────────────────
@@ -439,23 +529,24 @@ const mdComponents: Components = {
   },
 };
 
-function MarkdownPreview({ path }: { path: string }) {
+function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
   const [source, setSource] = useState<string | null>(null);
+  const ref = useTermHighlight<HTMLDivElement>(terms, source);
 
   useEffect(() => {
     let cancelled = false;
     setSource(null);
-    invoke<string>("read_text_preview", { path })
+    invoke<string>("read_text_preview", { path, terms })
       .then(text => { if (!cancelled) setSource(text); })
       .catch(() => { if (!cancelled) setSource(""); });
     return () => { cancelled = true; };
-  }, [path]);
+  }, [path, terms]);
 
   if (source === null) return <div className="text-preview-wrap" />;
 
   return (
     <div className="text-preview-wrap">
-      <div className="md-preview-wrap">
+      <div className="md-preview-wrap" ref={ref} key={`${source}${terms.join("")}`}>
         <ReactMarkdown components={mdComponents}>{source}</ReactMarkdown>
       </div>
     </div>
@@ -464,13 +555,15 @@ function MarkdownPreview({ path }: { path: string }) {
 
 // ── text preview ─────────────────────────────────────────────────────────────
 
-function TextPreview({ path, lang }: { path: string; lang: string }) {
+function TextPreview({ path, lang, terms }: { path: string; lang: string; terms: string[] }) {
   const [html, setHtml] = useState<string | null>(null);
+  const ref = useTermHighlight<HTMLPreElement>(terms, html);
 
   useEffect(() => {
     let cancelled = false;
     setHtml(null);
-    invoke<string>("read_text_preview", { path })
+    // Pass terms so the backend returns a window centered on the first match.
+    invoke<string>("read_text_preview", { path, terms })
       .then(text => {
         if (cancelled) return;
         setTimeout(() => {
@@ -480,13 +573,18 @@ function TextPreview({ path, lang }: { path: string; lang: string }) {
       })
       .catch(() => { if (!cancelled) setHtml(""); });
     return () => { cancelled = true; };
-  }, [path, lang]);
+  }, [path, lang, terms]);
 
   if (html === null) return <div className="text-preview-wrap" />;
 
   return (
     <div className="text-preview-wrap">
-      <pre className="text-preview-code hljs" dangerouslySetInnerHTML={{ __html: html }} />
+      <pre
+        ref={ref}
+        className="text-preview-code hljs"
+        dangerouslySetInnerHTML={{ __html: html }}
+        key={`${html.length}${terms.join("")}`}
+      />
     </div>
   );
 }
@@ -497,9 +595,11 @@ interface Props {
   result: SearchResult;
   onLaunch: () => void;
   onReveal?: () => void;
+  /** Matched content-search terms to highlight (empty for non-content searches). */
+  terms?: string[];
 }
 
-export default function FilePreview({ result, onLaunch, onReveal }: Props) {
+export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: Props) {
   const isFolder = result.kind === "folder";
   const kind = fileKind(result.title, isFolder);
   const tag = [kind, !isFolder && result.file_size != null ? formatBytes(result.file_size) : null]
@@ -565,14 +665,14 @@ export default function FilePreview({ result, onLaunch, onReveal }: Props) {
         </div>
       </div>
 
-      {isPdf && <PdfPreview path={filePath} />}
+      {isPdf && <PdfPreview path={filePath} page={result.match_page ?? 0} />}
       {isImage && <ImagePreview path={filePath} />}
       {isSvgFile && <SvgPreview path={filePath} />}
-      {isCsvFile && <CsvPreview path={filePath} delim={result.title.toLowerCase().endsWith(".tsv") ? "\t" : ","} />}
-      {isOfficeTextFile && <OfficeTextPreview path={filePath} />}
-      {isSpreadsheetFile && <SpreadsheetPreview path={filePath} />}
-      {textLang === "markdown" && <MarkdownPreview path={filePath} />}
-      {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} />}
+      {isCsvFile && <CsvPreview path={filePath} delim={result.title.toLowerCase().endsWith(".tsv") ? "\t" : ","} terms={terms} />}
+      {isOfficeTextFile && <OfficeTextPreview path={filePath} terms={terms} />}
+      {isSpreadsheetFile && <SpreadsheetPreview path={filePath} terms={terms} />}
+      {textLang === "markdown" && <MarkdownPreview path={filePath} terms={terms} />}
+      {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} terms={terms} />}
       {isFolder && <FolderContents path={filePath} />}
 
       <div className="file-preview-meta">

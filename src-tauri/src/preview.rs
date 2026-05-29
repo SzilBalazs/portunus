@@ -1,6 +1,8 @@
 use tauri::Manager;
 
-type PdfRenderMsg = (String, std::sync::mpsc::Sender<Result<Vec<u8>, String>>);
+/// (path, 0-based page index, reply channel). Reply is (jpeg bytes, total page count).
+type PdfReply = std::sync::mpsc::Sender<Result<(Vec<u8>, u32), String>>;
+type PdfRenderMsg = (String, u32, PdfReply);
 
 pub struct PdfWorkerHandle {
     tx: std::sync::mpsc::SyncSender<PdfRenderMsg>,
@@ -27,22 +29,26 @@ fn start_pdf_worker() -> PdfWorkerHandle {
                 eprintln!("[pdf] bind_to_system_library failed: {e}");
                 e.to_string()
             });
-        while let Ok((path, reply)) = rx.recv() {
+        while let Ok((path, page_idx, reply)) = rx.recv() {
             let result = match &pdfium {
                 Err(msg) => Err(msg.clone()),
                 Ok(pdfium) => (|| {
-                    eprintln!("[pdf] rendering: {path}");
+                    eprintln!("[pdf] rendering: {path} (page {page_idx})");
                     let doc = pdfium.load_pdf_from_file(&path, None).map_err(|e| {
                         let msg = e.to_string();
                         eprintln!("[pdf] load_pdf_from_file failed: {msg}");
                         msg
                     })?;
-                    eprintln!("[pdf] loaded, {} page(s)", doc.pages().len());
-                    let page = doc.pages().get(0).map_err(|e| {
+                    let page_count = doc.pages().len();
+                    eprintln!("[pdf] loaded, {page_count} page(s)");
+                    // Clamp the requested page into range (pdfium uses u16 indices).
+                    let idx = page_idx.min(page_count.saturating_sub(1) as u32) as u16;
+                    let page = doc.pages().get(idx).map_err(|e| {
                         let msg = e.to_string();
-                        eprintln!("[pdf] get page 0 failed: {msg}");
+                        eprintln!("[pdf] get page {idx} failed: {msg}");
                         msg
                     })?;
+                    let total = page_count as u32;
                     let bitmap = page
                         .render_with_config(
                             &PdfRenderConfig::new().set_target_width(PDF_RENDER_WIDTH as i32),
@@ -63,7 +69,7 @@ fn start_pdf_worker() -> PdfWorkerHandle {
                             msg
                         })?;
                     eprintln!("[pdf] done, {} bytes", bytes.len());
-                    Ok(bytes)
+                    Ok((bytes, total))
                 })(),
             };
             let _ = reply.send(result);
@@ -79,12 +85,13 @@ pub fn setup(app: &tauri::AppHandle) {
 #[tauri::command]
 pub async fn render_pdf_page(
     path: String,
+    page: Option<u32>,
     worker: tauri::State<'_, PdfWorkerHandle>,
-) -> Result<Vec<u8>, String> {
-    let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
+) -> Result<(Vec<u8>, u32), String> {
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<(Vec<u8>, u32), String>>();
     worker
         .tx
-        .try_send((path, reply_tx))
+        .try_send((path, page.unwrap_or(0), reply_tx))
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
@@ -114,23 +121,78 @@ pub fn read_spreadsheet_preview(path: String) -> Result<Vec<Vec<String>>, String
     crate::office::extract_spreadsheet_grid(&path)
 }
 
-#[tauri::command]
-pub fn read_text_preview(path: String) -> Result<String, String> {
-    use std::io::{BufRead, BufReader};
-    const MAX_LINES: usize = 300;
-    const MAX_BYTES: usize = 32 * 2048;
-    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-    let mut lines: Vec<String> = Vec::new();
+const PREVIEW_MAX_LINES: usize = 300;
+const PREVIEW_MAX_BYTES: usize = 32 * 2048;
+
+/// Word-prefix, case-insensitive match of any term against a line. Mirrors the
+/// porter-stemmer-ish matching used for highlighting (`run` matches `running`).
+fn line_matches_terms(line: &str, terms: &[String]) -> bool {
+    let lower = line.to_lowercase();
+    terms.iter().any(|t| {
+        lower
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|w| w.starts_with(t.as_str()))
+    })
+}
+
+/// Joins `lines[start..]` into a preview, bounded by line and byte caps.
+fn clip_lines(lines: &[String], start: usize) -> String {
+    let mut out: Vec<&str> = Vec::new();
     let mut total = 0usize;
-    for line in BufReader::new(file).lines().take(MAX_LINES) {
-        let line = line.map_err(|e| e.to_string())?;
+    for line in lines.iter().skip(start).take(PREVIEW_MAX_LINES) {
         total += line.len() + 1;
-        if total > MAX_BYTES {
+        if total > PREVIEW_MAX_BYTES {
             break;
         }
-        lines.push(line);
+        out.push(line.as_str());
     }
-    Ok(lines.join("\n"))
+    out.join("\n")
+}
+
+#[tauri::command]
+pub fn read_text_preview(path: String, terms: Option<Vec<String>>) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    // Upper bound on how far we scan for a match before giving up (content-indexed
+    // files are size-capped by config, so this is a safety net for pathological files).
+    const SCAN_LINES: usize = 50_000;
+
+    let terms: Vec<String> = terms
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| t.to_lowercase())
+        .filter(|t| t.len() >= 2)
+        .collect();
+
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(file);
+
+    // No terms: keep the cheap streaming path — first window from the top.
+    if terms.is_empty() {
+        let mut lines: Vec<String> = Vec::new();
+        let mut total = 0usize;
+        for line in reader.lines().take(PREVIEW_MAX_LINES) {
+            let line = line.map_err(|e| e.to_string())?;
+            total += line.len() + 1;
+            if total > PREVIEW_MAX_BYTES {
+                break;
+            }
+            lines.push(line);
+        }
+        return Ok(lines.join("\n"));
+    }
+
+    // Terms present: read up to SCAN_LINES, center the window on the first match
+    // so the relevant section is visible even when it's deep in the file.
+    let mut lines: Vec<String> = Vec::new();
+    for line in reader.lines().take(SCAN_LINES) {
+        lines.push(line.map_err(|e| e.to_string())?);
+    }
+    let start = lines
+        .iter()
+        .position(|l| line_matches_terms(l, &terms))
+        .map(|i| i.saturating_sub(PREVIEW_MAX_LINES / 2))
+        .unwrap_or(0);
+    Ok(clip_lines(&lines, start))
 }
 
 #[tauri::command]

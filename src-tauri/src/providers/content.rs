@@ -58,6 +58,11 @@ impl Provider for ContentProvider {
                         .unwrap_or("")
                         .to_owned();
                     let escaped = path.replace('"', "\\\"");
+                    let match_page = if path.to_lowercase().ends_with(".pdf") {
+                        self.index.best_page(&path, &fts_query)
+                    } else {
+                        None
+                    };
                     let created = std::fs::metadata(&path)
                         .ok()
                         .and_then(|m| m.created().ok())
@@ -74,6 +79,7 @@ impl Provider for ContentProvider {
                         file_size: if size > 0 { Some(size) } else { None },
                         created,
                         modified: if mtime > 0 { Some(mtime as u64) } else { None },
+                        match_page,
                         ..Default::default()
                     }
                 })

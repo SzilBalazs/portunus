@@ -26,6 +26,9 @@ struct StoredMeta {
 struct FileUpdate {
     path: String,
     text: String,
+    /// Per-page text for PDFs (split on form-feed). `None` for non-paged formats.
+    /// Populated into `pdf_page_fts` so previews can open on the matched page.
+    pages: Option<Vec<String>>,
     mtime: i64,
     size: u64,
 }
@@ -46,17 +49,19 @@ impl ContentIndex {
 
         let conn = crate::util::open_sqlite_resilient(&db_path)?;
 
-        // Detect old schema (has `hash` column) and drop if found — triggers one-time reindex.
-        let has_hash: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('file_meta') WHERE name='hash'",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap_or(0)
-            > 0;
-        if has_hash {
-            conn.execute_batch("DROP TABLE IF EXISTS file_meta; DROP TABLE IF EXISTS content_fts;")?;
+        // Schema version, bumped whenever the on-disk layout changes. A mismatch drops
+        // every table and recreates them, which triggers a one-time full reindex.
+        //   v2: added `pdf_page_fts` (per-page PDF text, for match-page preview).
+        const SCHEMA_VERSION: i64 = 2;
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if version != SCHEMA_VERSION {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS file_meta;
+                 DROP TABLE IF EXISTS content_fts;
+                 DROP TABLE IF EXISTS pdf_page_fts;",
+            )?;
         }
 
         conn.execute_batch(
@@ -72,8 +77,15 @@ impl ContentIndex {
                  path UNINDEXED,
                  text,
                  tokenize='porter unicode61'
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS pdf_page_fts USING fts5(
+                 path UNINDEXED,
+                 page UNINDEXED,
+                 text,
+                 tokenize='porter unicode61'
              );",
         )?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
         Ok(Self {
             db: Arc::new(Mutex::new(conn)),
@@ -110,10 +122,22 @@ impl ContentIndex {
         let tx = db.transaction()?;
         for u in updates {
             tx.execute("DELETE FROM content_fts WHERE path = ?", [u.path.as_str()])?;
+            tx.execute("DELETE FROM pdf_page_fts WHERE path = ?", [u.path.as_str()])?;
             tx.execute(
                 "INSERT INTO content_fts(path, text) VALUES (?, ?)",
                 params![u.path, u.text],
             )?;
+            if let Some(pages) = &u.pages {
+                for (i, page) in pages.iter().enumerate() {
+                    if page.trim().is_empty() {
+                        continue;
+                    }
+                    tx.execute(
+                        "INSERT INTO pdf_page_fts(path, page, text) VALUES (?, ?, ?)",
+                        params![u.path, i as i64, page],
+                    )?;
+                }
+            }
             tx.execute(
                 "INSERT OR REPLACE INTO file_meta(path, mtime, size, indexed_at) VALUES (?, ?, ?, ?)",
                 params![u.path, u.mtime, u.size, now],
@@ -139,6 +163,7 @@ impl ContentIndex {
         let tx = db.transaction()?;
         for path in &stale {
             tx.execute("DELETE FROM content_fts WHERE path = ?", [path.as_str()])?;
+            tx.execute("DELETE FROM pdf_page_fts WHERE path = ?", [path.as_str()])?;
             tx.execute("DELETE FROM file_meta WHERE path = ?", [path.as_str()])?;
         }
         tx.commit()?;
@@ -172,8 +197,23 @@ impl ContentIndex {
     pub fn remove_path(&self, path: &str) -> rusqlite::Result<()> {
         let db = util::lock(&self.db);
         db.execute("DELETE FROM content_fts WHERE path = ?", [path])?;
+        db.execute("DELETE FROM pdf_page_fts WHERE path = ?", [path])?;
         db.execute("DELETE FROM file_meta WHERE path = ?", [path])?;
         Ok(())
+    }
+
+    /// Page index (0-based) of the best-matching page of a PDF for `fts_query`,
+    /// or `None` if the file has no indexed pages or no page matched.
+    pub fn best_page(&self, path: &str, fts_query: &str) -> Option<u32> {
+        let db = util::lock(&self.db);
+        db.query_row(
+            "SELECT page FROM pdf_page_fts WHERE path = ? AND text MATCH ? \
+             ORDER BY rank LIMIT 1",
+            params![path, fts_query],
+            |r| r.get::<_, i64>(0),
+        )
+        .ok()
+        .map(|p| p as u32)
     }
 
     /// Removes all entries whose path starts with `dir_path/`. Used when a directory is
@@ -183,6 +223,7 @@ impl ContentIndex {
         let mut db = util::lock(&self.db);
         let tx = db.transaction()?;
         let removed = tx.execute("DELETE FROM content_fts WHERE path LIKE ?", [&pattern])?;
+        tx.execute("DELETE FROM pdf_page_fts WHERE path LIKE ?", [&pattern])?;
         tx.execute("DELETE FROM file_meta WHERE path LIKE ?", [&pattern])?;
         tx.commit()?;
         Ok(removed)
@@ -205,6 +246,7 @@ impl ContentIndex {
         let db = util::lock(&self.db);
         db.execute_batch(
             "DELETE FROM content_fts;
+             DELETE FROM pdf_page_fts;
              DELETE FROM file_meta;",
         )
     }
@@ -301,7 +343,12 @@ fn extract_pdf(path: &str, ocr_fallback: bool, lang: &str) -> Result<String, Str
                 for entry in page_files {
                     if let Some(p) = entry.path().to_str() {
                         match ocr_file(p, lang) {
-                            Ok(t) => combined.push_str(&t),
+                            // Separate pages with a form-feed so they split the same
+                            // way pdftotext output does (used for per-page indexing).
+                            Ok(t) => {
+                                combined.push_str(&t);
+                                combined.push('\u{000C}');
+                            }
                             Err(e) => eprintln!("[content] ocr page failed {p}: {e}"),
                         }
                     }
@@ -345,6 +392,18 @@ fn extract_text(path: &str, cfg: &ContentConfig) -> Result<String, String> {
     } else {
         Err(format!("unsupported extension: {ext}"))
     }
+}
+
+/// Splits extracted PDF text into per-page strings on the form-feed separators
+/// emitted by pdftotext / the OCR fallback. Returns `None` for non-PDF paths,
+/// which keeps `pdf_page_fts` PDF-only.
+fn pdf_pages(path: &str, text: &str) -> Option<Vec<String>> {
+    let is_pdf = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false);
+    is_pdf.then(|| text.split('\u{000C}').map(|s| s.to_string()).collect())
 }
 
 // ── background indexer ────────────────────────────────────────────────────────
@@ -514,9 +573,12 @@ fn collect_updates(
                 }
             }
 
+            let pages = pdf_pages(&path_str, &text);
+
             Some(FileUpdate {
                 path: path_str,
                 text,
+                pages,
                 mtime: *mtime,
                 size: *size,
             })
@@ -600,7 +662,8 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
 
     match extract_text(&path_str, cfg) {
         Ok(text) if !text.trim().is_empty() => {
-            match index.upsert_batch(&[FileUpdate { path: path_str.clone(), text, mtime, size }]) {
+            let pages = pdf_pages(&path_str, &text);
+            match index.upsert_batch(&[FileUpdate { path: path_str.clone(), text, pages, mtime, size }]) {
                 Ok(()) => { eprintln!("[content] indexed {path_str}"); true }
                 Err(e) => { eprintln!("[content] event upsert failed {path_str}: {e}"); false }
             }

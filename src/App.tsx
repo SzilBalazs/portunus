@@ -8,6 +8,7 @@ import { playTimerChime, audioCtxWarmup } from "./utils";
 import { applyTheme } from "./theme";
 import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
+import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers/registry";
 import { useTauriListener } from "./hooks/useTauriListener";
@@ -259,6 +260,12 @@ export default function App() {
     ? query.trimStart().slice(1).trim().length > 0
     : query.trim().length > 0;
 
+  // Terms to highlight in the preview — only for content (`!`) searches.
+  const previewTerms = useMemo(
+    () => (isContentSearch ? deriveContentTerms(query) : []),
+    [isContentSearch, query],
+  );
+
   const launchableResults = useMemo(
     () => displayResults.filter(r => !NON_INDEXABLE_KINDS.has(r.kind)),
     [displayResults]
@@ -353,6 +360,7 @@ export default function App() {
               onLaunch={() => launch(selected ?? undefined)}
               onStopTimer={stopSelectedTimer}
               onReveal={() => { setQuery(""); setResults([]); }}
+              terms={previewTerms}
             />
           </div>
         </div>

@@ -68,6 +68,8 @@ export interface SearchResult {
   file_size?: number;
   created?: number;
   modified?: number;
+  /** 0-based PDF page where the content query mainly matched (content provider only). */
+  match_page?: number;
 }
 
 export interface ExpiredTimer {

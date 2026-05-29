@@ -479,7 +479,7 @@ html, body, #root {
 
 .hints { display: flex; gap: 16px; align-items: center; }
 
-.hint { display: inline-flex; align-items: center; gap: 6px; }
+.hint { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 kbd {
   display: inline-grid;
@@ -710,6 +710,35 @@ kbd {
   font: 400 11px/1 "JetBrains Mono", "Fira Code", monospace;
   color: var(--fg-dim);
   padding: 24px;
+}
+
+.pdf-page-label {
+  position: absolute;
+  z-index: 2;
+  bottom: 8px;
+  right: 8px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font: 600 10px/1.4 "JetBrains Mono", "Fira Code", monospace;
+  color: #fff;
+  background: color-mix(in srgb, var(--bg-deep) 94%, #000);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+/* ---------- content-search match highlighting ---------- */
+
+mark.preview-hl {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: #fff;
+  font-weight: 600;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.preview-hl-cell {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /* ---------- clipboard preview ---------- */
