@@ -259,6 +259,14 @@ fn run_full_reindex(
         eprintln!("[content] reindex requested but content indexing is disabled");
         return;
     }
+    // Coalesce overlapping reindex triggers so only one drives the progress bar.
+    let _reindex_guard = match content_index::ReindexGuard::acquire() {
+        Some(g) => g,
+        None => {
+            eprintln!("[content] reindex already in progress; skipping");
+            return;
+        }
+    };
     let mut guard = util::lock(content_state);
     let idx = match guard.as_ref() {
         Some(idx) => Arc::clone(idx),
@@ -487,7 +495,7 @@ pub fn run() {
                 Arc::clone(&file_watcher_tx),
             );
 
-            preview::setup(app.handle());
+            preview::setup(app.handle(), Arc::clone(&shared_config));
             providers::timer::setup(app.handle(), &bg_registry);
 
             if providers::clipboard::ClipboardProvider::is_available() {

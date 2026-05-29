@@ -1,3 +1,4 @@
+use crate::config::SharedConfig;
 use tauri::Manager;
 
 /// (path, 0-based page index, reply channel). Reply is (jpeg bytes, total page count).
@@ -18,11 +19,13 @@ pub fn pdfium_available() -> bool {
     Pdfium::bind_to_system_library().is_ok()
 }
 
-fn start_pdf_worker() -> PdfWorkerHandle {
+fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
     let (tx, rx) = std::sync::mpsc::sync_channel::<PdfRenderMsg>(4);
     std::thread::spawn(move || {
         use image::ImageFormat;
         use pdfium_render::prelude::*;
+        // Read the flag fresh each message so the Debug toggle takes effect live.
+        let log_pdf = || shared.read().unwrap().log_pdf;
         let pdfium = Pdfium::bind_to_system_library()
             .map(Pdfium::new)
             .map_err(|e| {
@@ -30,22 +33,31 @@ fn start_pdf_worker() -> PdfWorkerHandle {
                 e.to_string()
             });
         while let Ok((path, page_idx, reply)) = rx.recv() {
+            let log = log_pdf();
             let result = match &pdfium {
                 Err(msg) => Err(msg.clone()),
                 Ok(pdfium) => (|| {
-                    eprintln!("[pdf] rendering: {path} (page {page_idx})");
+                    if log {
+                        eprintln!("[pdf] rendering: {path} (page {page_idx})");
+                    }
                     let doc = pdfium.load_pdf_from_file(&path, None).map_err(|e| {
                         let msg = e.to_string();
-                        eprintln!("[pdf] load_pdf_from_file failed: {msg}");
+                        if log {
+                            eprintln!("[pdf] load_pdf_from_file failed: {msg}");
+                        }
                         msg
                     })?;
                     let page_count = doc.pages().len();
-                    eprintln!("[pdf] loaded, {page_count} page(s)");
+                    if log {
+                        eprintln!("[pdf] loaded, {page_count} page(s)");
+                    }
                     // Clamp the requested page into range (pdfium uses u16 indices).
                     let idx = page_idx.min(page_count.saturating_sub(1) as u32) as u16;
                     let page = doc.pages().get(idx).map_err(|e| {
                         let msg = e.to_string();
-                        eprintln!("[pdf] get page {idx} failed: {msg}");
+                        if log {
+                            eprintln!("[pdf] get page {idx} failed: {msg}");
+                        }
                         msg
                     })?;
                     let total = page_count as u32;
@@ -55,7 +67,9 @@ fn start_pdf_worker() -> PdfWorkerHandle {
                         )
                         .map_err(|e| {
                             let msg = e.to_string();
-                            eprintln!("[pdf] render failed: {msg}");
+                            if log {
+                                eprintln!("[pdf] render failed: {msg}");
+                            }
                             msg
                         })?;
                     let mut bytes = Vec::new();
@@ -65,10 +79,14 @@ fn start_pdf_worker() -> PdfWorkerHandle {
                         .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)
                         .map_err(|e| {
                             let msg = e.to_string();
-                            eprintln!("[pdf] jpeg encode failed: {msg}");
+                            if log {
+                                eprintln!("[pdf] jpeg encode failed: {msg}");
+                            }
                             msg
                         })?;
-                    eprintln!("[pdf] done, {} bytes", bytes.len());
+                    if log {
+                        eprintln!("[pdf] done, {} bytes", bytes.len());
+                    }
                     Ok((bytes, total))
                 })(),
             };
@@ -78,8 +96,8 @@ fn start_pdf_worker() -> PdfWorkerHandle {
     PdfWorkerHandle { tx }
 }
 
-pub fn setup(app: &tauri::AppHandle) {
-    app.manage(start_pdf_worker());
+pub fn setup(app: &tauri::AppHandle, shared: SharedConfig) {
+    app.manage(start_pdf_worker(shared));
 }
 
 #[tauri::command]

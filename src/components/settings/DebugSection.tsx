@@ -36,6 +36,16 @@ export default function DebugSection({ config, onChange }: Props) {
           <Toggle label="Log watcher events" checked={config.debug.log_watcher} onChange={v => set({ log_watcher: v })} />
         </div>
       </div>
+
+      <div className="settings-field">
+        <div className="settings-field-label">
+          <div className="settings-field-name">Log PDF rendering</div>
+          <div className="settings-field-desc">Print pdfium load/render/encode steps to stderr</div>
+        </div>
+        <div className="settings-field-control">
+          <Toggle label="Log PDF rendering" checked={config.debug.log_pdf} onChange={v => set({ log_pdf: v })} />
+        </div>
+      </div>
     </div>
   );
 }

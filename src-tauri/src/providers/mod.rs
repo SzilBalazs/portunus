@@ -23,6 +23,17 @@ pub const SCORE_DICT: f32 = 3_000_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
+/// Subtracted from file/content/folder results whose path contains a hidden
+/// component (e.g. `.config`), so configs/caches sink below normal results.
+pub const SCORE_HIDDEN_PATH_PENALTY: f32 = 5_000_000.0;
+
+/// True if any path segment (dir or file) starts with '.', ignoring '.'/'..'.
+pub fn path_has_hidden_component(path: &str) -> bool {
+    use std::path::Component;
+    std::path::Path::new(path).components().any(|c| {
+        matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
+    })
+}
 
 /// Score threshold that scales with query length.
 /// Two-phase ramp so the jump to full threshold is gradual:
@@ -162,6 +173,15 @@ impl PluginRegistry {
             .iter()
             .flat_map(|p| p.search(query))
             .collect();
+
+        // Penalize results inside (or being) hidden paths so configs/caches sink.
+        for r in &mut results {
+            if let Some(path) = r.id.strip_prefix("file:") {
+                if path_has_hidden_component(path) {
+                    r.score -= SCORE_HIDDEN_PATH_PENALTY;
+                }
+            }
+        }
 
         // Apply frecency bonus before sort so heavily-used items surface correctly.
         // Skip content results — they are already ranked by FTS5/BM25 relevance and

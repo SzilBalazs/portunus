@@ -138,11 +138,12 @@ impl Default for SearchConfig {
 pub struct DebugConfig {
     pub log_scores: bool,
     pub log_watcher: bool,
+    pub log_pdf: bool,
 }
 
 impl Default for DebugConfig {
     fn default() -> Self {
-        Self { log_scores: false, log_watcher: false }
+        Self { log_scores: false, log_watcher: false, log_pdf: false }
     }
 }
 
@@ -183,6 +184,21 @@ pub struct ContentConfig {
     pub ocr_pdf_fallback: bool,
     pub ocr_language: String,
     pub threads: usize,
+}
+
+impl ContentConfig {
+    /// True if the two configs would produce an identical index. Compares every
+    /// field that affects *what* gets indexed, ignoring `threads` (which only
+    /// affects indexing speed). A threads-only change must not trigger a reindex.
+    pub fn contents_eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+            && self.dirs == other.dirs
+            && self.extensions == other.extensions
+            && self.max_file_bytes == other.max_file_bytes
+            && self.ocr_images == other.ocr_images
+            && self.ocr_pdf_fallback == other.ocr_pdf_fallback
+            && self.ocr_language == other.ocr_language
+    }
 }
 
 impl Default for ContentConfig {
@@ -235,6 +251,7 @@ pub struct SharedSearchConfig {
     pub recency_weight: f32,
     pub log_scores: bool,
     pub log_watcher: bool,
+    pub log_pdf: bool,
 }
 
 pub type SharedConfig = Arc<RwLock<SharedSearchConfig>>;
@@ -247,6 +264,7 @@ impl SharedSearchConfig {
             recency_weight: cfg.search.recency_weight,
             log_scores: cfg.debug.log_scores,
             log_watcher: cfg.debug.log_watcher,
+            log_pdf: cfg.debug.log_pdf,
         }
     }
 
@@ -256,6 +274,7 @@ impl SharedSearchConfig {
         self.recency_weight = cfg.search.recency_weight;
         self.log_scores = cfg.debug.log_scores;
         self.log_watcher = cfg.debug.log_watcher;
+        self.log_pdf = cfg.debug.log_pdf;
     }
 }
 

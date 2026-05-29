@@ -209,12 +209,25 @@ pub fn rebuild_providers(
                         "[content] heavy settings change detected; full reindex deferred \
                          (apply via Settings or `portunus --reindex`)"
                     );
+                } else if old_content_cfg.contents_eq(&new_content_cfg) {
+                    // Only indexing-speed settings (threads) changed — the index
+                    // contents are unaffected, so a reindex would be pure waste and
+                    // would race the progress bar against any in-flight run.
+                    eprintln!("[content] non-content settings change; skipping reindex");
                 } else {
                     // Cheap, non-destructive incremental update — same as the startup routine.
                     // Picks up added dirs, extension/depth changes, and removed dirs.
-                    content_index::run_content_indexer(idx, &new_content_cfg, Some(cb));
-                    eprintln!("[content] incremental reindex complete");
-                    ncb();
+                    // Guarded so a config save mid-reindex doesn't start a second run.
+                    match content_index::ReindexGuard::acquire() {
+                        Some(_guard) => {
+                            content_index::run_content_indexer(idx, &new_content_cfg, Some(cb));
+                            eprintln!("[content] incremental reindex complete");
+                            ncb();
+                        }
+                        None => eprintln!(
+                            "[content] reindex already in progress; skipping incremental update"
+                        ),
+                    }
                 }
             } else {
                 *guard = None;

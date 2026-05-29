@@ -1077,6 +1077,7 @@ mark.preview-hl {
 
 .md-preview-wrap strong { font-weight: 600; }
 .md-preview-wrap em { font-style: italic; }
+.md-preview-wrap img { max-width: 100%; height: auto; border-radius: 4px; margin: 0 0 9px; }
 
 /* ---------- result group labels ---------- */
 

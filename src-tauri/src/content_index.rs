@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,6 +15,30 @@ use std::cell::RefCell;
 
 #[cfg(feature = "ocr")]
 static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Set while a full-scan reindex (full or incremental) is running. Used to
+/// coalesce overlapping reindex triggers so only one drives the progress bar.
+static REINDEX_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard for the single-reindex-at-a-time invariant. `acquire` returns
+/// `None` if a reindex is already running; the flag clears on drop, so it is
+/// released even on early return or panic.
+pub struct ReindexGuard(());
+
+impl ReindexGuard {
+    pub fn acquire() -> Option<ReindexGuard> {
+        REINDEX_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ReindexGuard(()))
+    }
+}
+
+impl Drop for ReindexGuard {
+    fn drop(&mut self) {
+        REINDEX_ACTIVE.store(false, Ordering::Release);
+    }
+}
 
 // ── database ──────────────────────────────────────────────────────────────────
 

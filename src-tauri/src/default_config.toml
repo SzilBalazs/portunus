@@ -33,6 +33,7 @@ recency_weight = 50.0  # max bonus added to file scores for recently modified it
 [debug]
 log_scores  = false    # print nucleo score + threshold for every match candidate to stderr
 log_watcher = false    # print content-watcher events and process_event_path decisions to stderr
+log_pdf     = false    # print pdfium load/render/encode steps to stderr
 
 [frecency]
 enabled        = true

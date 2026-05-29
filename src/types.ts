@@ -34,6 +34,7 @@ export interface Config {
   debug: {
     log_scores: boolean;
     log_watcher: boolean;
+    log_pdf: boolean;
   };
   frecency: {
     enabled: boolean;

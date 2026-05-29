@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { SearchResult } from "../types";
 import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, isOfficeText, isSpreadsheet } from "../utils";
@@ -433,10 +434,16 @@ function OfficeTextPreview({ path, terms }: { path: string; terms: string[] }) {
 
   if (source === null) return <div className="text-preview-wrap" />;
 
+  const baseDir = path.slice(0, path.lastIndexOf("/")) || "/";
+  const mdComponents: Components = {
+    code: mdCodeComponent,
+    img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} baseDir={baseDir} />,
+  };
+
   return (
     <div className="text-preview-wrap">
       <div className="md-preview-wrap" ref={ref} key={`${source}${terms.join("")}`}>
-        <ReactMarkdown components={mdComponents}>{source}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{source}</ReactMarkdown>
       </div>
     </div>
   );
@@ -508,30 +515,55 @@ function FolderContents({ path }: { path: string }) {
 
 // ── markdown preview ──────────────────────────────────────────────────────────
 
-const mdComponents: Components = {
-  code({ className, children }) {
-    const match = /language-(\w+)/.exec(className ?? "");
-    if (match) {
-      try {
-        const highlighted = hljs.highlight(String(children).replace(/\n$/, ""), {
-          language: match[1],
-          ignoreIllegals: true,
-        });
-        return (
-          <code
-            className={`hljs language-${match[1]}`}
-            dangerouslySetInnerHTML={{ __html: highlighted.value }}
-          />
-        );
-      } catch { /* fall through to plain */ }
-    }
-    return <code className={className}>{children}</code>;
-  },
+const mdCodeComponent: Components["code"] = ({ className, children }) => {
+  const match = /language-(\w+)/.exec(className ?? "");
+  if (match) {
+    try {
+      const highlighted = hljs.highlight(String(children).replace(/\n$/, ""), {
+        language: match[1],
+        ignoreIllegals: true,
+      });
+      return (
+        <code
+          className={`hljs language-${match[1]}`}
+          dangerouslySetInnerHTML={{ __html: highlighted.value }}
+        />
+      );
+    } catch { /* fall through to plain */ }
+  }
+  return <code className={className}>{children}</code>;
 };
+
+// Resolve a markdown image src against the document's directory and load it via
+// render_image_preview (asset protocol is scoped to icon dirs, so local paths
+// can't be used directly). Remote (http/data) srcs pass through unchanged.
+function MarkdownImage({ src, alt, baseDir }: { src?: string; alt?: string; baseDir: string }) {
+  const isRemote = !!src && /^(https?:|data:)/.test(src);
+  const [resolved, setResolved] = useState<string | null>(isRemote ? src! : null);
+
+  useEffect(() => {
+    if (!src || isRemote) { setResolved(src ?? null); return; }
+    let cancelled = false;
+    setResolved(null);
+    const abs = src.startsWith("/") ? src : `${baseDir}/${src}`;
+    invoke<number[]>("render_image_preview", { path: abs })
+      .then(bytes => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
+        setResolved(url);
+      })
+      .catch(() => { if (!cancelled) setResolved(null); });
+    return () => { cancelled = true; };
+  }, [src, baseDir, isRemote]);
+
+  if (!resolved) return null;
+  return <img src={resolved} alt={alt ?? ""} />;
+}
 
 function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
   const [source, setSource] = useState<string | null>(null);
   const ref = useTermHighlight<HTMLDivElement>(terms, source);
+  const baseDir = path.slice(0, path.lastIndexOf("/")) || "/";
 
   useEffect(() => {
     let cancelled = false;
@@ -544,10 +576,15 @@ function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
 
   if (source === null) return <div className="text-preview-wrap" />;
 
+  const mdComponents: Components = {
+    code: mdCodeComponent,
+    img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} baseDir={baseDir} />,
+  };
+
   return (
     <div className="text-preview-wrap">
       <div className="md-preview-wrap" ref={ref} key={`${source}${terms.join("")}`}>
-        <ReactMarkdown components={mdComponents}>{source}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{source}</ReactMarkdown>
       </div>
     </div>
   );
