@@ -105,8 +105,20 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   margin: 0 -6px;
-  padding: 2px 6px;
+  padding: 2px 10px 2px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-input) transparent;
 }
+.onb-stage::-webkit-scrollbar { width: 10px; height: 10px; }
+.onb-stage::-webkit-scrollbar-track { background: transparent; }
+.onb-stage::-webkit-scrollbar-thumb {
+  background: var(--bg-input);
+  border-radius: 5px;
+  border: 2px solid var(--bg-card);
+  background-clip: padding-box;
+  min-height: 32px;
+}
+.onb-stage::-webkit-scrollbar-thumb:hover { background: var(--fg-mute); background-clip: padding-box; }
 
 .onb-step { will-change: transform, opacity; }
 .onb-step--fwd  { animation: onb-step-fwd  0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
