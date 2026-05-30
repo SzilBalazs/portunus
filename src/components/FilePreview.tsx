@@ -181,38 +181,48 @@ function PdfPreview({ path, page }: { path: string; page: number }) {
       setLoaded(false);
       setShowSkeleton(true);
     }, 140);
-    getPdfUrl(path, cur)
-      .then(async (url) => {
-        // Decode off-DOM so the <img> paints in a single frame (no half-drawn flash).
-        try {
-          const probe = new Image();
-          probe.src = url;
-          await probe.decode();
-        } catch { /* decode unsupported/failed; onLoad fallback covers it */ }
-        if (cancelled) return;
-        clearTimeout(skeletonTimer);
-        // Animate only on the slow path, where the skeleton was actually shown.
-        setReveal(skeletonShownRef.current);
-        setSrc(url);
-        setLoaded(true);
-        setShowSkeleton(false);
-        setCount(pdfPageCount.get(path) ?? null);
-      })
-      .catch((e) => {
-        console.error("[pdf] render_pdf_page failed:", e);
-        if (!cancelled) { clearTimeout(skeletonTimer); setError(true); }
-      });
-    return () => { cancelled = true; clearTimeout(skeletonTimer); };
+    // Debounce the render: rapid Ctrl+←/→ would otherwise fire one backend
+    // render_pdf_page per intermediate page — crippling on a large PDF. Only the
+    // page the user settles on renders. Already-cached pages took the early return
+    // above, so revisiting stays instant; this delay only affects first renders.
+    const renderTimer = setTimeout(() => {
+      getPdfUrl(path, cur)
+        .then(async (url) => {
+          // Decode off-DOM so the <img> paints in a single frame (no half-drawn flash).
+          try {
+            const probe = new Image();
+            probe.src = url;
+            await probe.decode();
+          } catch { /* decode unsupported/failed; onLoad fallback covers it */ }
+          if (cancelled) return;
+          clearTimeout(skeletonTimer);
+          // Animate only on the slow path, where the skeleton was actually shown.
+          setReveal(skeletonShownRef.current);
+          setSrc(url);
+          setLoaded(true);
+          setShowSkeleton(false);
+          setCount(pdfPageCount.get(path) ?? null);
+        })
+        .catch((e) => {
+          console.error("[pdf] render_pdf_page failed:", e);
+          // Clear the stale image so the error message shows alone, not layered
+          // over a leftover page from a previous render.
+          if (!cancelled) { clearTimeout(skeletonTimer); setSrc(null); setLoaded(false); setShowSkeleton(false); setError(true); }
+        });
+    }, 80);
+    return () => { cancelled = true; clearTimeout(skeletonTimer); clearTimeout(renderTimer); };
   }, [key, path, cur]);
 
   // Ctrl+←/→ flips pages, clamped to [0, count-1] once the count is known.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-      const max = count != null ? count - 1 : Infinity;
       setCur((c) => {
-        const next = e.key === "ArrowRight" ? Math.min(c + 1, max) : Math.max(c - 1, 0);
-        return next;
+        // Until the page count is known, don't advance past the current page —
+        // otherwise rapid Ctrl+→ overshoots into a non-existent page and flashes
+        // "Preview unavailable" until the count arrives.
+        const max = count != null ? count - 1 : c;
+        return e.key === "ArrowRight" ? Math.min(c + 1, max) : Math.max(c - 1, 0);
       });
       e.preventDefault();
       e.stopPropagation();

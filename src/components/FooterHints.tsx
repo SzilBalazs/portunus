@@ -4,7 +4,8 @@ import { EnterIcon } from "../icons";
 
 interface Props {
   selected: SearchResult | null;
-  isContentSearch: boolean;
+  /** A ghost command-completion is showing, so Tab will accept it. */
+  canComplete: boolean;
 }
 
 // Reusable hint atoms
@@ -15,11 +16,9 @@ const Jump = () => <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</s
 const CopyPath = () => <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
 
-const TabHint = ({ isContentSearch }: { isContentSearch: boolean }) => (
-  <span className="hint"><kbd>Tab</kbd>{isContentSearch ? " back" : " search contents"}</span>
-);
+const Complete = () => <span className="hint"><kbd>Tab</kbd> complete</span>;
 
-function hints(selected: SearchResult | null, isContentSearch: boolean): ReactNode {
+function hints(selected: SearchResult | null, canComplete: boolean): ReactNode {
   const k = selected?.kind;
 
   if (k === "timer-item") return <><Nav /><span className="hint"><kbd>Del</kbd> stop timer</span><Esc /></>;
@@ -35,8 +34,8 @@ function hints(selected: SearchResult | null, isContentSearch: boolean): ReactNo
   if (k === "dict-hint") return <><span className="hint"><kbd>|</kbd> start typing</span><Esc /></>;
   if (k === "dict") return <><Nav /><span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy definition</span><Esc /></>;
 
-  if (k === "content-disabled") return <><span className="hint"><kbd><EnterIcon /></kbd> open settings</span><span className="hint"><kbd>Tab</kbd> back</span><Esc /></>;
-  if (k === "content-hint") return <><span className="hint"><kbd>Tab</kbd> or <kbd><EnterIcon /></kbd> search contents</span><Esc /></>;
+  if (k === "content-disabled") return <><span className="hint"><kbd><EnterIcon /></kbd> open settings</span><Esc /></>;
+  if (k === "content-hint") return <><span className="hint"><kbd><EnterIcon /></kbd> search contents</span><Esc /></>;
 
   if (k === "file" || k === "folder") {
     const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
@@ -46,16 +45,16 @@ function hints(selected: SearchResult | null, isContentSearch: boolean): ReactNo
         {!isPdf && <CopyPath />}
         {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
         {isPdf && <PdfPageNav />}
-        <TabHint isContentSearch={isContentSearch} /><Esc />
+        {canComplete && <Complete />}<Esc />
       </>
     );
   }
-  if (k === "app") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> launch</span><Jump /><TabHint isContentSearch={isContentSearch} /><Esc /></>;
+  if (k === "app") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> launch</span><Jump />{canComplete && <Complete />}<Esc /></>;
 
   // Default: generic result row
-  return <><Nav /><Open /><Jump /><TabHint isContentSearch={isContentSearch} /><Esc /></>;
+  return <><Nav /><Open /><Jump />{canComplete && <Complete />}<Esc /></>;
 }
 
-export default function FooterHints({ selected, isContentSearch }: Props) {
-  return <div className="hints">{hints(selected, isContentSearch)}</div>;
+export default function FooterHints({ selected, canComplete }: Props) {
+  return <div className="hints">{hints(selected, canComplete)}</div>;
 }

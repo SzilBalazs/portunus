@@ -20,6 +20,17 @@ import "./themes.css";
 
 const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint', 'content-hint', 'content-disabled']);
 
+// Greyed-out completion shown after a partial command word (e.g. "tim" -> "er").
+// Tab accepts it. Returns the suffix to append, or null when nothing completes.
+function ghostFor(q: string): string | null {
+  if (q.length < 2 || q.includes(' ')) return null;
+  if ('timer'.startsWith(q) && q.length < 5) return 'timer'.slice(q.length);
+  if ('define'.startsWith(q) && q.length < 6) return 'define'.slice(q.length);
+  if ('dict'.startsWith(q) && q.length < 4 && !'define'.startsWith(q)) return 'dict'.slice(q.length);
+  if ('clipboard'.startsWith(q) && q.length >= 4 && q.length < 9) return 'clipboard'.slice(q.length);
+  return null;
+}
+
 export default function App() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -117,6 +128,9 @@ export default function App() {
     const t = setTimeout(() => {
       invoke<SearchResult[]>("search", { query }).then(r => {
         if (!cancelled) { setResults(r); setSearching(false); }
+      }).catch(() => {
+        // Don't strand the UI in "searching": clear so the empty state can show.
+        if (!cancelled) { setResults([]); setSearching(false); }
       });
     }, 40);
     return () => { cancelled = true; clearTimeout(t); };
@@ -167,6 +181,12 @@ export default function App() {
       exec: `timer:dismiss:${t.id}`,
     }));
   }, [query, results, expiredTimers, contentEnabled, searching]);
+
+  // Results can shrink without the query changing (timer requery, search-invalidated).
+  // Snap the selection back in bounds so the highlight/preview and Enter stay live.
+  useEffect(() => {
+    setSelectedIndex(i => (i >= displayResults.length ? 0 : i));
+  }, [displayResults.length]);
 
   const hasTimerItems = displayResults.some(r => r.kind === "timer-item");
   useEffect(() => {
@@ -244,13 +264,12 @@ export default function App() {
         setSelectedIndex(displayResults.indexOf(target));
         if (target.kind !== "timer-item") launch(target);
       } else if (e.key === "Tab") {
+        // Accept the ghost completion if one is showing; otherwise keep focus
+        // in the input (no focusable peers to tab to in the launcher).
         e.preventDefault();
         const q = queryRef.current;
-        if (/^!\s*/.test(q)) {
-          setQuery(q.replace(/^!\s*/, ''));
-        } else {
-          setQuery('! ' + q.trim());
-        }
+        const ghost = ghostFor(q);
+        if (ghost) setQuery(q + ghost);
       } else if (e.key === "Escape") {
         e.preventDefault();
         setQuery("");
@@ -287,15 +306,7 @@ export default function App() {
     [displayResults]
   );
 
-  const ghostSuffix = useMemo((): string | null => {
-    const q = query;
-    if (q.length < 2 || q.includes(' ')) return null;
-    if ('timer'.startsWith(q) && q.length < 5) return 'timer'.slice(q.length);
-    if ('define'.startsWith(q) && q.length < 6) return 'define'.slice(q.length);
-    if ('dict'.startsWith(q) && q.length < 4 && !'define'.startsWith(q)) return 'dict'.slice(q.length);
-    if ('clipboard'.startsWith(q) && q.length >= 4 && q.length < 9) return 'clipboard'.slice(q.length);
-    return null;
-  }, [query]);
+  const ghostSuffix = useMemo(() => ghostFor(query), [query]);
 
   const hintChip = useMemo((): string | null => {
     const q = query;
@@ -395,7 +406,7 @@ export default function App() {
         </div>
 
         <div className="footer">
-          <FooterHints selected={selected} isContentSearch={isContentSearch} />
+          <FooterHints selected={selected} canComplete={ghostSuffix !== null} />
           <div className="footer-right">
             <button
               className="footer-settings-btn"
