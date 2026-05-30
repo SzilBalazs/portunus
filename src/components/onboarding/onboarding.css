@@ -101,7 +101,9 @@
   position: relative;
   flex: 1;
   min-height: 320px;
+  overflow-x: hidden; /* clip the slide transform so it can't trigger a transient scrollbar */
   overflow-y: auto;
+  scrollbar-gutter: stable;
   margin: 0 -6px;
   padding: 2px 6px;
 }
@@ -383,6 +385,89 @@
   font-size: 11px;
   color: var(--fg-dim);
   line-height: 1.5;
+}
+
+/* ── neat screenshot-folder hint (OCR preset) ────────────────────────────── */
+.onb-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.onb-hint svg { flex-shrink: 0; margin-top: 1px; }
+.onb-hint strong { font-weight: 700; }
+.onb-hint-body { flex: 1; min-width: 0; }
+.onb-hint-head { color: var(--fg); }
+.onb-hint-row { display: flex; gap: 6px; margin-top: 8px; }
+.onb-hint-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  background: var(--bg);
+  border: 1px solid var(--fg-dim);
+  border-radius: 7px;
+}
+.onb-hint-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.onb-hint-field svg { flex-shrink: 0; color: var(--fg-mute); }
+.onb-hint-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+.onb-hint-input::placeholder { color: var(--fg-mute); }
+.onb-hint-add,
+.onb-hint-remove {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.onb-hint-add {
+  color: var(--text-on-accent);
+  background: var(--accent);
+}
+.onb-hint-add:disabled { opacity: 0.5; cursor: default; }
+.onb-hint-added {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.onb-hint-path {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.onb-hint-remove {
+  color: var(--fg-dim);
+  background: var(--kbd-bg);
+  border-color: var(--line);
 }
 
 /* ── nav bar ─────────────────────────────────────────────────────────────── */

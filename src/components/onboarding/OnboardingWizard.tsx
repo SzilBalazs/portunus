@@ -94,6 +94,7 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
   const [version, setVersion] = useState("");
   const [deps, setDeps] = useState<Record<string, boolean> | null>(null);
   const [preset, setPreset] = useState<PresetId | null>(null);
+  const [screenshotDir, setScreenshotDir] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
 
   useEffect(() => { getVersion().then(setVersion); }, []);
@@ -119,10 +120,31 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
   const choosePreset = (p: Preset) => {
     if (p.requires && !depOk(p.requires)) return; // blocked: dependency missing
     setPreset(p.id);
+    setScreenshotDir(null); // preset rewrites dirs, so drop any added screenshot folder
     setDraft(d => ({
       ...d,
       content: { ...d.content, enabled: true, dirs: p.dirs, ocr_images: p.ocr, ocr_pdf_fallback: p.ocr },
     }));
+  };
+
+  // OCR makes any text in a screenshot searchable; let the user point us at their folder.
+  const addScreenshotDir = (raw: string) => {
+    const path = raw.trim();
+    if (!path) return;
+    const entry: ContentDirEntry = { path, depth: 2, extensions: ["png", "jpg", "jpeg"] };
+    setDraft(d => ({
+      ...d,
+      content: { ...d.content, dirs: [...d.content.dirs.filter(x => x.path !== path), entry] },
+    }));
+    setScreenshotDir(path);
+  };
+
+  const removeScreenshotDir = () => {
+    setDraft(d => ({
+      ...d,
+      content: { ...d.content, dirs: d.content.dirs.filter(x => x.path !== screenshotDir) },
+    }));
+    setScreenshotDir(null);
   };
 
   const toggleContent = (on: boolean) => {
@@ -197,6 +219,9 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
                 depOk={depOk}
                 onToggle={toggleContent}
                 onPreset={choosePreset}
+                screenshotDir={screenshotDir}
+                onAddScreenshots={addScreenshotDir}
+                onRemoveScreenshots={removeScreenshotDir}
               />
             )}
           </div>
@@ -323,15 +348,20 @@ function ProvidersStep({
 
 function ContentStep({
   enabled, preset, depOk, onToggle, onPreset,
+  screenshotDir, onAddScreenshots, onRemoveScreenshots,
 }: {
   enabled: boolean;
   preset: PresetId | null;
   depOk: (id?: string) => boolean;
   onToggle: (on: boolean) => void;
   onPreset: (p: Preset) => void;
+  screenshotDir: string | null;
+  onAddScreenshots: (path: string) => void;
+  onRemoveScreenshots: () => void;
 }) {
   const popplerMissing = !depOk("poppler");
   const showOcrWarning = preset === "ocr";
+  const [screenshotInput, setScreenshotInput] = useState("~/Pictures/Screenshots");
 
   return (
     <div className="onb-section">
@@ -385,6 +415,48 @@ function ContentStep({
                 <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
               </svg>
               <span>OCR scans images and scanned PDFs page by page, so the first index may take <strong>several minutes</strong> depending on how many files you have.</span>
+            </div>
+          )}
+
+          {showOcrWarning && (
+            <div className="onb-hint onb-rise" style={{ animationDelay: "120ms" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/>
+              </svg>
+              <div className="onb-hint-body">
+                <div className="onb-hint-head"><strong>Neat:</strong> index your screenshots folder. OCR makes any text in a screenshot searchable.</div>
+                {screenshotDir ? (
+                  <div className="onb-hint-added">
+                    <span className="onb-hint-path">{screenshotDir}</span>
+                    <button type="button" className="onb-hint-remove" onClick={onRemoveScreenshots}>Remove</button>
+                  </div>
+                ) : (
+                  <div className="onb-hint-row">
+                    <div className="onb-hint-field">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                      </svg>
+                      <input
+                        className="onb-hint-input"
+                        type="text"
+                        value={screenshotInput}
+                        placeholder="~/Pictures/Screenshots"
+                        onChange={e => setScreenshotInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") onAddScreenshots(screenshotInput); }}
+                        aria-label="Screenshots folder path"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="onb-hint-add"
+                      onClick={() => onAddScreenshots(screenshotInput)}
+                      disabled={!screenshotInput.trim()}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
