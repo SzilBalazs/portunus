@@ -1,15 +1,20 @@
 use crate::config::SharedConfig;
 use tauri::Manager;
 
-/// (path, 0-based page index, reply channel). Reply is (jpeg bytes, total page count).
+/// (path, 0-based page index, target pixel width, reply channel).
+/// Reply is (jpeg bytes, total page count).
 type PdfReply = std::sync::mpsc::Sender<Result<(Vec<u8>, u32), String>>;
-type PdfRenderMsg = (String, u32, PdfReply);
+type PdfRenderMsg = (String, u32, u32, PdfReply);
 
 pub struct PdfWorkerHandle {
     tx: std::sync::mpsc::SyncSender<PdfRenderMsg>,
 }
 
+/// Default render width for the side preview. Quicklook requests larger widths
+/// (high-DPI / zoom) so A4 pages stay sharp and readable.
 const PDF_RENDER_WIDTH: u32 = 800;
+/// Hard ceiling so a runaway zoom can't allocate a multi-hundred-MB bitmap.
+const PDF_MAX_RENDER_WIDTH: u32 = 3000;
 
 /// Whether the pdfium system library can be loaded. Used by `check_dependencies`
 /// to report PDF-preview availability in Settings without waiting for the user
@@ -22,7 +27,7 @@ pub fn pdfium_available() -> bool {
 fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
     let (tx, rx) = std::sync::mpsc::sync_channel::<PdfRenderMsg>(4);
     std::thread::spawn(move || {
-        use image::ImageFormat;
+        use image::codecs::jpeg::JpegEncoder;
         use pdfium_render::prelude::*;
         // Read the flag fresh each message so the Debug toggle takes effect live.
         let log_pdf = || shared.read().unwrap().log_pdf;
@@ -32,13 +37,13 @@ fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
                 eprintln!("[pdf] bind_to_system_library failed: {e}");
                 e.to_string()
             });
-        while let Ok((path, page_idx, reply)) = rx.recv() {
+        while let Ok((path, page_idx, width, reply)) = rx.recv() {
             let log = log_pdf();
             let result = match &pdfium {
                 Err(msg) => Err(msg.clone()),
                 Ok(pdfium) => (|| {
                     if log {
-                        eprintln!("[pdf] rendering: {path} (page {page_idx})");
+                        eprintln!("[pdf] rendering: {path} (page {page_idx}, width {width})");
                     }
                     let doc = pdfium.load_pdf_from_file(&path, None).map_err(|e| {
                         let msg = e.to_string();
@@ -63,7 +68,7 @@ fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
                     let total = page_count as u32;
                     let bitmap = page
                         .render_with_config(
-                            &PdfRenderConfig::new().set_target_width(PDF_RENDER_WIDTH as i32),
+                            &PdfRenderConfig::new().set_target_width(width as i32),
                         )
                         .map_err(|e| {
                             let msg = e.to_string();
@@ -72,11 +77,16 @@ fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
                             }
                             msg
                         })?;
+                    // Quality 90 (vs the encoder default of 75): text edges stay
+                    // crisp when the page is enlarged for reading in Quicklook.
                     let mut bytes = Vec::new();
                     bitmap
                         .as_image()
                         .into_rgb8()
-                        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)
+                        .write_with_encoder(JpegEncoder::new_with_quality(
+                            std::io::Cursor::new(&mut bytes),
+                            90,
+                        ))
                         .map_err(|e| {
                             let msg = e.to_string();
                             if log {
@@ -104,12 +114,16 @@ pub fn setup(app: &tauri::AppHandle, shared: SharedConfig) {
 pub async fn render_pdf_page(
     path: String,
     page: Option<u32>,
+    width: Option<u32>,
     worker: tauri::State<'_, PdfWorkerHandle>,
 ) -> Result<(Vec<u8>, u32), String> {
+    let width = width
+        .unwrap_or(PDF_RENDER_WIDTH)
+        .clamp(PDF_RENDER_WIDTH, PDF_MAX_RENDER_WIDTH);
     let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<(Vec<u8>, u32), String>>();
     worker
         .tx
-        .try_send((path, page.unwrap_or(0), reply_tx))
+        .try_send((path, page.unwrap_or(0), width, reply_tx))
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
@@ -260,13 +274,15 @@ pub fn read_text_preview(path: String, terms: Option<Vec<String>>) -> Result<Str
 }
 
 #[tauri::command]
-pub async fn render_image_preview(path: String) -> Result<Vec<u8>, String> {
+pub async fn render_image_preview(path: String, width: Option<u32>) -> Result<Vec<u8>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         use image::ImageFormat;
-        const MAX_WIDTH: u32 = 800;
+        // Default 800 for the side preview; Quicklook requests a larger width so an
+        // enlarged image stays crisp. Clamped to keep memory bounded.
+        let max_width = width.unwrap_or(800).clamp(200, 2400);
         let img = image::open(&path).map_err(|e| e.to_string())?;
-        let img = if img.width() > MAX_WIDTH {
-            img.thumbnail(MAX_WIDTH, u32::MAX)
+        let img = if img.width() > max_width {
+            img.thumbnail(max_width, u32::MAX)
         } else {
             img
         };

@@ -96,6 +96,7 @@ html, body, #root {
 
 .card {
   flex: 1;
+  position: relative;
   background: var(--bg-card);
   border-radius: var(--radius);
   border: 1px solid var(--line);
@@ -103,6 +104,192 @@ html, body, #root {
   display: grid;
   grid-template-rows: 64px 1fr 36px;
   box-shadow: 0 30px 80px -20px rgba(0,0,0,.7), 0 8px 24px -8px rgba(0,0,0,.5);
+}
+
+/* ---------- quicklook overlay ---------- */
+
+.quicklook-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  animation: quicklook-fade 0.16s ease-out forwards;
+}
+
+.quicklook-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-preview);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 64px -16px rgba(0,0,0,.8);
+  animation: pdf-reveal 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+/* The preview's own scroll container fills the enlarged box. */
+.quicklook-inner > * {
+  flex: 1;
+  min-height: 0;
+}
+
+@keyframes quicklook-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* In Quicklook the file preview is pure reader — header and metadata are
+   dropped, so the document body claims the whole surface, edge to edge. */
+.file-preview-ql { padding: 0; gap: 0; }
+
+/* ---------- quicklook pdf reader ---------- */
+
+/* A real reading surface: a single clean frame (the overlay's own border), the
+   page centered on a deep backdrop. Default zoom fits the whole page; Ctrl+±
+   (or Ctrl+wheel) zooms, and the view scrolls when the page is larger. */
+.pdf-ql-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: inherit;
+  overflow: hidden;
+  background:
+    radial-gradient(130% 90% at 50% -10%, color-mix(in srgb, var(--bg-deep) 82%, #000) 0%, var(--bg-deep) 65%);
+}
+
+.pdf-ql {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* Reserve the scrollbar gutter so clientWidth stays constant whether or not the
+     vertical scrollbar is showing — otherwise a page sized near the viewport
+     height makes the scrollbar flicker on/off and the measured width oscillates. */
+  scrollbar-gutter: stable;
+  /* Extra bottom room so the floating HUD clears the page. */
+  padding: 22px 24px 48px;
+  display: flex;
+  overscroll-behavior: contain;
+}
+/* Center every child (page, spinner, error) via auto margins — NOT align/justify
+   center, which would collapse to start-clipping when the page overflows and make
+   the top/left unreachable by scroll. */
+.pdf-ql > * { margin: auto; }
+/* Grab cursor only when there's something to pan. */
+.pdf-ql.is-scrollable { cursor: grab; }
+.pdf-ql.is-scrollable.is-grabbing { cursor: grabbing; }
+.pdf-ql.is-grabbing .pdf-ql-page { pointer-events: none; }
+
+/* Same styled scrollbars as the text preview, instead of the OS default. */
+.pdf-ql::-webkit-scrollbar { width: 10px; height: 10px; }
+.pdf-ql::-webkit-scrollbar-thumb {
+  background: var(--bg-input);
+  border-radius: 5px;
+  border: 2px solid var(--bg-deep);
+  background-clip: padding-box;
+  min-height: 32px;
+  min-width: 32px;
+}
+.pdf-ql::-webkit-scrollbar-thumb:hover { background: var(--fg-mute); background-clip: padding-box; }
+.pdf-ql::-webkit-scrollbar-track { background: transparent; }
+.pdf-ql::-webkit-scrollbar-corner { background: var(--bg-deep); }
+
+.pdf-ql-page {
+  /* margin:auto on a flex item centers both axes AND, unlike justify/align
+     center, still lets you scroll to the very top/left when the page overflows. */
+  margin: auto;
+  height: auto;
+  max-width: none;            /* allow horizontal scroll when zoomed past the surface */
+  border-radius: 2px;
+  background: #fff;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.5),
+    0 18px 48px -16px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+/* Centered spinner — only on the very first load (nothing to show yet). */
+.pdf-ql-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2.5px solid var(--line);
+  border-top-color: var(--accent);
+  animation: pdf-ql-spin 0.7s linear infinite;
+}
+
+/* Quiet top-right pip while a sharper render is in flight — the current page
+   stays visible (CSS-scaled) underneath, so zoom never blanks. */
+.pdf-ql-rendering {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: pdf-ql-spin 0.7s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes pdf-ql-spin { to { transform: rotate(360deg); } }
+
+/* Floating glass HUD, bottom-center — page + zoom + a quiet key legend. */
+.pdf-ql-hud {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font: 600 10.5px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--bg-deep) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px) saturate(1.1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.pdf-ql-hud-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+.pdf-ql-hud-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+  color: var(--fg-mute);
+  font-weight: 500;
+}
+
+.pdf-ql-hud-keys kbd {
+  font: inherit;
+  background: var(--bg-input);
+  color: var(--fg-mute);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
 }
 
 /* ---------- search bar ---------- */

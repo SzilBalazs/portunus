@@ -87,6 +87,8 @@ pub struct DictConfig {
     pub fill_sparse: bool,
     /// Allow edit-distance (typo) matches when filling; false = exact lemma only.
     pub correct_misspellings: bool,
+    /// Ctrl+C on a dict result copies the first definition; false = copies the word.
+    pub copy_definition: bool,
     /// Only fill when fewer than this many non-dict results exist.
     pub fill_threshold: usize,
     /// Max dictionary rows added when filling.
@@ -99,6 +101,7 @@ impl Default for DictConfig {
             enabled: true,
             fill_sparse: true,
             correct_misspellings: true,
+            copy_definition: true,
             fill_threshold: 3,
             fill_max: 5,
         }

@@ -21,7 +21,7 @@ export default function DictSection({ config, onChange }: Props) {
   const dictDep = deps?.find(d => d.id === "dict");
   const missing = config.dict.enabled && dictDep && !dictDep.available;
 
-  type BoolKey = "enabled" | "fill_sparse" | "correct_misspellings";
+  type BoolKey = "enabled" | "fill_sparse" | "correct_misspellings" | "copy_definition";
   const toggleField = (name: string, desc: string, key: BoolKey) => (
     <div className="settings-field">
       <div className="settings-field-label">
@@ -60,6 +60,11 @@ export default function DictSection({ config, onChange }: Props) {
         "Correct misspellings",
         "Allow edit-distance (typo) matches when filling. Off = exact word only.",
         "correct_misspellings",
+      )}
+      {toggleField(
+        "Copy definition on Ctrl+C",
+        "On = copy the first definition. Off = copy the word itself.",
+        "copy_definition",
       )}
 
       <NumberField

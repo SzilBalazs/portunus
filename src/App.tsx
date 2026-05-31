@@ -8,6 +8,7 @@ import { playTimerChime, audioCtxWarmup } from "./utils";
 import { applyTheme } from "./theme";
 import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
+import QuickLook from "./components/QuickLook";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
@@ -19,6 +20,9 @@ import "./App.css";
 import "./themes.css";
 
 const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint', 'content-hint', 'content-disabled']);
+
+// Kinds whose preview is worth enlarging into the full-card Quicklook overlay.
+const QUICKLOOK_KINDS = new Set(['file', 'folder', 'clipboard-image']);
 
 // Greyed-out completion shown after a partial command word (e.g. "tim" -> "er").
 // Tab accepts it. Returns the suffix to append, or null when nothing completes.
@@ -38,11 +42,18 @@ export default function App() {
   // list can distinguish "still loading" from a genuine zero-result query.
   const [searching, setSearching] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // The pinned result shown in Quicklook (null = closed). Pinning the result —
+  // rather than tracking a boolean + selectedIndex — keeps the overlay on the
+  // same file even if background events reorder/extend the results underneath.
+  const [quickResult, setQuickResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
   const [version, setVersion] = useState("");
   const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
   const [contentEnabled, setContentEnabled] = useState(true);
+  // Full config kept in a ref so the (effect-bound) keydown handler reads the
+  // current value without re-subscribing. Refreshed on mount/show/invalidation.
+  const configRef = useRef<Config | null>(null);
   const [onboardConfig, setOnboardConfig] = useState<Config | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const showOnboardingRef = useRef(false);
@@ -52,6 +63,11 @@ export default function App() {
   const [inputWidth, setInputWidth] = useState(0);
   const queryRef = useRef(query);
   const ghostRef = useRef<string | null>(null);
+  // Whether the launcher window currently holds focus. Guards the global key
+  // handler so an always-on-top, unfocused window doesn't eat arrow keys etc.
+  const focusedRef = useRef(true);
+  // Mirror of "Quicklook open" for use inside event-listener closures.
+  const quicklookRef = useRef(false);
 
   useEffect(() => { queryRef.current = query; }, [query]);
   useEffect(() => { getVersion().then(setVersion); }, []);
@@ -61,6 +77,7 @@ export default function App() {
     invoke<Config>("get_config").then(cfg => {
       applyTheme(cfg.appearance);
       setContentEnabled(cfg.content.enabled);
+      configRef.current = cfg;
       setOnboardConfig(cfg);
       if (!cfg.general.onboarding_completed) setShowOnboarding(true);
     });
@@ -101,16 +118,19 @@ export default function App() {
   }, []);
 
   useTauriListener("window-show", () => {
+    focusedRef.current = true;
     inputRef.current?.focus();
     audioCtxWarmup();
-    invoke<Config>("get_config").then(cfg => setContentEnabled(cfg.content.enabled));
+    invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); configRef.current = cfg; });
   });
 
   useEffect(() => {
     const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
     win.onFocusChanged(({ payload: focused }) => {
-      if (focused) inputRef.current?.focus();
+      focusedRef.current = focused;
+      // Don't steal focus back into the input while Quicklook is open (modal).
+      if (focused && !quicklookRef.current) inputRef.current?.focus();
     }).then(fn => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);
@@ -214,7 +234,7 @@ export default function App() {
     requery();
     // Also refresh content.enabled so the disabled hint appears/disappears
     // immediately when the user toggles content search in Settings.
-    invoke<Config>("get_config").then(cfg => setContentEnabled(cfg.content.enabled));
+    invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); configRef.current = cfg; });
   });
 
   const makeCtx = (): LaunchContext => ({
@@ -222,6 +242,7 @@ export default function App() {
     setResults,
     requery,
     removeExpiredTimer: (id: number) => setExpiredTimers(prev => prev.filter(t => t.id !== id)),
+    config: configRef.current,
   });
 
   const launch = (result?: SearchResult) => {
@@ -252,12 +273,30 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       // While the onboarding wizard is open it owns all input.
       if (showOnboardingRef.current) return;
+      // Ignore keys when the window isn't focused — an always-on-top launcher can
+      // otherwise still receive (and act on) keystrokes meant for another window.
+      if (!focusedRef.current) return;
+      // Quicklook is modal: result navigation must not run underneath it. Arrow
+      // keys scroll the open preview (handled in QuickLook); jump keys are inert.
+      if (quickResult && (
+        e.key === "ArrowDown" || e.key === "ArrowUp" ||
+        (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9")
+      )) {
+        return;
+      }
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex(i => Math.min(i + 1, Math.max(displayResults.length - 1, 0)));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex(i => Math.max(i - 1, 0));
+      } else if (e.shiftKey && e.key === "Enter") {
+        // Quicklook: pin & expand the selected file/folder preview to fill the card.
+        // Placed before the plain-Enter launch so Enter alone still opens.
+        e.preventDefault();
+        if (quickResult) { setQuickResult(null); return; }
+        const sel = displayResults[selectedIndex];
+        if (sel && QUICKLOOK_KINDS.has(sel.kind)) setQuickResult(sel);
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const target = launchableResults[parseInt(e.key) - 1];
@@ -272,21 +311,39 @@ export default function App() {
         if (ghost) setQuery(queryRef.current + ghost);
       } else if (e.key === "Escape") {
         e.preventDefault();
+        // Esc closes the Quicklook overlay first, the window second.
+        if (quickResult) { setQuickResult(null); return; }
         setQuery("");
         setResults([]);
         invoke("hide_window");
       } else {
         const ctx = makeCtx();
-        if (!dispatchKeyDown(e, selected, ctx)) {
-          if (e.key === "Enter") launch(displayResults[selectedIndex]);
+        // While Quicklook is open, key actions target the pinned result, not
+        // whatever the (hidden) selection drifted to.
+        const target = quickResult ?? selected;
+        if (!dispatchKeyDown(e, target, ctx)) {
+          if (e.key === "Enter") {
+            launch(target ?? undefined);
+            if (quickResult) setQuickResult(null);
+          }
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [displayResults, selectedIndex]);
+  }, [displayResults, selectedIndex, quickResult]);
 
   const selected = displayResults[selectedIndex] ?? null;
+
+  // Quicklook is modal: blur the search input while it's open so stray typing
+  // can't mutate the query/results hidden behind the overlay; refocus on close.
+  // The pinned result stays put regardless of what happens to the list behind it.
+  useEffect(() => {
+    quicklookRef.current = quickResult != null;
+    if (quickResult) inputRef.current?.blur();
+    else inputRef.current?.focus();
+  }, [quickResult]);
+
   const calcResult = results.find(r => r.kind === "calc");
   const isContentSearch = query.trimStart().startsWith('!');
   // Whether there's an actual term to search. For content queries that means
@@ -420,8 +477,17 @@ export default function App() {
           </div>
         </div>
 
+        {quickResult && (
+          <QuickLook
+            result={quickResult}
+            terms={previewTerms}
+            onLaunch={() => { launch(quickResult); setQuickResult(null); }}
+            onClose={() => setQuickResult(null)}
+          />
+        )}
+
         <div className="footer">
-          <FooterHints selected={selected} canComplete={ghostSuffix !== null} />
+          <FooterHints selected={selected} canComplete={ghostSuffix !== null} quicklookOpen={quickResult != null} />
           <div className="footer-right">
             <button
               className="footer-settings-btn"

@@ -1,11 +1,12 @@
 import type { ComponentType } from 'react';
-import type { SearchResult } from '../types';
+import type { Config, SearchResult } from '../types';
 
 export interface LaunchContext {
   setQuery: (q: string) => void;
   setResults: (r: SearchResult[]) => void;
   requery: () => void;
   removeExpiredTimer: (id: number) => void;
+  config: Config | null;
 }
 
 export interface PreviewProps {
@@ -15,6 +16,8 @@ export interface PreviewProps {
   onReveal?: () => void;
   /** Matched content-search terms to highlight in the preview (empty otherwise). */
   terms?: string[];
+  /** Rendered inside the full-card Quicklook overlay — enables large/scrollable layouts. */
+  quicklook?: boolean;
 }
 
 export interface ProviderPlugin {

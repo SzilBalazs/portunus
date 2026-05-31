@@ -33,6 +33,7 @@ export interface Config {
     enabled: boolean;
     fill_sparse: boolean;
     correct_misspellings: boolean;
+    copy_definition: boolean;
     fill_threshold: number;
     fill_max: number;
   };

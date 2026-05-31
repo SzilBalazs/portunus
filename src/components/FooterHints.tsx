@@ -6,6 +6,8 @@ interface Props {
   selected: SearchResult | null;
   /** A ghost command-completion is showing, so Tab will accept it. */
   canComplete: boolean;
+  /** The Quicklook overlay is open, so Esc closes it and Shift+Enter dismisses. */
+  quicklookOpen?: boolean;
 }
 
 // Reusable hint atoms
@@ -15,11 +17,19 @@ const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
 const Jump = () => <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>;
 const CopyPath = () => <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
+const Peek = () => <span className="hint"><kbd>shift</kbd><kbd><EnterIcon /></kbd> peek</span>;
 
 const Complete = () => <span className="hint"><kbd>Tab</kbd> complete</span>;
 
-function hints(selected: SearchResult | null, canComplete: boolean): ReactNode {
+function hints(selected: SearchResult | null, canComplete: boolean, quicklookOpen: boolean): ReactNode {
   const k = selected?.kind;
+
+  // While Quicklook is open the keys mean something different — keep the bar honest.
+  if (quicklookOpen) return <>
+    <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> scroll</span>
+    <Open />
+    <span className="hint"><kbd>shift</kbd><kbd><EnterIcon /></kbd> / <kbd>Esc</kbd> close</span>
+  </>;
 
   if (k === "timer-item") return <><Nav /><span className="hint"><kbd>Del</kbd> stop timer</span><Esc /></>;
   if (k === "timer-create" && selected?.exec) return <><span className="hint"><kbd><EnterIcon /></kbd> start timer</span><Esc /></>;
@@ -27,7 +37,7 @@ function hints(selected: SearchResult | null, canComplete: boolean): ReactNode {
   if (k === "timer-hint") return <><span className="hint"><kbd>|</kbd> start typing</span><Esc /></>;
   if (k === "timer-expired") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> dismiss</span><Esc /></>;
 
-  if (k === "clipboard" || k === "clipboard-image") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> paste</span><Jump /><Esc /></>;
+  if (k === "clipboard" || k === "clipboard-image") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> paste</span>{k === "clipboard-image" && <Peek />}<Jump /><Esc /></>;
 
   if (k === "calc") return <><Nav /><span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy value</span><Esc /></>;
 
@@ -45,6 +55,7 @@ function hints(selected: SearchResult | null, canComplete: boolean): ReactNode {
         {!isPdf && <CopyPath />}
         {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
         {isPdf && <PdfPageNav />}
+        <Peek />
         {canComplete && <Complete />}<Esc />
       </>
     );
@@ -55,6 +66,6 @@ function hints(selected: SearchResult | null, canComplete: boolean): ReactNode {
   return <><Nav /><Open /><Jump />{canComplete && <Complete />}<Esc /></>;
 }
 
-export default function FooterHints({ selected, canComplete }: Props) {
-  return <div className="hints">{hints(selected, canComplete)}</div>;
+export default function FooterHints({ selected, canComplete, quicklookOpen = false }: Props) {
+  return <div className="hints">{hints(selected, canComplete, quicklookOpen)}</div>;
 }

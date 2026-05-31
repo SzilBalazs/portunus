@@ -25,6 +25,7 @@ depth = 2
 enabled              = true     # dictionary lookup (requires dictd; install: sudo pacman -S dictd)
 fill_sparse          = true     # fill sparse result lists with dictionary matches for the typed word
 correct_misspellings = true     # allow edit-distance (typo) matches; false = exact word only
+copy_definition      = true     # ctrl+c copies first definition; false = copies the word
 fill_threshold       = 3        # only fill when fewer than this many non-dict results exist
 fill_max             = 5        # max dictionary rows added when filling
 

@@ -101,29 +101,56 @@ hljs.registerLanguage("plaintext",  langPlain);
 
 // ── pdf ───────────────────────────────────────────────────────────────────────
 
-// Cache keyed by `path#page` so the same PDF previewed on different pages doesn't
-// collide. Page count is cached per path (independent of which page is rendered).
+// Cache keyed by `path#page@width` so the same page rendered at different widths
+// (small side preview vs high-DPI zoomed Quicklook) doesn't collide. Page count
+// is cached per path (independent of which page/width is rendered).
 const pdfPromiseCache = new Map<string, Promise<string>>();
 const pdfUrlCache = new Map<string, string>();
 const pdfPageCount = new Map<string, number>();
 
-function pdfKey(path: string, page: number): string {
-  return `${path}#${page}`;
+function pdfKey(path: string, page: number, width: number): string {
+  return `${path}#${page}@${width}`;
 }
 
 // Currently-previewed PDF page, read by App.launch to open at the right page.
 export const pdfView = { path: "", page: 0 };
 
-function getPdfUrl(path: string, page: number): Promise<string> {
-  const key = pdfKey(path, page);
+// Count of mounted Quicklook PDF previews. The side-panel preview stays mounted
+// under the overlay; without this both would react to Ctrl+←/→ and fight over the
+// page. The side preview defers its page-nav while a Quicklook is open.
+let pdfQuicklookMounted = 0;
+
+// Fired when a Quicklook PDF unmounts so the side preview can re-sync its page to
+// pdfView (which holds the page the user navigated to in Quicklook).
+const PDF_SYNC_EVENT = "portunus-pdf-sync";
+
+const PDF_QL_FIXED_ZOOM = 0.75;
+
+// Cap the rendered-page cache; evict the oldest blob URLs (and revoke them) so a
+// long session of zooming/paging across PDFs doesn't leak detached bitmaps.
+const PDF_URL_CACHE_CAP = 64;
+function storePdfUrl(key: string, url: string) {
+  pdfUrlCache.set(key, url);
+  while (pdfUrlCache.size > PDF_URL_CACHE_CAP) {
+    const oldest = pdfUrlCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    const u = pdfUrlCache.get(oldest);
+    if (u) URL.revokeObjectURL(u);
+    pdfUrlCache.delete(oldest);
+    pdfPromiseCache.delete(oldest);
+  }
+}
+
+function getPdfUrl(path: string, page: number, width: number): Promise<string> {
+  const key = pdfKey(path, page, width);
   if (!pdfPromiseCache.has(key)) {
     pdfPromiseCache.set(
       key,
-      invoke<[number[], number]>("render_pdf_page", { path, page })
+      invoke<[number[], number]>("render_pdf_page", { path, page, width })
         .then(([bytes, count]) => {
           pdfPageCount.set(path, count);
           const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
-          pdfUrlCache.set(key, url);
+          storePdfUrl(key, url);
           return url;
         })
         .catch((e) => {
@@ -135,88 +162,176 @@ function getPdfUrl(path: string, page: number): Promise<string> {
   return pdfPromiseCache.get(key)!;
 }
 
-function PdfPreview({ path, page }: { path: string; page: number }) {
-  // `cur` is the displayed page; starts at the matched page and moves with Ctrl+←/→.
-  const [cur, setCur] = useState(page);
+function PdfPreview({ path, page, quicklook = false }: { path: string; page: number; quicklook?: boolean }) {
+  // `cur` is the displayed page; moves with Ctrl+←/→. Seed from the live page the
+  // side preview last showed for this file (via pdfView) so opening Quicklook keeps
+  // the current page — falling back to the content-match page for a fresh file.
+  const startPage = () => (pdfView.path === path ? pdfView.page : page);
+  const [cur, setCur] = useState(startPage);
   const [count, setCount] = useState<number | null>(() => pdfPageCount.get(path) ?? null);
-  const key = pdfKey(path, cur);
+  const [aspect, setAspect] = useState(0);
+
+  // Quicklook measures its reader surface to size renders; side preview uses the
+  // fixed 800px default (downscaled to fit, so resolution is plenty).
+  // outerRef is the non-scrolling parent: measuring IT (not the scroll container)
+  // means the scrollbar appearing/disappearing can't change the measured width —
+  // otherwise width↔scrollbar feedback makes the page jump every frame.
+  const outerRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [vp, setVp] = useState({ w: 0, h: 0 });
+  // Fixed gutter reserved for the scrollbar, so a vertical scrollbar never pushes
+  // the page into horizontal overflow.
+  const SCROLLBAR_RESERVE = 14;
+  useLayoutEffect(() => {
+    if (!quicklook) return;
+    const outer = outerRef.current;
+    const inner = wrapRef.current;
+    if (!outer || !inner) return;
+    const measure = () => {
+      const cs = getComputedStyle(inner);
+      const px = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+      const py = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+      const w = Math.max(0, outer.clientWidth - px - SCROLLBAR_RESERVE);
+      const h = Math.max(0, outer.clientHeight - py);
+      // Skip no-op updates so a stable size can't churn renders / re-measures.
+      setVp(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, [quicklook]);
+
+  const displayW = quicklook && vp.w > 0 ? Math.round(vp.w * PDF_QL_FIXED_ZOOM) : 0;
+  const displayH = aspect > 0 && displayW > 0 ? Math.round(displayW / aspect) : undefined;
+  const renderWidth = quicklook && displayW > 0 ? Math.max(1200, displayW) : 800;
+
+  const key = pdfKey(path, cur, renderWidth);
   const [src, setSrc] = useState<string | null>(() => pdfUrlCache.get(key) ?? null);
+  const srcRef = useRef(src);
+  useEffect(() => { srcRef.current = src; }, [src]);
   const [loaded, setLoaded] = useState(() => pdfUrlCache.has(key));
-  // Skeleton only mounts if the render is slow enough to need it (delayed-spinner
-  // pattern). `reveal` gates the fade+scale animation so fast/cached renders pop in
-  // instantly without a flash.
+  const [rendering, setRendering] = useState(false);
+  // Side-preview-only: delayed skeleton + reveal animation.
   const [showSkeleton, setShowSkeleton] = useState(false);
   const [reveal, setReveal] = useState(false);
   const skeletonShownRef = useRef(false);
   const [error, setError] = useState(false);
 
-  // Reset to the matched page when the previewed file changes.
-  useEffect(() => { setCur(page); }, [path, page]);
+  useEffect(() => { setCur(startPage()); }, [path, page]);
 
   // Track the displayed page so launch can open the PDF at it.
   useEffect(() => { pdfView.path = path; pdfView.page = cur; }, [path, cur]);
 
+  // Register this mount for page-nav arbitration (see pdfQuicklookMounted), and on
+  // unmount tell the side preview to adopt the page we ended on.
   useEffect(() => {
+    if (!quicklook) return;
+    pdfQuicklookMounted++;
+    return () => { pdfQuicklookMounted--; window.dispatchEvent(new Event(PDF_SYNC_EVENT)); };
+  }, [quicklook]);
+
+  // Side preview: when a Quicklook closes, sync to the page it left off on.
+  useEffect(() => {
+    if (quicklook) return;
+    const onSync = () => { if (pdfView.path === path) setCur(pdfView.page); };
+    window.addEventListener(PDF_SYNC_EVENT, onSync);
+    return () => window.removeEventListener(PDF_SYNC_EVENT, onSync);
+  }, [quicklook, path]);
+
+  useEffect(() => {
+    // Quicklook waits for its measurement so the first render targets the real width.
+    if (quicklook && vp.w === 0) return;
     const cached = pdfUrlCache.get(key);
     if (cached) {
-      setSrc(cached);
-      setLoaded(true);
-      setShowSkeleton(false);
-      setReveal(false);
-      setError(false);
+      setSrc(cached); setLoaded(true); setRendering(false);
+      setShowSkeleton(false); setReveal(false); setError(false);
       setCount(pdfPageCount.get(path) ?? null);
       return;
     }
     let cancelled = false;
-    // Keep the currently-shown image up while the next render is in flight — no blank
-    // flash on a fast switch. Only blank it out (and show the skeleton) if the render
-    // turns out slow enough to need masking.
-    setReveal(false);
     setError(false);
+
+    if (quicklook) {
+      // Zoom/page re-render: keep the current page visible (CSS-scaled) so zooming
+      // feels instant and never blanks; just swap to the sharp bitmap when ready.
+      setRendering(true);
+      const renderTimer = setTimeout(() => {
+        getPdfUrl(path, cur, renderWidth)
+          .then(async (url) => {
+            try { const probe = new Image(); probe.src = url; await probe.decode(); } catch { /* onLoad covers it */ }
+            if (cancelled) return;
+            setSrc(url); setLoaded(true); setRendering(false);
+            setCount(pdfPageCount.get(path) ?? null);
+          })
+          .catch((e) => {
+            console.error("[pdf] render_pdf_page failed:", e);
+            if (cancelled) return;
+            setRendering(false);
+            if (!srcRef.current) setError(true); // only when there's nothing to show
+          });
+      }, 80);
+      return () => { cancelled = true; clearTimeout(renderTimer); };
+    }
+
+    // Side preview: keep the current image up; show a delayed skeleton only if the
+    // render is slow enough to need masking.
+    setReveal(false);
     skeletonShownRef.current = false;
     const skeletonTimer = setTimeout(() => {
       if (cancelled) return;
       skeletonShownRef.current = true;
-      setSrc(null);          // drop the now-stale image so the skeleton shows through
-      setLoaded(false);
-      setShowSkeleton(true);
+      setSrc(null); setLoaded(false); setShowSkeleton(true);
     }, 140);
-    // Debounce the render: rapid Ctrl+←/→ would otherwise fire one backend
-    // render_pdf_page per intermediate page — crippling on a large PDF. Only the
-    // page the user settles on renders. Already-cached pages took the early return
-    // above, so revisiting stays instant; this delay only affects first renders.
     const renderTimer = setTimeout(() => {
-      getPdfUrl(path, cur)
+      getPdfUrl(path, cur, renderWidth)
         .then(async (url) => {
-          // Decode off-DOM so the <img> paints in a single frame (no half-drawn flash).
-          try {
-            const probe = new Image();
-            probe.src = url;
-            await probe.decode();
-          } catch { /* decode unsupported/failed; onLoad fallback covers it */ }
+          try { const probe = new Image(); probe.src = url; await probe.decode(); } catch { /* onLoad covers it */ }
           if (cancelled) return;
           clearTimeout(skeletonTimer);
-          // Animate only on the slow path, where the skeleton was actually shown.
           setReveal(skeletonShownRef.current);
-          setSrc(url);
-          setLoaded(true);
-          setShowSkeleton(false);
+          setSrc(url); setLoaded(true); setShowSkeleton(false);
           setCount(pdfPageCount.get(path) ?? null);
         })
         .catch((e) => {
           console.error("[pdf] render_pdf_page failed:", e);
-          // Clear the stale image so the error message shows alone, not layered
-          // over a leftover page from a previous render.
           if (!cancelled) { clearTimeout(skeletonTimer); setSrc(null); setLoaded(false); setShowSkeleton(false); setError(true); }
         });
     }, 80);
     return () => { cancelled = true; clearTimeout(skeletonTimer); clearTimeout(renderTimer); };
-  }, [key, path, cur]);
+  }, [key, path, cur, renderWidth, quicklook, vp.w]);
+
+  // Reset scroll to the top of the page when flipping pages, so the next page
+  // starts at its top rather than wherever the previous one was scrolled.
+  useEffect(() => {
+    if (!quicklook) return;
+    const el = wrapRef.current;
+    if (el) el.scrollTop = 0;
+  }, [cur, quicklook]);
+
+  // Quicklook only: prefetch the adjacent pages at the current width so Ctrl+←/→
+  // flips render instantly. Best-effort and cache-deduped; bounded to valid pages.
+  useEffect(() => {
+    if (!quicklook || vp.w === 0) return;
+    const t = setTimeout(() => {
+      for (const p of [cur - 1, cur + 1]) {
+        if (p < 0 || (count != null && p > count - 1)) continue;
+        if (!pdfUrlCache.has(pdfKey(path, p, renderWidth))) {
+          getPdfUrl(path, p, renderWidth).catch(() => {});
+        }
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [quicklook, path, cur, renderWidth, count, vp.w]);
 
   // Ctrl+←/→ flips pages, clamped to [0, count-1] once the count is known.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      if (!document.hasFocus()) return;
+      // While a Quicklook PDF is open, the background side preview ignores page-nav.
+      if (!quicklook && pdfQuicklookMounted > 0) return;
       setCur((c) => {
         // Until the page count is known, don't advance past the current page —
         // otherwise rapid Ctrl+→ overshoots into a non-existent page and flashes
@@ -229,7 +344,40 @@ function PdfPreview({ path, page }: { path: string; page: number }) {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [count]);
+  }, [count, quicklook]);
+
+  if (quicklook) {
+    return (
+      <div className="pdf-ql-wrap" ref={outerRef}>
+        <div className="pdf-ql" ref={wrapRef}>
+          {src && (
+            <img
+              ref={imgRef}
+              src={src}
+              alt="PDF preview"
+              className="pdf-ql-page"
+              draggable={false}
+              style={displayW ? { width: displayW, height: displayH } : undefined}
+              onLoad={e => {
+                setLoaded(true);
+                const t = e.currentTarget;
+                if (t.naturalWidth && t.naturalHeight) {
+                  setAspect(t.naturalWidth / t.naturalHeight);
+                }
+              }}
+            />
+          )}
+          {!src && !error && <div className="pdf-ql-spinner" />}
+          {error && <span className="pdf-preview-msg">Preview unavailable</span>}
+          {rendering && src && <div className="pdf-ql-rendering" />}
+        </div>
+        <div className="pdf-ql-hud">
+          <span>{count != null ? `Page ${cur + 1} / ${count}` : `Page ${cur + 1}`}</span>
+          <span className="pdf-ql-hud-keys"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`pdf-preview-wrap${showSkeleton && !loaded && !error ? " is-loading" : ""}`}>
@@ -262,40 +410,49 @@ function PdfPreview({ path, page }: { path: string; page: number }) {
 const imgPromiseCache = new Map<string, Promise<string>>();
 const imgUrlCache = new Map<string, string>();
 
-function getImgUrl(path: string): Promise<string> {
-  if (!imgPromiseCache.has(path)) {
+// Side preview renders at 800; Quicklook at a larger width so an enlarged image
+// stays crisp instead of upscaling the 800px thumbnail.
+const IMG_QL_WIDTH = 1600;
+
+function imgKey(path: string, width: number): string { return `${path}@${width}`; }
+
+function getImgUrl(path: string, width: number): Promise<string> {
+  const key = imgKey(path, width);
+  if (!imgPromiseCache.has(key)) {
     imgPromiseCache.set(
-      path,
-      invoke<number[]>("render_image_preview", { path })
+      key,
+      invoke<number[]>("render_image_preview", { path, width })
         .then(bytes => {
           const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
-          imgUrlCache.set(path, url);
+          imgUrlCache.set(key, url);
           return url;
         })
         .catch(e => {
-          imgPromiseCache.delete(path);
+          imgPromiseCache.delete(key);
           throw e;
         }),
     );
   }
-  return imgPromiseCache.get(path)!;
+  return imgPromiseCache.get(key)!;
 }
 
-function ImagePreview({ path }: { path: string }) {
-  const [src, setSrc] = useState<string | null>(() => imgUrlCache.get(path) ?? null);
-  const [loaded, setLoaded] = useState(() => imgUrlCache.has(path));
+function ImagePreview({ path, quicklook = false }: { path: string; quicklook?: boolean }) {
+  const width = quicklook ? IMG_QL_WIDTH : 800;
+  const key = imgKey(path, width);
+  const [src, setSrc] = useState<string | null>(() => imgUrlCache.get(key) ?? null);
+  const [loaded, setLoaded] = useState(() => imgUrlCache.has(key));
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const cached = imgUrlCache.get(path);
+    const cached = imgUrlCache.get(key);
     if (cached) { setSrc(cached); setLoaded(true); setError(false); return; }
     let cancelled = false;
     setSrc(null); setLoaded(false); setError(false);
-    getImgUrl(path)
+    getImgUrl(path, width)
       .then(url => { if (!cancelled) setSrc(url); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [path]);
+  }, [key, path, width]);
 
   return (
     <div className={`pdf-preview-wrap${!loaded && !error ? " is-loading" : ""}`}>
@@ -682,9 +839,11 @@ interface Props {
   onReveal?: () => void;
   /** Matched content-search terms to highlight (empty for non-content searches). */
   terms?: string[];
+  /** Rendered in the full-card Quicklook overlay — enables the large scrollable PDF reader. */
+  quicklook?: boolean;
 }
 
-export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: Props) {
+export default function FilePreview({ result, onLaunch, onReveal, terms = [], quicklook = false }: Props) {
   const isFolder = result.kind === "folder";
   const kind = fileKind(result.title, isFolder);
   const tag = [kind, !isFolder && result.file_size != null ? formatBytes(result.file_size) : null]
@@ -726,7 +885,8 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: 
   );
 
   return (
-    <div className="file-preview">
+    <div className={`file-preview${quicklook ? " file-preview-ql" : ""}`}>
+      {!quicklook && (
       <div className="file-preview-head">
         <div className="file-preview-icon-wrap">{icon}</div>
         <div className="file-preview-head-text">
@@ -748,9 +908,10 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: 
           </button>
         </div>
       </div>
+      )}
 
-      {isPdf && <PdfPreview path={filePath} page={result.match_page ?? 0} />}
-      {isImage && <ImagePreview path={filePath} />}
+      {isPdf && <PdfPreview path={filePath} page={result.match_page ?? 0} quicklook={quicklook} />}
+      {isImage && <ImagePreview path={filePath} quicklook={quicklook} />}
       {isSvgFile && <SvgPreview path={filePath} />}
       {isCsvFile && <CsvPreview path={filePath} delim={result.title.toLowerCase().endsWith(".tsv") ? "\t" : ","} terms={terms} />}
       {isOfficeTextFile && <OfficeTextPreview path={filePath} terms={terms} />}
@@ -759,6 +920,7 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: 
       {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} terms={terms} />}
       {isFolder && <FolderContents path={filePath} />}
 
+      {!quicklook && (
       <div className="file-preview-meta">
         {result.modified && (
           <span><span className="file-preview-meta-key">Modified </span>{formatDate(result.modified)}</span>
@@ -771,6 +933,7 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [] }: 
         )}
         <span><span className="file-preview-meta-key">Kind </span>{kind}</span>
       </div>
+      )}
     </div>
   );
 }
