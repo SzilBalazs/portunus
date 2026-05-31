@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriListener } from "./hooks/useTauriListener";
-import { Config } from "./types";
+import { Config, ContentDirEntry } from "./types";
 import GeneralSection from "./components/settings/GeneralSection";
 import ProvidersSection from "./components/settings/ProvidersSection";
 import FilesSection from "./components/settings/FilesSection";
@@ -104,9 +104,16 @@ const NAV: NavItem[] = [
 
 const AUTOSAVE_DELAY_MS = 800;
 
-// "Heavy" content changes force an expensive full reindex, so they are never
+// Drops blank-path directory rows (a just-added row the user hasn't filled in).
+// Used both for staging comparisons and before persisting, so an empty row never
+// keeps the Apply strip stuck on or lands a junk entry in config.toml.
+const nonBlankDirs = (dirs: ContentDirEntry[]) => dirs.filter(d => d.path.trim() !== "");
+
+// "Heavy" content changes need a reindex to take effect, so they are never
 // auto-saved. Instead they are staged: the Content section shows an Apply/Revert
 // strip, and only "Apply & Reindex" persists them + kicks off the rebuild.
+//   - directories / per-dir depth / per-dir extension overrides
+//   - the global indexed-extension list
 //   - any OCR setting (re-runs extraction over every file)
 //   - first-time enable when the index is empty (initial build from scratch)
 //   - raising the max file size (previously-skipped large files now need indexing)
@@ -114,6 +121,8 @@ const AUTOSAVE_DELAY_MS = 800;
 function contentHeavyPending(cur: Config, base: Config, indexEmpty: boolean): boolean {
   const c = cur.content, b = base.content;
   return (
+    JSON.stringify(nonBlankDirs(c.dirs)) !== JSON.stringify(nonBlankDirs(b.dirs)) ||
+    JSON.stringify(c.extensions) !== JSON.stringify(b.extensions) ||
     c.ocr_images !== b.ocr_images ||
     c.ocr_pdf_fallback !== b.ocr_pdf_fallback ||
     c.ocr_language !== b.ocr_language ||
@@ -122,12 +131,15 @@ function contentHeavyPending(cur: Config, base: Config, indexEmpty: boolean): bo
   );
 }
 
-// Returns `cur` with its heavy content fields forced back to `base`, so an
-// autosave persists the cheap edits (dirs, extensions, depth…) while leaving
-// the staged heavy edits untouched on disk until the user applies them.
+// Returns `cur` with its staged content fields forced back to `base`, so an
+// autosave persists the truly cheap edits (e.g. thread count, a max-size
+// decrease) while leaving every reindex-triggering edit untouched on disk until
+// the user applies them via "Apply & Reindex".
 function stripHeavy(cur: Config, base: Config, indexEmpty: boolean): Config {
   const content = {
     ...cur.content,
+    dirs: base.content.dirs,
+    extensions: base.content.extensions,
     ocr_images: base.content.ocr_images,
     ocr_pdf_fallback: base.content.ocr_pdf_fallback,
     ocr_language: base.content.ocr_language,
@@ -283,18 +295,34 @@ export default function Settings() {
     };
   }, [config, indexEmpty]);
 
-  // "Apply & Reindex": persist the staged heavy change in full, then trigger the
-  // backend's clear-and-rebuild. Progress streams back via content-index-progress.
+  // "Apply & Reindex": persist the staged change in full, then trigger the
+  // backend rebuild. Progress streams back via content-index-progress.
+  //
+  // `full` decides cache reuse: only OCR-setting changes invalidate already-cached
+  // text and need a clearing rebuild. Dir/extension/depth/size edits run an
+  // incremental pass that keeps the existing index (mtime-skip + remove_stale).
   const applyReindex = useCallback(async () => {
     if (!config) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaving(true);
     setError(null);
     setReindexError(null);
+    const base = diskConfigRef.current;
+    const full =
+      !base ||
+      config.content.ocr_images !== base.content.ocr_images ||
+      config.content.ocr_pdf_fallback !== base.content.ocr_pdf_fallback ||
+      config.content.ocr_language !== base.content.ocr_language;
+    // Strip blank, half-typed rows so they never reach disk.
+    const toSave: Config = {
+      ...config,
+      content: { ...config.content, dirs: nonBlankDirs(config.content.dirs) },
+    };
     try {
-      await invoke("save_config", { config });
-      diskConfigRef.current = config;
-      await invoke("trigger_full_reindex");
+      await invoke("save_config", { config: toSave });
+      diskConfigRef.current = toSave;
+      setConfig(toSave);
+      await invoke("trigger_full_reindex", { full });
       // A rebuild populates the index, so a subsequent enable is no longer "first".
       setIndexEmpty(false);
       setSavedFlash(true);
@@ -308,7 +336,7 @@ export default function Settings() {
     }
   }, [config]);
 
-  // "Revert": discard the staged heavy edits, restoring the last-applied values.
+  // "Revert": discard the staged edits, restoring the last-applied values.
   const revertReindex = useCallback(() => {
     const base = diskConfigRef.current;
     if (!base || !config) return;
@@ -317,6 +345,8 @@ export default function Settings() {
       ...config,
       content: {
         ...config.content,
+        dirs: base.content.dirs,
+        extensions: base.content.extensions,
         ocr_images: base.content.ocr_images,
         ocr_pdf_fallback: base.content.ocr_pdf_fallback,
         ocr_language: base.content.ocr_language,

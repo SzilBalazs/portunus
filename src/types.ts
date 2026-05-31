@@ -9,6 +9,15 @@ export interface ContentDirEntry {
   extensions: string[] | null;
 }
 
+/** Pre-index estimate for one directory (from the `estimate_dir_index` command). */
+export interface DirEstimate {
+  total_files: number;
+  pdf_files: number;
+  image_files: number;
+  est_secs_min: number;
+  est_secs_max: number;
+}
+
 export interface Config {
   general: {
     max_results: number;

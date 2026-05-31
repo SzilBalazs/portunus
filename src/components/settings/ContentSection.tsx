@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
-import { Config, ContentDirEntry } from "../../types";
+import { invoke } from "@tauri-apps/api/core";
+import { Config, ContentDirEntry, DirEstimate } from "../../types";
 import Toggle from "./Toggle";
 import NumberField from "./NumberField";
 import DirRow from "./DirRow";
@@ -50,6 +51,138 @@ function ExtensionEditor({ extensions, onChange }: { extensions: string[]; onCha
   );
 }
 
+const nf = new Intl.NumberFormat();
+
+/** Human-readable single duration, e.g. "<1 s", "12 s", "4 min", "1.5 h". */
+function fmtSecs(secs: number): string {
+  if (secs < 1) return "<1 s";
+  if (secs < 60) return `${Math.round(secs)} s`;
+  if (secs < 3600) return `${Math.round(secs / 60)} min`;
+  return `${(secs / 3600).toFixed(1)} h`;
+}
+
+/** Collapses a min/max range to one value when both render the same. */
+function fmtRange(min: number, max: number): string {
+  const a = fmtSecs(min), b = fmtSecs(max);
+  return a === b ? `~${a}` : `~${a} – ${b}`;
+}
+
+/**
+ * Live, debounced pre-index estimate for one directory. Re-fetches whenever the
+ * path, depth, effective extensions, or the indexing flags change. A monotonic
+ * request id guards against a slow earlier walk overwriting a newer result.
+ *
+ * `extensions` must already be the *effective* list (per-dir override or the
+ * global list) — never null — so the backend never falls back to its defaults.
+ */
+function useDirEstimate(
+  path: string,
+  depth: number,
+  extensions: string[],
+  maxFileBytes: number,
+  ocrImages: boolean,
+  ocrPdfFallback: boolean,
+  threads: number,
+): { estimate: DirEstimate | null; loading: boolean } {
+  const [estimate, setEstimate] = useState<DirEstimate | null>(null);
+  const [loading, setLoading] = useState(false);
+  const reqId = useRef(0);
+  const extKey = JSON.stringify(extensions);
+
+  useEffect(() => {
+    if (path.trim() === "") {
+      setEstimate(null);
+      setLoading(false);
+      return;
+    }
+    const id = ++reqId.current;
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await invoke<DirEstimate>("estimate_dir_index", {
+          path,
+          depth,
+          extensions,
+          maxFileBytes,
+          ocrImages,
+          ocrPdfFallback,
+          threads,
+        });
+        if (id === reqId.current) { setEstimate(result); setLoading(false); }
+      } catch {
+        if (id === reqId.current) { setEstimate(null); setLoading(false); }
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+    // extKey stands in for the extensions array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, depth, extKey, maxFileBytes, ocrImages, ocrPdfFallback, threads]);
+
+  return { estimate, loading };
+}
+
+function DirEstimateRow({ estimate, loading }: { estimate: DirEstimate | null; loading: boolean }) {
+  if (loading && !estimate) {
+    return <div className="settings-dir-estimate settings-dir-estimate--loading">estimating…</div>;
+  }
+  if (!estimate) return null;
+  if (estimate.total_files === 0) {
+    return <div className="settings-dir-estimate settings-dir-estimate--empty">No matching files found</div>;
+  }
+  const parts = [`${nf.format(estimate.total_files)} files`];
+  if (estimate.pdf_files > 0) parts.push(`${nf.format(estimate.pdf_files)} PDFs`);
+  if (estimate.image_files > 0) parts.push(`${nf.format(estimate.image_files)} images`);
+  return (
+    <div className={`settings-dir-estimate${loading ? " settings-dir-estimate--stale" : ""}`}>
+      <span className="settings-dir-estimate-counts">{parts.join(" · ")}</span>
+      <span className="settings-dir-estimate-sep">·</span>
+      <span className="settings-dir-estimate-time" title="Full-index estimate. PDFs without a text layer are OCR'd, which is far slower — hence the range.">
+        {fmtRange(estimate.est_secs_min, estimate.est_secs_max)}
+      </span>
+    </div>
+  );
+}
+
+function ContentDirCard({
+  dir,
+  globalExts,
+  flags,
+  onChange,
+  onRemove,
+}: {
+  dir: ContentDirEntry;
+  globalExts: string[];
+  flags: { maxFileBytes: number; ocrImages: boolean; ocrPdfFallback: boolean; threads: number };
+  onChange: (patch: Partial<ContentDirEntry>) => void;
+  onRemove: () => void;
+}) {
+  const effectiveExts = dir.extensions ?? globalExts;
+  const { estimate, loading } = useDirEstimate(
+    dir.path, dir.depth, effectiveExts,
+    flags.maxFileBytes, flags.ocrImages, flags.ocrPdfFallback, flags.threads,
+  );
+
+  return (
+    <div className="settings-dir-card">
+      <DirRow
+        path={dir.path}
+        depth={dir.depth}
+        onPathChange={path => onChange({ path })}
+        onDepthChange={depth => onChange({ depth })}
+        onRemove={onRemove}
+      />
+      <div className="settings-dir-card-exts">
+        <span className="settings-dir-card-exts-label">Override extensions:</span>
+        <ExtensionEditor
+          extensions={dir.extensions ?? []}
+          onChange={exts => onChange({ extensions: exts.length > 0 ? exts : null })}
+        />
+      </div>
+      <DirEstimateRow estimate={estimate} loading={loading} />
+    </div>
+  );
+}
+
 export default function ContentSection({ config, onChange, pendingReindex, reindexProgress, reindexError, onApply, onRevert }: Props) {
   const cc = config.content;
   const reindexing = reindexProgress != null && reindexProgress.total > 0 && reindexProgress.indexed < reindexProgress.total;
@@ -57,23 +190,6 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
     ? Math.min(100, (reindexProgress.indexed / reindexProgress.total) * 100)
     : 0;
 
-  const [draft, setDraft] = useState<ContentDirEntry | null>(null);
-  const draftInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (draft !== null) draftInputRef.current?.focus();
-  }, [draft !== null]);
-
-  const commitDraft = () => {
-    if (!draft || draft.path.trim() === "") return;
-    set({ dirs: [...cc.dirs, draft] });
-    setDraft(null);
-  };
-
-  const onDraftKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") { e.preventDefault(); commitDraft(); }
-    if (e.key === "Escape") { e.preventDefault(); setDraft(null); }
-  };
   const set = (patch: Partial<Config["content"]>) =>
     onChange({ ...config, content: { ...config.content, ...patch } });
 
@@ -84,10 +200,20 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
 
   const removeDir = (i: number) => set({ dirs: cc.dirs.filter((_, idx) => idx !== i) });
 
-  const addDir = () => setDraft({ path: "", depth: 3, extensions: null });
+  // No draft/confirm step: Apply & Reindex is the single commit point, so adding
+  // a directory just appends a blank, editable row. Blank rows are filtered out
+  // before anything is persisted (see Settings.tsx).
+  const addDir = () => set({ dirs: [...cc.dirs, { path: "", depth: 3, extensions: null }] });
 
   const bytesToMb = (b: number) => +(b / (1024 * 1024)).toFixed(1);
   const mbToBytes = (mb: number) => Math.round(mb * 1024 * 1024);
+
+  const flags = {
+    maxFileBytes: cc.max_file_bytes,
+    ocrImages: cc.ocr_images,
+    ocrPdfFallback: cc.ocr_pdf_fallback,
+    threads: cc.threads,
+  };
 
   return (
     <div>
@@ -119,7 +245,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <span className="settings-reindex-msg">
-            These changes need a full reindex to take effect. Other settings are saved automatically.
+            Content changes are staged. Apply them to update the search index.
           </span>
           <button className="settings-reindex-revert" onClick={onRevert}>Revert</button>
           <button className="settings-reindex-apply" onClick={onApply}>Apply &amp; Reindex</button>
@@ -206,7 +332,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           Indexed file types
         </div>
         <div className="settings-field-desc" style={{ marginBottom: 8 }}>
-          Press Enter or comma to add an extension. Backspace removes the last one.
+          Press Enter or comma to add an extension. Backspace removes the last one. This is the default for every directory below.
         </div>
         <ExtensionEditor
           extensions={cc.extensions}
@@ -219,50 +345,23 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           Indexed directories
         </div>
         <div className="settings-field-desc" style={{ marginBottom: 10 }}>
-          Depth controls recursion. Per-directory extensions override the global list above when set.
+          Depth controls recursion. Per-directory extensions override the global list above when set. Each card shows a live estimate of how long indexing that directory would take — narrow the extensions before applying to keep big folders fast.
         </div>
         <div className="settings-dir-list">
           {cc.dirs.map((dir, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", background: "var(--kbd-bg)", borderRadius: 6, border: "1px solid var(--line-soft)" }}>
-              <DirRow
-                path={dir.path}
-                depth={dir.depth}
-                onPathChange={path => updateDir(i, { path })}
-                onDepthChange={depth => updateDir(i, { depth })}
-                onRemove={() => removeDir(i)}
-              />
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "var(--fg-dim)", whiteSpace: "nowrap" }}>Override extensions:</span>
-                <ExtensionEditor
-                  extensions={dir.extensions ?? []}
-                  onChange={exts => updateDir(i, { extensions: exts.length > 0 ? exts : null })}
-                />
-              </div>
-            </div>
+            <ContentDirCard
+              key={i}
+              dir={dir}
+              globalExts={cc.extensions}
+              flags={flags}
+              onChange={patch => updateDir(i, patch)}
+              onRemove={() => removeDir(i)}
+            />
           ))}
 
-          {draft !== null && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", background: "var(--kbd-bg)", borderRadius: 6, border: "1px solid var(--accent-border)" }}>
-              <DirRow
-                draft
-                inputRef={draftInputRef}
-                path={draft.path}
-                depth={draft.depth}
-                onPathChange={path => setDraft({ ...draft, path })}
-                onDepthChange={depth => setDraft({ ...draft, depth })}
-                onRemove={() => setDraft(null)}
-                onKeyDown={onDraftKey}
-                onCommit={commitDraft}
-                onDiscard={() => setDraft(null)}
-              />
-            </div>
-          )}
-
-          {draft === null && (
-            <button className="settings-dir-add" onClick={addDir}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add directory
-            </button>
-          )}
+          <button className="settings-dir-add" onClick={addDir}>
+            <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add directory
+          </button>
         </div>
       </div>
     </div>

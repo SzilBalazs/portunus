@@ -26,7 +26,16 @@ pub(crate) type SharedFileEntries = Arc<RwLock<Vec<providers::files::FileEntry>>
 pub(crate) type ConfigState = Arc<Mutex<config::Config>>;
 pub(crate) type ContentState = Arc<Mutex<Option<Arc<content_index::ContentIndex>>>>;
 
-pub struct TriggerFullReindexFn(pub Arc<dyn Fn() + Send + Sync>);
+/// The `bool` is `full`: `true` clears the index before rebuilding (needed only
+/// when OCR settings change, which invalidates already-cached text); `false`
+/// runs a cache-preserving incremental pass (dir/extension/depth/size edits).
+pub struct TriggerFullReindexFn(pub Arc<dyn Fn(bool) + Send + Sync>);
+
+/// Clone of the config watcher's diff baseline (`last_cfg`). The Apply path
+/// advances its `content` so the file-watcher, which fires on the same save,
+/// sees no content diff and skips a redundant second reindex. See
+/// `trigger_full_reindex`.
+pub struct WatcherBaseline(pub Arc<Mutex<config::Config>>);
 
 #[derive(serde::Serialize, Clone)]
 struct ContentIndexProgress {
@@ -261,9 +270,48 @@ fn open_settings_window(app: tauri::AppHandle, section: Option<String>) {
 }
 
 #[tauri::command]
-fn trigger_full_reindex(reindex: tauri::State<'_, TriggerFullReindexFn>) {
+fn trigger_full_reindex(
+    full: bool,
+    reindex: tauri::State<'_, TriggerFullReindexFn>,
+    config: tauri::State<'_, ConfigState>,
+    baseline: tauri::State<'_, WatcherBaseline>,
+) {
+    // The caller (Settings "Apply") just persisted the config via save_config, which
+    // also wakes the config-file watcher → provider_reload. Advance the watcher's
+    // diff baseline to the freshly-saved content *now* (synchronously, before the
+    // 500ms-debounced watcher event can fire) so it sees no content diff and skips
+    // a redundant second reindex. This explicit trigger is then the sole content
+    // indexer. Only `.content` is touched, so files/recent/apps diffs still apply.
+    {
+        let current = util::lock(&config).content.clone();
+        util::lock(&baseline.0).content = current;
+    }
     let f = Arc::clone(&reindex.0);
-    std::thread::spawn(move || f());
+    std::thread::spawn(move || f(full));
+}
+
+/// Pre-index estimate for a single directory: exact file counts plus a coarse
+/// min/max time range. The OCR/size/threads flags are passed in from the live
+/// (possibly still-staged) settings UI rather than read from on-disk config, so
+/// the estimate reflects unapplied toggles too.
+#[tauri::command]
+fn estimate_dir_index(
+    path: String,
+    depth: usize,
+    extensions: Option<Vec<String>>,
+    max_file_bytes: u64,
+    ocr_images: bool,
+    ocr_pdf_fallback: bool,
+    threads: usize,
+) -> content_index::DirEstimate {
+    let cfg = config::ContentConfig {
+        max_file_bytes,
+        ocr_images,
+        ocr_pdf_fallback,
+        threads,
+        ..Default::default()
+    };
+    content_index::estimate_dir(&path, depth, extensions.as_ref(), &cfg)
 }
 
 /// Reports whether the content index currently holds no documents.
@@ -304,17 +352,24 @@ fn take_config_error() -> Option<String> {
         .and_then(|mut slot| slot.take())
 }
 
-/// Full clear-and-rebuild of the content index using the current on-disk config.
-/// Shared by the `--reindex` socket command and the settings "Apply & Reindex"
-/// trigger. Loads the config fresh so it always reflects the latest saved state,
-/// opens the index if it isn't open yet (first-time enable), and re-registers the
-/// provider so results are searchable. Holds the content lock for the whole run
-/// so concurrent config-triggered rebuilds serialise rather than racing the DB.
+/// Rebuilds the content index using the current on-disk config. Shared by the
+/// `--reindex` socket command and the settings "Apply & Reindex" trigger. Loads
+/// the config fresh so it always reflects the latest saved state, opens the index
+/// if it isn't open yet (first-time enable), and re-registers the provider so
+/// results are searchable. Holds the content lock for the whole run so concurrent
+/// config-triggered rebuilds serialise rather than racing the DB.
+///
+/// `full` controls cache reuse: `true` clears the index first (a hard rebuild —
+/// the `--reindex` path and any OCR-settings change, which invalidate cached
+/// text). `false` keeps existing rows so `run_content_indexer`'s mtime-skip and
+/// `remove_stale` apply only the delta — the cache-preserving path for dir /
+/// extension / depth / size edits.
 fn run_full_reindex(
     content_state: &ContentState,
     registry: &Registry,
     progress_cb: &Arc<dyn Fn(usize, usize) + Send + Sync>,
     notify_cb: &Arc<dyn Fn() + Send + Sync>,
+    full: bool,
 ) {
     let cfg = config::Config::load();
     if !cfg.content.enabled {
@@ -348,8 +403,12 @@ fn run_full_reindex(
         "content",
         Some(Box::new(providers::content::ContentProvider::new(Arc::clone(&idx)))),
     );
-    eprintln!("[content] full reindex started");
-    idx.clear().ok();
+    if full {
+        eprintln!("[content] full reindex started (clearing index)");
+        idx.clear().ok();
+    } else {
+        eprintln!("[content] incremental reindex started (cache preserved)");
+    }
     content_index::run_content_indexer(idx, &cfg.content, Some(Arc::clone(progress_cb)));
     eprintln!("[content] full reindex complete");
     notify_cb();
@@ -476,20 +535,25 @@ pub fn run() {
             let reindex_reg = Arc::clone(&bg_registry);
             let reindex_cb = Arc::clone(&progress_cb);
             let reindex_notify = Arc::clone(&notify_cb);
+            // --reindex is a poweruser hard rebuild: always a full clear.
             let reindex_fn: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || {
-                run_full_reindex(&reindex_ci, &reindex_reg, &reindex_cb, &reindex_notify);
+                run_full_reindex(&reindex_ci, &reindex_reg, &reindex_cb, &reindex_notify, true);
             }));
 
             // trigger_reindex_fn: called by the trigger_full_reindex Tauri command
-            // (settings "Apply & Reindex"). Identical full clear+rebuild as --reindex.
+            // (settings "Apply & Reindex"). `full` is chosen by the UI — true only
+            // when OCR settings changed; otherwise an incremental, cache-preserving run.
             let tri_ci = Arc::clone(&content_state);
             let tri_reg = Arc::clone(&bg_registry);
             let tri_cb = Arc::clone(&progress_cb);
             let tri_notify = Arc::clone(&notify_cb);
-            let trigger_reindex_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-                run_full_reindex(&tri_ci, &tri_reg, &tri_cb, &tri_notify);
+            let trigger_reindex_fn: Arc<dyn Fn(bool) + Send + Sync> = Arc::new(move |full: bool| {
+                run_full_reindex(&tri_ci, &tri_reg, &tri_cb, &tri_notify, full);
             });
             app.manage(TriggerFullReindexFn(Arc::clone(&trigger_reindex_fn)));
+            // Share the watcher's diff baseline with trigger_full_reindex so the
+            // Apply path can mark content as already-applied (see that command).
+            app.manage(WatcherBaseline(Arc::clone(&last_cfg)));
 
             // Build reload_fn closure shared between socket listener and config watcher.
             let reload_shared = Arc::clone(&shared_config);
@@ -642,6 +706,7 @@ pub fn run() {
             save_config,
             open_settings_window,
             trigger_full_reindex,
+            estimate_dir_index,
             is_content_index_empty,
             check_dependencies,
             take_config_error,

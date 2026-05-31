@@ -147,19 +147,26 @@ impl ContentIndex {
         for u in updates {
             tx.execute("DELETE FROM content_fts WHERE path = ?", [u.path.as_str()])?;
             tx.execute("DELETE FROM pdf_page_fts WHERE path = ?", [u.path.as_str()])?;
-            tx.execute(
-                "INSERT INTO content_fts(path, text) VALUES (?, ?)",
-                params![u.path, u.text],
-            )?;
-            if let Some(pages) = &u.pages {
-                for (i, page) in pages.iter().enumerate() {
-                    if page.trim().is_empty() {
-                        continue;
+            // Empty `text` is a negative-cache tombstone: a file that extracted to
+            // nothing (e.g. an OCR'd screenshot with no detectable text) or errored.
+            // We still write its file_meta below so the mtime+size skip catches it
+            // next run instead of re-extracting it every startup — but we skip the
+            // content_fts/pdf_page_fts inserts so it never surfaces in search.
+            if !u.text.trim().is_empty() {
+                tx.execute(
+                    "INSERT INTO content_fts(path, text) VALUES (?, ?)",
+                    params![u.path, u.text],
+                )?;
+                if let Some(pages) = &u.pages {
+                    for (i, page) in pages.iter().enumerate() {
+                        if page.trim().is_empty() {
+                            continue;
+                        }
+                        tx.execute(
+                            "INSERT INTO pdf_page_fts(path, page, text) VALUES (?, ?, ?)",
+                            params![u.path, i as i64, page],
+                        )?;
                     }
-                    tx.execute(
-                        "INSERT INTO pdf_page_fts(path, page, text) VALUES (?, ?, ?)",
-                        params![u.path, i as i64, page],
-                    )?;
                 }
             }
             tx.execute(
@@ -522,6 +529,139 @@ fn collect_eligible(cfg: &ContentConfig) -> Vec<(std::path::PathBuf, u64, i64)> 
     eligible
 }
 
+/// A pre-index time/size estimate for a single directory. Counts are exact (a
+/// cheap metadata-only walk); the seconds range is a coarse heuristic — see
+/// `estimate_dir`. Serialized to the frontend for the per-directory estimate row.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct DirEstimate {
+    pub total_files: usize,
+    pub pdf_files: usize,
+    pub image_files: usize,
+    pub est_secs_min: u64,
+    pub est_secs_max: u64,
+}
+
+/// Per-file fixed overhead + per-megabyte rate, in seconds, for one work bucket.
+/// Cost is modelled as `count * fixed + total_mb * per_mb` because the dominant
+/// term differs by type: a subprocess spawn (PDF) or OCR init is per-file, while
+/// read/tokenise/extract scales with bytes. Calibrated coarsely against real
+/// runs — see `estimate_dir`.
+struct Cost {
+    fixed: f64,
+    per_mb: f64,
+}
+
+impl Cost {
+    fn secs(&self, count: usize, mb: f64) -> f64 {
+        count as f64 * self.fixed + mb * self.per_mb
+    }
+}
+
+/// Walks a single directory (respecting `depth`, `extensions`, and the size cap)
+/// and produces file counts plus a min/max indexing-time estimate. No text is
+/// extracted, so this is fast even on large trees.
+///
+/// The seconds are a size-weighted heuristic — they set expectations, not promises.
+/// Each bucket's cost is `files * fixed_overhead + megabytes * per_mb_rate`, so a
+/// folder of small screenshots and one of large scans estimate very differently
+/// even at the same file count. PDFs dominate the uncertainty: with a text layer a
+/// PDF is a quick `pdftotext`; a scanned one routed through OCR is far slower and
+/// scales with page imagery. The range brackets those: the minimum assumes every
+/// PDF has a text layer; the maximum assumes every PDF is OCR'd (only when
+/// `ocr_pdf_fallback` is on, otherwise a no-text PDF just fails fast).
+///
+/// `extensions` overrides the global `cfg.extensions` when `Some` (per-dir list).
+pub fn estimate_dir(
+    path: &str,
+    depth: usize,
+    extensions: Option<&Vec<String>>,
+    cfg: &ContentConfig,
+) -> DirEstimate {
+    let dir = crate::config::Config::expand_path(path);
+    if !dir.is_dir() {
+        return DirEstimate::default();
+    }
+    let effective_exts = extensions.unwrap_or(&cfg.extensions);
+
+    // (count, total_bytes) per bucket.
+    let (mut fast, mut pdf, mut image, mut other) = ((0usize, 0u64), (0usize, 0u64), (0usize, 0u64), (0usize, 0u64));
+    for entry in walkdir::WalkDir::new(&dir)
+        .max_depth(depth)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.depth() == 0 || entry.file_type().is_dir() {
+            continue;
+        }
+        let ext = entry
+            .path()
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !effective_exts.contains(&ext) {
+            continue;
+        }
+        let size = match entry.metadata() {
+            Ok(m) if m.len() <= cfg.max_file_bytes => m.len(),
+            _ => continue,
+        };
+        let bucket = if ext == "pdf" {
+            &mut pdf
+        } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+            &mut image
+        } else if TEXT_EXTENSIONS.contains(&ext.as_str()) || crate::office::is_office_ext(&ext) {
+            &mut fast
+        } else {
+            &mut other
+        };
+        bucket.0 += 1;
+        bucket.1 += size;
+    }
+
+    let mb = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+
+    // Coarse, size-weighted per-bucket costs (seconds), recalibrated against real
+    // indexing runs. Text reads are disk-bound and cheap; `pdftotext` pays a
+    // subprocess spawn plus byte cost; OCR (image, or scanned-PDF fallback) is the
+    // expensive outlier and scales with image data.
+    const FAST: Cost = Cost { fixed: 0.002, per_mb: 0.01 };       // read + tokenise + FTS insert
+    const PDF_TEXT: Cost = Cost { fixed: 0.04, per_mb: 0.03 };    // pdftotext subprocess
+    const PDF_OCR: Cost = Cost { fixed: 0.20, per_mb: 1.50 };     // pdftoppm + tesseract per page
+    const PDF_SKIP: Cost = Cost { fixed: 0.05, per_mb: 0.0 };     // no text layer, OCR off → give up
+    const IMG_OCR_MIN: Cost = Cost { fixed: 0.20, per_mb: 0.30 };
+    const IMG_OCR_MAX: Cost = Cost { fixed: 0.40, per_mb: 0.80 };
+    const OTHER: Cost = Cost { fixed: 0.002, per_mb: 0.0 };       // listed but unsupported → quick fail
+
+    let img_cost_min = if cfg.ocr_images { IMG_OCR_MIN.secs(image.0, mb(image.1)) } else { 0.0 };
+    let img_cost_max = if cfg.ocr_images { IMG_OCR_MAX.secs(image.0, mb(image.1)) } else { 0.0 };
+    let pdf_cost_max = if cfg.ocr_pdf_fallback {
+        PDF_OCR.secs(pdf.0, mb(pdf.1))
+    } else {
+        PDF_SKIP.secs(pdf.0, mb(pdf.1))
+    };
+
+    let parallelism = if cfg.threads == 0 {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2)
+    } else {
+        cfg.threads
+    }
+    .max(1) as f64;
+
+    let base = FAST.secs(fast.0, mb(fast.1)) + OTHER.secs(other.0, mb(other.1));
+    let total_min = base + PDF_TEXT.secs(pdf.0, mb(pdf.1)) + img_cost_min;
+    let total_max = base + pdf_cost_max + img_cost_max;
+
+    DirEstimate {
+        total_files: fast.0 + pdf.0 + image.0 + other.0,
+        pdf_files: pdf.0,
+        image_files: image.0,
+        est_secs_min: (total_min / parallelism).ceil() as u64,
+        est_secs_max: (total_max / parallelism).ceil() as u64,
+    }
+}
+
 pub fn run_content_indexer(
     index: Arc<ContentIndex>,
     cfg: &ContentConfig,
@@ -611,26 +751,17 @@ fn collect_updates(
                 }
             }
 
+            // Empty text on a successful extract (e.g. an image that OCR'd to
+            // nothing) or an extract error both yield an empty-text FileUpdate —
+            // a negative-cache tombstone. upsert_batch writes its file_meta but no
+            // FTS row, so the mtime+size fast-path skips it next run instead of
+            // re-running the (expensive) extraction every startup.
             let text = match extract_text(&path_str, cfg) {
                 Ok(t) if !t.trim().is_empty() => t,
-                Ok(_) => {
-                    let n = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 10 == 0 && n < total {
-                        if let Some(ref cb) = on_progress {
-                            cb(n, total);
-                        }
-                    }
-                    return None;
-                }
+                Ok(_) => String::new(),
                 Err(e) => {
                     eprintln!("[content] extract failed {path_str}: {e}");
-                    let n = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 10 == 0 && n < total {
-                        if let Some(ref cb) = on_progress {
-                            cb(n, total);
-                        }
-                    }
-                    return None;
+                    String::new()
                 }
             };
 
@@ -736,8 +867,24 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
                 Err(e) => { eprintln!("[content] event upsert failed {path_str}: {e}"); false }
             }
         }
-        Ok(_) => index.remove_path(&path_str).is_ok(),
-        Err(e) => { eprintln!("[content] event extract failed {path_str}: {e}"); false }
+        // Empty text or an extract error: write an empty-text tombstone so the
+        // mtime+size skip catches this file next time instead of re-extracting it.
+        // upsert_batch clears any prior content_fts rows but writes no new one, so
+        // it drops out of search just as remove_path would.
+        res => {
+            if let Err(e) = &res {
+                eprintln!("[content] event extract failed {path_str}: {e}");
+            }
+            index
+                .upsert_batch(&[FileUpdate {
+                    path: path_str.clone(),
+                    text: String::new(),
+                    pages: None,
+                    mtime,
+                    size,
+                }])
+                .is_ok()
+        }
     }
 }
 
