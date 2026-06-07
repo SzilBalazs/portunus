@@ -346,15 +346,16 @@ impl Provider for AppProvider {
         }
 
         let cfg = self.shared.read().unwrap();
-        let min_score = cfg.min_score_app;
+        let min_quality = cfg.min_quality;
         let log_scores = cfg.log_scores;
         drop(cfg);
 
         let (pattern, mut matcher, mut char_buf) = super::fuzzy_setup(query);
 
-        let threshold = super::effective_min_score(min_score, query.chars().count());
+        let threshold = super::quality_threshold(min_quality, query.chars().count());
 
-        self.apps
+        let mut candidates: Vec<(u32, SearchResult)> = self
+            .apps
             .iter()
             .filter_map(|app| {
                 let name_score = pattern.score(Utf32Str::new(&app.name, &mut char_buf), &mut matcher);
@@ -369,26 +370,37 @@ impl Provider for AppProvider {
                     (None, Some(d)) => d,
                     (None, None) => return None,
                 };
-                if log_scores {
-                    eprintln!(
-                        "[apps] {:?} → {:?}  name={:?} desc={:?} best={} threshold={}",
-                        query, app.name, name_score, desc_score, score, threshold
-                    );
-                }
-                if score < threshold {
-                    return None;
-                }
-                Some(SearchResult {
+                Some((score, SearchResult {
                     id: format!("app:{}", app.name),
                     title: app.name.clone(),
                     subtitle: app.description.clone(),
                     kind: "app".to_string(),
-                    score: super::SCORE_APP + score as f32,
+                    score: super::SCORE_APP + super::fuzzy_bonus(score),
                     exec: Some(app.exec.clone()),
                     icon_path: app.icon_path.clone(),
                     ..Default::default()
-                })
+                }))
             })
+            .collect();
+
+        candidates.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        // Adaptive floor: relax threshold so top 3 always survive.
+        let floor = candidates.get(2).map(|c| c.0).unwrap_or(0) as f32;
+        let effective = threshold.min(floor);
+
+        candidates
+            .into_iter()
+            .filter(|(score, _)| {
+                if log_scores {
+                    eprintln!(
+                        "[apps] nucleo={} effective_threshold={:.1}",
+                        score, effective
+                    );
+                }
+                (*score as f32) >= effective
+            })
+            .map(|(_, result)| result)
             .collect()
     }
 }

@@ -6,10 +6,9 @@ max_results = 20             # total results displayed in the launcher
 onboarding_completed = false # set true after the first-launch wizard runs
 
 [providers]
-apps      = true       # .desktop application search
-files     = true       # file indexer (see [[files.dirs]])
-recent    = true       # recently-used files from ~/.local/share/recently-used.xbel
-calc      = true       # inline calculator
+apps  = true   # .desktop application search
+files = true   # file indexer (see [[files.dirs]])
+calc  = true   # inline calculator
 
 # Directories indexed by the file provider.
 # Each entry requires a `path`; `depth` defaults to 2.
@@ -29,14 +28,9 @@ copy_definition      = true     # ctrl+c copies first definition; false = copies
 fill_threshold       = 3        # only fill when fewer than this many non-dict results exist
 fill_max             = 5        # max dictionary rows added when filling
 
-[recent]
-max_entries = 500      # how many XBEL bookmarks to load
-
 [search]
-min_score_file = 95    # nucleo minimum match quality for files/folders at 4+ char queries
-min_score_app  = 95    # nucleo minimum match quality for apps at 4+ char queries
-                       # (both thresholds scale down proportionally for shorter queries)
-recency_weight = 50.0  # max bonus added to file scores for recently modified items
+min_quality    = 0.06  # minimum fuzzy match quality (0.0–1.0); scales with query length
+history_weight = 50    # how strongly launch history boosts results (0–100)
 
 [debug]
 log_scores  = false    # print nucleo score + threshold for every match candidate to stderr
@@ -46,7 +40,6 @@ log_pdf     = false    # print pdfium load/render/encode steps to stderr
 [frecency]
 enabled        = true
 half_life_days = 14.0  # frecency score halves every N days of non-use
-weight         = 5000.0 # multiplier applied to the frecency bonus on top of base scores
 
 # Full-text content search — query must start with ! to activate (e.g. "! invoice 2024").
 # system deps: poppler (pdftotext/pdftoppm), tesseract + tesseract-data-eng (OCR)

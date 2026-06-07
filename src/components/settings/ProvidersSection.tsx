@@ -17,10 +17,9 @@ interface ProviderDef {
 }
 
 const PROVIDERS: ProviderDef[] = [
-  { key: "apps",   label: "Applications",  desc: "Search .desktop application entries" },
-  { key: "files",  label: "Files",         desc: "Indexed file search" },
-  { key: "recent", label: "Recent files",  desc: "Recently-used files from ~/.local/share/recently-used.xbel" },
-  { key: "calc",   label: "Calculator",    desc: "Inline math expression evaluator" },
+  { key: "apps",  label: "Applications", desc: "Search .desktop application entries" },
+  { key: "files", label: "Files",        desc: "Indexed file search" },
+  { key: "calc",  label: "Calculator",   desc: "Inline math expression evaluator" },
 ];
 
 export default function ProvidersSection({ config, onChange }: Props) {

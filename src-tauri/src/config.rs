@@ -13,7 +13,6 @@ pub struct Config {
     pub general: GeneralConfig,
     pub providers: ProvidersConfig,
     pub files: FilesConfig,
-    pub recent: RecentConfig,
     pub search: SearchConfig,
     pub frecency: FrecencyConfig,
     pub debug: DebugConfig,
@@ -29,7 +28,6 @@ impl Default for Config {
             general: GeneralConfig::default(),
             providers: ProvidersConfig::default(),
             files: FilesConfig::default(),
-            recent: RecentConfig::default(),
             search: SearchConfig::default(),
             frecency: FrecencyConfig::default(),
             debug: DebugConfig::default(),
@@ -72,7 +70,6 @@ impl Default for GeneralConfig {
 pub struct ProvidersConfig {
     pub apps: bool,
     pub files: bool,
-    pub recent: bool,
     pub calc: bool,
 }
 
@@ -81,7 +78,6 @@ impl Default for ProvidersConfig {
         Self {
             apps: true,
             files: true,
-            recent: true,
             calc: true,
         }
     }
@@ -134,6 +130,7 @@ fn default_depth() -> usize {
 #[serde(default)]
 pub struct FilesConfig {
     pub dirs: Vec<DirEntry>,
+    pub show_dotfiles: bool,
 }
 
 impl Default for FilesConfig {
@@ -145,36 +142,25 @@ impl Default for FilesConfig {
                 DirEntry { path: format!("{home}/Documents"), depth: 2 },
                 DirEntry { path: format!("{home}/.config/hypr"), depth: 2 },
             ],
+            show_dotfiles: false,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default)]
-pub struct RecentConfig {
-    pub max_entries: usize,
-}
-
-impl Default for RecentConfig {
-    fn default() -> Self {
-        Self { max_entries: 500 }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
-#[serde(default)]
 pub struct SearchConfig {
-    pub min_score_file: u32,
-    pub min_score_app: u32,
-    pub recency_weight: f32,
+    /// Minimum fuzzy match quality, 0.0–1.0. Applied as a fraction of FUZZY_REFERENCE.
+    pub min_quality: f32,
+    /// How strongly launch history boosts results, 0–100. Maps to history_max_bonus.
+    pub history_weight: u8,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            min_score_file: 95,
-            min_score_app: 95,
-            recency_weight: 50.0,
+            min_quality: 0.06,
+            history_weight: 50,
         }
     }
 }
@@ -198,7 +184,6 @@ impl Default for DebugConfig {
 pub struct FrecencyConfig {
     pub enabled: bool,
     pub half_life_days: f32,
-    pub weight: f32,
 }
 
 impl Default for FrecencyConfig {
@@ -206,7 +191,6 @@ impl Default for FrecencyConfig {
         Self {
             enabled: true,
             half_life_days: 14.0,
-            weight: 5000.0,
         }
     }
 }
@@ -292,9 +276,8 @@ impl Default for AppearanceConfig {
 /// Updated in-place on config reload; providers read it per search() call.
 #[derive(Debug, Clone)]
 pub struct SharedSearchConfig {
-    pub min_score_file: u32,
-    pub min_score_app: u32,
-    pub recency_weight: f32,
+    pub min_quality: f32,
+    pub show_dotfiles: bool,
     pub log_scores: bool,
     pub log_watcher: bool,
     pub log_pdf: bool,
@@ -305,9 +288,8 @@ pub type SharedConfig = Arc<RwLock<SharedSearchConfig>>;
 impl SharedSearchConfig {
     pub fn from_config(cfg: &Config) -> Self {
         Self {
-            min_score_file: cfg.search.min_score_file,
-            min_score_app: cfg.search.min_score_app,
-            recency_weight: cfg.search.recency_weight,
+            min_quality: cfg.search.min_quality,
+            show_dotfiles: cfg.files.show_dotfiles,
             log_scores: cfg.debug.log_scores,
             log_watcher: cfg.debug.log_watcher,
             log_pdf: cfg.debug.log_pdf,
@@ -315,9 +297,8 @@ impl SharedSearchConfig {
     }
 
     pub fn update_from(&mut self, cfg: &Config) {
-        self.min_score_file = cfg.search.min_score_file;
-        self.min_score_app = cfg.search.min_score_app;
-        self.recency_weight = cfg.search.recency_weight;
+        self.min_quality = cfg.search.min_quality;
+        self.show_dotfiles = cfg.files.show_dotfiles;
         self.log_scores = cfg.debug.log_scores;
         self.log_watcher = cfg.debug.log_watcher;
         self.log_pdf = cfg.debug.log_pdf;

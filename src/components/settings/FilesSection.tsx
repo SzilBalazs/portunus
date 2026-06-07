@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import { Config, DirEntry } from "../../types";
 import DirRow from "./DirRow";
+import Toggle from "./Toggle";
 
 interface Props {
   config: Config;
@@ -15,8 +16,9 @@ export default function FilesSection({ config, onChange }: Props) {
     if (draft !== null) draftInputRef.current?.focus();
   }, [draft !== null]);
 
-  const setDirs = (dirs: DirEntry[]) =>
-    onChange({ ...config, files: { ...config.files, dirs } });
+  const setFiles = (patch: Partial<Config["files"]>) =>
+    onChange({ ...config, files: { ...config.files, ...patch } });
+  const setDirs = (dirs: DirEntry[]) => setFiles({ dirs });
 
   const updateDir = (i: number, patch: Partial<DirEntry>) => {
     const next = config.files.dirs.map((d, idx) => idx === i ? { ...d, ...patch } : d);
@@ -80,6 +82,16 @@ export default function FilesSection({ config, onChange }: Props) {
             <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add directory
           </button>
         )}
+      </div>
+
+      <div className="settings-field">
+        <div className="settings-field-label">
+          <div className="settings-field-name">Show dotfiles</div>
+          <div className="settings-field-desc">Include files and directories whose name or path starts with a dot (e.g. .config, .bashrc). Hidden by default.</div>
+        </div>
+        <div className="settings-field-control">
+          <Toggle label="Show dotfiles" checked={config.files.show_dotfiles} onChange={v => setFiles({ show_dotfiles: v })} />
+        </div>
       </div>
     </div>
   );

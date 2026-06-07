@@ -16,7 +16,7 @@ const STEPS = ["Welcome", "Theme", "Providers", "Content"] as const;
 
 // ── provider tour data ──────────────────────────────────────────────────────
 
-type ProviderKey = "apps" | "files" | "recent" | "calc";
+type ProviderKey = "apps" | "files" | "calc";
 
 interface ProviderCard {
   id: string;
@@ -41,8 +41,6 @@ const PROVIDERS: ProviderCard[] = [
     icon: I(<><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>) },
   { id: "files", name: "Files", desc: "Find files by name, fuzzy-matched", example: "report.pdf", toggle: "files",
     icon: I(<><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></>) },
-  { id: "recent", name: "Recent", desc: "Jump back to recently-used files", toggle: "recent",
-    icon: I(<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>) },
   { id: "calc", name: "Calculator", desc: "Inline math", example: "1+2*3", toggle: "calc",
     icon: I(<><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="11" x2="8" y2="11"/><line x1="12" y1="11" x2="12" y2="11"/><line x1="16" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="8" y2="15"/><line x1="12" y1="15" x2="12" y2="15"/><line x1="16" y1="15" x2="16" y2="18"/></>) },
   { id: "dict", name: "Dictionary", desc: "Word definitions", example: "define lucid", dep: "dict",

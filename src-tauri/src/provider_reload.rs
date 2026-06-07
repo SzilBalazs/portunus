@@ -45,10 +45,11 @@ pub fn rebuild_providers(
     // Update per-search scalars instantly (no rebuild needed).
     shared.write().unwrap().update_from(new_cfg);
 
-    // Update registry-level settings (max_results, frecency_weight).
+    // Update registry-level settings (max_results, history_max_bonus).
     {
+        let history_max_bonus = (new_cfg.search.history_weight as f32 / 100.0) * 1_500_000.0;
         let mut reg = registry.write().unwrap();
-        reg.update_settings(new_cfg.general.max_results, new_cfg.frecency.weight);
+        reg.update_settings(new_cfg.general.max_results, history_max_bonus);
     }
 
     // ── Selectively rebuild index-backed providers ────────────────────────────
@@ -88,6 +89,7 @@ pub fn rebuild_providers(
                             .filter(|d| !old_by_path.contains_key(d.path.as_str()))
                             .cloned()
                             .collect(),
+                        show_dotfiles: files_cfg.show_dotfiles,
                     };
                     let new_entries = providers::files::FileProvider::walk_dirs(&added_cfg);
                     fe.write().unwrap().extend(new_entries);
@@ -108,15 +110,6 @@ pub fn rebuild_providers(
             }
             eprintln!("[config] files provider rebuilt");
             ncb();
-        });
-    }
-
-    if new_cfg.recent != old_cfg.recent || new_cfg.providers.recent != old_cfg.providers.recent {
-        let recent_cfg = new_cfg.recent.clone();
-        let enabled = new_cfg.providers.recent;
-        let shared2 = Arc::clone(shared);
-        spawn_rebuild(registry, notify_cb, "recent", "recent", move || {
-            enabled.then(|| Box::new(providers::recent::RecentProvider::new(&recent_cfg, shared2)) as _)
         });
     }
 

@@ -168,6 +168,13 @@ impl FileProvider {
     }
 }
 
+fn has_hidden_component(path: &str) -> bool {
+    use std::path::Component;
+    std::path::Path::new(path).components().any(|c| {
+        matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
+    })
+}
+
 impl Provider for FileProvider {
     fn id(&self) -> &str {
         "files"
@@ -180,50 +187,62 @@ impl Provider for FileProvider {
         }
 
         let cfg = util::read(&self.shared);
-        let min_score = cfg.min_score_file;
-        let recency_weight = cfg.recency_weight;
+        let min_quality = cfg.min_quality;
+        let show_dotfiles = cfg.show_dotfiles;
         let log_scores = cfg.log_scores;
         drop(cfg);
 
         let (pattern, mut matcher, mut char_buf) = super::fuzzy_setup(query);
+        let threshold = super::quality_threshold(min_quality, query.chars().count());
         let entries = util::read(&self.entries);
 
-        entries
+        let mut candidates: Vec<(u32, SearchResult)> = entries
             .iter()
             .filter_map(|entry| {
-                let score =
-                    pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
-                let threshold = super::effective_min_score(min_score, query.chars().count());
-                if log_scores {
-                    eprintln!(
-                        "[files] {:?} → {:?}  score={} threshold={}",
-                        query, entry.name, score, threshold
-                    );
-                }
-                if score < threshold {
+                if !show_dotfiles && has_hidden_component(&entry.path) {
                     return None;
                 }
+                let score =
+                    pattern.score(Utf32Str::new(&entry.name, &mut char_buf), &mut matcher)?;
                 let base = if entry.is_dir {
                     super::SCORE_FOLDER
                 } else {
                     super::SCORE_FILE
                 };
-                let recency =
-                    super::recency_bonus(entry.created, entry.modified, recency_weight);
                 let escaped = entry.path.replace('"', "\\\"");
-                Some(SearchResult {
+                Some((score, SearchResult {
                     id: format!("file:{}", entry.path),
                     title: entry.name.clone(),
                     subtitle: Some(entry.parent.clone()),
                     kind: if entry.is_dir { "folder" } else { "file" }.to_string(),
-                    score: base + score as f32 + recency,
+                    score: base + super::fuzzy_bonus(score),
                     exec: Some(format!("xdg-open \"{}\"", escaped)),
                     file_size: entry.file_size,
                     created: entry.created,
                     modified: entry.modified,
                     ..Default::default()
-                })
+                }))
             })
+            .collect();
+
+        candidates.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        // Adaptive floor: relax threshold so top 3 always survive.
+        let floor = candidates.get(2).map(|c| c.0).unwrap_or(0) as f32;
+        let effective = threshold.min(floor);
+
+        candidates
+            .into_iter()
+            .filter(|(score, result)| {
+                if log_scores {
+                    eprintln!(
+                        "[files] {:?} → {:?}  score={} effective_threshold={:.1}",
+                        query, result.title, score, effective
+                    );
+                }
+                (*score as f32) >= effective
+            })
+            .map(|(_, result)| result)
             .collect()
     }
 }

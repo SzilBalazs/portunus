@@ -67,12 +67,7 @@ impl FrecencyStore {
         if !matches!(kind, "app" | "file" | "folder" | "extension") {
             return;
         }
-        // Normalize recent:<path> → file:<path> so both providers share one frecency score.
-        let normalized = if let Some(path) = id.strip_prefix("recent:") {
-            format!("file:{path}")
-        } else {
-            id.to_string()
-        };
+        let normalized = id.to_string();
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

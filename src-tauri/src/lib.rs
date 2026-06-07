@@ -282,7 +282,7 @@ fn trigger_full_reindex(
     // diff baseline to the freshly-saved content *now* (synchronously, before the
     // 500ms-debounced watcher event can fire) so it sees no content diff and skips
     // a redundant second reindex. This explicit trigger is then the sole content
-    // indexer. Only `.content` is touched, so files/recent/apps diffs still apply.
+    // indexer. Only `.content` is touched, so files/apps diffs still apply.
     {
         let current = util::lock(&config).content.clone();
         util::lock(&baseline.0).content = current;
@@ -437,7 +437,6 @@ pub fn run() {
 
     let frecency_cfg = cfg.frecency.clone();
     let files_cfg = cfg.files.clone();
-    let recent_cfg = cfg.recent.clone();
     let providers_cfg = cfg.providers.clone();
     let dict_cfg = cfg.dict.clone();
     let max_results = cfg.general.max_results;
@@ -495,10 +494,11 @@ pub fn run() {
         match frecency::FrecencyStore::open(frecency_cfg.half_life_days) {
             Ok(store) => {
                 let arc = Arc::new(store);
+                let history_max_bonus = (cfg.search.history_weight as f32 / 100.0) * 1_500_000.0;
                 registry
                     .write()
                     .unwrap()
-                    .set_frecency(Arc::clone(&arc), frecency_cfg.weight);
+                    .set_frecency(Arc::clone(&arc), history_max_bonus);
                 Some(arc)
             }
             Err(e) => {
@@ -719,13 +719,6 @@ pub fn run() {
                         Arc::clone(&shared_bg),
                     );
                     bg_registry.write().unwrap().register(file_provider);
-                }
-                if providers_cfg.recent {
-                    let recent_provider = providers::recent::RecentProvider::new(
-                        &recent_cfg,
-                        Arc::clone(&shared_bg),
-                    );
-                    bg_registry.write().unwrap().register(recent_provider);
                 }
                 if providers_cfg.apps {
                     let app_provider =

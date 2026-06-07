@@ -8,8 +8,7 @@ import GeneralSection from "./components/settings/GeneralSection";
 import ProvidersSection from "./components/settings/ProvidersSection";
 import DictSection from "./components/settings/DictSection";
 import FilesSection from "./components/settings/FilesSection";
-import SearchSection from "./components/settings/SearchSection";
-import FrecencySection from "./components/settings/FrecencySection";
+import RankingSection from "./components/settings/RankingSection";
 import ContentSection from "./components/settings/ContentSection";
 import DebugSection from "./components/settings/DebugSection";
 import AppearanceSection from "./components/settings/AppearanceSection";
@@ -18,7 +17,7 @@ import { applyTheme } from "./theme";
 import "./settings.css";
 import "./themes.css";
 
-type Section = "general" | "providers" | "extensions" | "dict" | "files" | "search" | "frecency" | "content" | "debug" | "appearance";
+type Section = "general" | "providers" | "extensions" | "dict" | "files" | "ranking" | "content" | "debug" | "appearance";
 
 interface NavItem {
   id: Section;
@@ -74,17 +73,8 @@ const NAV: NavItem[] = [
     ),
   },
   {
-    id: "search",
-    label: "Search",
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-    ),
-  },
-  {
-    id: "frecency",
-    label: "Frecency",
+    id: "ranking",
+    label: "Ranking",
     icon: (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -194,6 +184,10 @@ export default function Settings() {
   const diskConfigRef = useRef<Config | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while there are unsaved changes — blocks focus-triggered config reload
+  // so a GTK native popup (e.g. select) losing/regaining window focus can't
+  // overwrite a just-made change before the autosave timer fires.
+  const hasPendingRef = useRef(false);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -231,6 +225,10 @@ export default function Settings() {
       if (!focused) return;
       // Don't reload over staged heavy edits — that would silently discard them.
       if (pendingRef.current) return;
+      // Don't reload while there are unsaved light changes — a GTK native widget
+      // (e.g. a <select> popup) losing then regaining window focus would otherwise
+      // overwrite the just-made change before the autosave timer fires.
+      if (hasPendingRef.current) return;
       const now = Date.now();
       if (now - lastLoad < 300) return;
       lastLoad = now;
@@ -288,18 +286,23 @@ export default function Settings() {
     const base = diskConfigRef.current;
     if (!base) return;
 
+    hasPendingRef.current = true;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       const toSave = stripHeavy(config, base, indexEmpty);
       // Nothing cheap actually changed (only heavy edits are pending) — don't
       // touch disk, but leave the staged change visible via the Apply strip.
-      if (JSON.stringify(toSave) === JSON.stringify(base)) return;
+      if (JSON.stringify(toSave) === JSON.stringify(base)) {
+        hasPendingRef.current = false;
+        return;
+      }
 
       setSaving(true);
       setError(null);
       try {
         await invoke("save_config", { config: toSave });
         diskConfigRef.current = toSave;
+        hasPendingRef.current = false;
         setSavedFlash(true);
         if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
         flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1800);
@@ -449,8 +452,7 @@ export default function Settings() {
                 {activeSection === "extensions" && <ExtensionsSection config={config} onChange={setConfig} />}
                 {activeSection === "dict"      && <DictSection      config={config} onChange={setConfig} />}
                 {activeSection === "files"     && <FilesSection     config={config} onChange={setConfig} />}
-                {activeSection === "search"    && <SearchSection    config={config} onChange={setConfig} />}
-                {activeSection === "frecency"  && <FrecencySection  config={config} onChange={setConfig} />}
+                {activeSection === "ranking"   && <RankingSection   config={config} onChange={setConfig} />}
                 {activeSection === "content"   && (
                   <ContentSection
                     config={config}

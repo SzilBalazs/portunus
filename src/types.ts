@@ -26,7 +26,6 @@ export interface Config {
   providers: {
     apps: boolean;
     files: boolean;
-    recent: boolean;
     calc: boolean;
   };
   dict: {
@@ -39,14 +38,11 @@ export interface Config {
   };
   files: {
     dirs: DirEntry[];
-  };
-  recent: {
-    max_entries: number;
+    show_dotfiles: boolean;
   };
   search: {
-    min_score_file: number;
-    min_score_app: number;
-    recency_weight: number;
+    min_quality: number;
+    history_weight: number;
   };
   debug: {
     log_scores: boolean;
@@ -56,7 +52,6 @@ export interface Config {
   frecency: {
     enabled: boolean;
     half_life_days: number;
-    weight: number;
   };
   content: {
     enabled: boolean;

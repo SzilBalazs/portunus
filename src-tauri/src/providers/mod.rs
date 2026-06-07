@@ -4,19 +4,18 @@ pub mod clipboard;
 pub mod content;
 pub mod dict;
 pub mod files;
-pub mod recent;
 pub mod timer;
 pub mod wasm;
 
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use crate::frecency::FrecencyStore;
 
-// Category base scores (not user-tunable; define search priority ordering).
+// ── Utility provider bases (intent-triggered; not competed against by files/apps) ──
 pub const SCORE_CONTENT: f32 = 6_000_000.0;
 pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
 pub const SCORE_TIMER: f32 = 4_000_000.0;
@@ -25,63 +24,48 @@ pub const SCORE_DICT: f32 = 3_000_000.0;
 /// Sparse-fill dict rows — kept below files (1M) so they sink to the bottom and
 /// only matter when little else matched.
 pub const SCORE_DICT_FILL: f32 = 500_000.0;
+
+// ── Discoverable provider bases (apps, files, folders, extensions) ──
 pub const SCORE_APP: f32 = 2_000_000.0;
-/// Base for extension results — between apps (2M) and calc/dict (3M).
+/// Base for extension results — above apps (2M), below calc/dict (3M).
 pub const SCORE_EXTENSION: f32 = 2_500_000.0;
 /// Width of the band extension relevance (0–100) maps into, on top of
-/// `SCORE_EXTENSION`. Host-private: authors only ever see the 0–100 scale.
-/// Sized so frecency can compete: one launch ≈ weight (5k) ≈ 20 relevance
-/// points — a couple of launches reorder typical relevance gaps, while
-/// relevance still rules untouched results. At 100k frecency was invisible.
-pub const EXTENSION_BAND: f32 = 25_000.0;
+/// `SCORE_EXTENSION`. Matches FUZZY_MAX_BONUS so relevance and fuzzy quality
+/// are on the same scale; frecency can bridge a few relevance points per launch.
+pub const EXTENSION_BAND: f32 = 300_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
-/// Subtracted from file/content/folder results whose path contains a hidden
-/// component (e.g. `.config`), so configs/caches sink below normal results.
-pub const SCORE_HIDDEN_PATH_PENALTY: f32 = 5_000_000.0;
 
-/// True if any path segment (dir or file) starts with '.', ignoring '.'/'..'.
-pub fn path_has_hidden_component(path: &str) -> bool {
-    use std::path::Component;
-    std::path::Path::new(path).components().any(|c| {
-        matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
-    })
+// ── Scoring normalisation constants ──────────────────────────────────────────
+
+/// Nucleo score at which fuzzy bonus is fully awarded. Scores above this are clamped.
+pub const FUZZY_REFERENCE: f32 = 1500.0;
+/// Max bonus added to a discoverable result's score for a perfect fuzzy match.
+pub const FUZZY_MAX_BONUS: f32 = 300_000.0;
+/// Frecency score (raw launches after decay) that maps to 100% of history bonus.
+pub const FRECENCY_REFERENCE: f32 = 40.0;
+
+/// Returns the normalised fuzzy bonus for a raw nucleo score.
+pub fn fuzzy_bonus(nucleo_score: u32) -> f32 {
+    (nucleo_score as f32 / FUZZY_REFERENCE).min(1.0) * FUZZY_MAX_BONUS
 }
 
-/// Score threshold that scales with query length.
+/// Score threshold (in nucleo score units) that scales with query length.
 /// Two-phase ramp so the jump to full threshold is gradual:
 ///   len 1 →   0%    len 2 → 33%    len 3 → 66%
 ///   len 4 →  77%    len 5 → 88%    len 6+ → 100%
-pub fn effective_min_score(min_score: u32, query_len: usize) -> u32 {
+pub fn quality_threshold(min_quality: f32, query_len: usize) -> f32 {
+    let base = min_quality * FUZZY_REFERENCE;
     if query_len <= 1 {
-        return 0;
-    }
-    if query_len <= 3 {
-        let factor = (query_len - 1) as u64;
-        return (min_score as u64 * factor / 3) as u32;
-    }
-    let extra = (query_len - 3).min(3) as u64;
-    let base = min_score as u64 * 2 / 3;
-    (base + (min_score as u64 - base) * extra / 3) as u32
-}
-
-pub fn recency_bonus(created: Option<u64>, modified: Option<u64>, weight: f32) -> f32 {
-    const ONE_YEAR_SECS: f64 = 365.0 * 24.0 * 3600.0;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let newest = [created, modified]
-        .iter()
-        .filter_map(|&t| t)
-        .max()
-        .unwrap_or(0);
-    if newest == 0 || now <= newest {
         return 0.0;
     }
-    let age = (now - newest) as f64;
-    let factor = (1.0 - age / ONE_YEAR_SECS).max(0.0) as f32;
-    factor * weight
+    if query_len <= 3 {
+        let factor = (query_len - 1) as f32;
+        return base * factor / 3.0;
+    }
+    let extra = (query_len - 3).min(3) as f32;
+    let low = base * 2.0 / 3.0;
+    low + (base - low) * extra / 3.0
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -295,18 +279,8 @@ impl PluginRegistry {
             }
         }
 
-        // Penalize results inside (or being) hidden paths so configs/caches sink.
-        for r in &mut results {
-            if let Some(path) = r.id.strip_prefix("file:") {
-                if path_has_hidden_component(path) {
-                    r.score -= SCORE_HIDDEN_PATH_PENALTY;
-                }
-            }
-        }
-
         // Apply frecency bonus before sort so heavily-used items surface correctly.
-        // Skip content results — they are already ranked by FTS5/BM25 relevance and
-        // frecency (O(1000) points) would completely override text relevance (O(1) points).
+        // Skip content results — they are already ranked by FTS5/BM25 relevance.
         if let Some(store) = &self.frecency {
             let scores = store.all_scores();
             for r in &mut results {
@@ -314,7 +288,8 @@ impl PluginRegistry {
                     continue;
                 }
                 if let Some(&fs) = scores.get(&r.id) {
-                    r.score += fs * self.frecency_weight;
+                    let normalized = (fs / FRECENCY_REFERENCE).min(1.0);
+                    r.score += normalized * self.frecency_weight;
                 }
             }
         }
@@ -324,8 +299,7 @@ impl PluginRegistry {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        // Deduplicate by exec: same file may appear from both FileProvider and RecentProvider;
-        // keep the highest-scored occurrence (already first after sort).
+        // Deduplicate by exec: keep highest-scored occurrence (already first after sort).
         let mut seen = std::collections::HashSet::new();
         results.retain(|r| match &r.exec {
             Some(e) => seen.insert(e.clone()),

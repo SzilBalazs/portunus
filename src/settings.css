@@ -422,6 +422,87 @@ a:focus-visible,
   border-color: var(--accent);
 }
 
+/* ---------- custom select ---------- */
+
+.settings-select-wrap {
+  position: relative;
+}
+
+.settings-select-btn {
+  height: 28px;
+  min-width: 100px;
+  background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 0 10px;
+  outline: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: border-color 0.12s;
+  text-align: left;
+  width: 100%;
+}
+
+.settings-select-btn:focus-visible,
+.settings-select-btn.open {
+  border-color: var(--accent);
+}
+
+.settings-select-btn svg {
+  flex-shrink: 0;
+  color: var(--fg-mute);
+  transition: transform 0.15s;
+}
+
+.settings-select-btn.open svg {
+  transform: rotate(180deg);
+}
+
+.settings-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 100%;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-raised);
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 8px 24px -4px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-select-option {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg-mute);
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s, color 0.1s;
+}
+
+.settings-select-option:hover {
+  background: var(--bg-row-hov);
+  color: var(--fg);
+}
+
+.settings-select-option.selected {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 /* ---------- dir list ---------- */
 
 .settings-dir-list {
