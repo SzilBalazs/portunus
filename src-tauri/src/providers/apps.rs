@@ -80,14 +80,18 @@ fn load_apps() -> Vec<DesktopEntry> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            if !seen.insert(stem) {
+            if !seen.insert(stem.clone()) {
                 continue;
             }
             if let Some(parsed) = parse_desktop(entry.path(), &current_desktop) {
+                // Resolve the Icon field; if that fails (e.g. a dead absolute
+                // path), fall back to a theme icon named after the .desktop
+                // file itself (XDG convention, e.g. "jetbrains-toolbox").
                 let icon_path = parsed
                     .icon_name
                     .as_deref()
-                    .and_then(|n| resolve_icon(n, &icon_index));
+                    .and_then(|n| resolve_icon(n, &icon_index))
+                    .or_else(|| icon_index.get(&stem).cloned());
                 apps.push(DesktopEntry {
                     name: parsed.name,
                     exec: parsed.exec,
@@ -167,6 +171,8 @@ fn build_icon_index() -> HashMap<String, String> {
 
 /// Read one flat directory and insert every SVG/PNG file into the index.
 /// SVG gets a +100 bonus on top of `base_score` so it beats same-size PNGs.
+/// Stored paths are canonicalized (symlinks resolved) so the asset protocol
+/// always receives a real file path with no symlink chains to follow.
 fn index_dir(dir: &PathBuf, base_score: u32, index: &mut HashMap<String, (String, u32)>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -180,31 +186,74 @@ fn index_dir(dir: &PathBuf, base_score: u32, index: &mut HashMap<String, (String
         };
         let score = base_score + fmt_bonus;
         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            // Canonicalize so we store the real file path, not a symlink chain.
+            // Use the symlink name as stem but the resolved target as the path.
+            let resolved = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             let slot = index
                 .entry(stem.to_string())
                 .or_insert_with(|| (String::new(), 0));
             if score > slot.1 {
-                slot.0 = path.to_string_lossy().into_owned();
+                slot.0 = resolved.to_string_lossy().into_owned();
                 slot.1 = score;
             }
         }
     }
 }
 
+/// Roots the asset protocol is allowed to serve from.
+/// Must stay in sync with `assetProtocol.scope` in tauri.conf.json.
+fn in_asset_scope(path: &std::path::Path) -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    path.starts_with(format!("{home}/.local/share/icons"))
+        || path.starts_with("/usr/share/icons")
+        || path.starts_with("/usr/share/pixmaps")
+}
+
+/// Make a resolved icon path servable by the asset protocol: return it as-is
+/// when it is inside the scope, otherwise copy it into a cache directory that
+/// is inside the scope (e.g. JetBrains Toolbox ships icons under
+/// ~/.local/share/JetBrains/…, which the asset protocol would block).
+fn servable_icon_path(path: &std::path::Path) -> Option<String> {
+    if in_asset_scope(path) {
+        return path.to_str().map(String::from);
+    }
+    let home = std::env::var("HOME").ok()?;
+    let cache_dir = PathBuf::from(format!("{home}/.local/share/icons/portunus-cache"));
+    fs::create_dir_all(&cache_dir).ok()?;
+    let dest = cache_dir.join(path.file_name()?);
+    // Re-copy only when the cached copy is missing or differs in size.
+    let needs_copy = match (fs::metadata(path), fs::metadata(&dest)) {
+        (Ok(src), Ok(cached)) => src.len() != cached.len(),
+        (Ok(_), Err(_)) => true,
+        _ => return None,
+    };
+    if needs_copy {
+        fs::copy(path, &dest).ok()?;
+    }
+    dest.to_str().map(String::from)
+}
+
 /// Resolve a raw icon field to an absolute path using the pre-built index.
 fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
-    // Absolute path: check directly, with extension fallback for bare paths.
     if icon.starts_with('/') {
+        // Trust the shipped absolute path — it is the icon the app intends
+        // (a stem like "toolbox" could collide with an unrelated theme icon).
+        // Out-of-scope paths are copied into the cache by servable_icon_path.
         let p = std::path::Path::new(icon);
         if p.exists() {
-            return Some(icon.to_string());
+            let resolved = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            return servable_icon_path(&resolved);
         }
         for ext in ["svg", "png"] {
             let q = p.with_extension(ext);
             if q.exists() {
-                return q.to_str().map(String::from);
+                let resolved = fs::canonicalize(&q).unwrap_or_else(|_| q.clone());
+                return servable_icon_path(&resolved);
             }
         }
+        // Dead path: don't guess from the file stem — names like "toolbox"
+        // collide with unrelated theme icons. Caller falls back to the
+        // .desktop file stem instead.
         return None;
     }
 
