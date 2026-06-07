@@ -170,7 +170,7 @@ pub fn rebuild_providers(
         // Wasm compilation is slow — sync builds instances off-thread and only
         // takes the registry write lock for pointer swaps.
         std::thread::spawn(move || {
-            crate::extensions::sync(&reg2, &enabled, &kv, &frec, false);
+            crate::extensions::sync(&reg2, &enabled, &kv, &frec, false, Some(Arc::clone(&ncb)));
             eprintln!("[config] extensions reloaded");
             ncb();
         });

@@ -85,6 +85,8 @@ export interface ExtensionResult {
   subtitle?: string;
   relevance: number;
   actions?: string[];
+  /** Unvalidated — render `SearchResult.icon_data_uri` instead. */
+  icon?: { mime: string; data_base64: string };
 }
 
 /** Declarative preview content returned by an extension's `preview` export. */
@@ -100,11 +102,13 @@ export interface ExtensionInfo {
   version: string;
   description: string;
   author: string;
-  permissions: { network: string[]; kv: boolean; clipboard: boolean } | null;
+  permissions: { network: string[]; kv: boolean; clipboard: boolean; open_url: boolean } | null;
   enabled: boolean;
   loaded: boolean;
   error: string | null;
   benched: boolean;
+  /** Set when the manifest declares a [background] refresh interval. */
+  background_interval_secs: number | null;
 }
 
 export interface SearchResult {
@@ -116,6 +120,8 @@ export interface SearchResult {
   score: number;
   exec?: string;
   icon_path?: string;
+  /** Pre-built `data:` URI for a validated extension-supplied icon. */
+  icon_data_uri?: string;
   file_size?: number;
   created?: number;
   modified?: number;

@@ -39,6 +39,9 @@ clipboard = true               # clipboard_write host function
 [limits]
 search_timeout_ms = 100        # clamped to [10, 500]
 activate_timeout_ms = 2000     # clamped to [10, 10000]
+
+[background]                   # optional — schedules your `refresh` export
+refresh_interval_secs = 600    # clamped to [60, 86400]
 ```
 
 **Permissions are self-declared** — they bound what your extension *can* do, and
@@ -62,13 +65,20 @@ for you.
     "title": "😄 grinning face",
     "subtitle": "smile happy",    // optional
     "relevance": 87.5,            // 0–100, higher = better
-    "actions": ["copy"]           // optional; first = default on Enter
+    "actions": ["copy"],          // optional; first = default on Enter
+    "icon": {                     // optional; shown instead of the default glyph
+      "mime": "image/png",        // png/jpeg/gif/webp only
+      "data_base64": "iVBOR..."   // ≤ 32 KB base64
+    }
 } ] }
 ```
 
 - Relevance is your only ranking input — the host maps 0–100 into its internal
   score space. Out-of-range values are clamped.
 - At most 200 results are taken per query; titles/subtitles are clamped to 2 KB.
+- Icons are validated host-side: png/jpeg/gif/webp, at most 32 KB base64. An
+  invalid icon is dropped (the result keeps the default glyph) and the error
+  shows in Settings — a bad icon never fails the search.
 - **`search` runs on the keystroke path with a hard ~150 ms budget. Never do
   network I/O in `search`.** Overruns are cancelled and count as failures.
 
@@ -96,6 +106,29 @@ Return one of the declarative content types; the host renders it natively:
 { "type": "list",     "items": [ { "title": "...", "subtitle": "..." } ] }
 ```
 
+### `refresh` (optional)
+
+Declared via `[background]` in the manifest. The host calls it once when the
+extension loads and then on the interval — on a **dedicated instance**, so a
+slow refresh never blocks search. This is where network work belongs: fetch,
+write kv, return. 30 s budget. Failures show in Settings but never bench the
+extension; five consecutive failures pause the schedule until reload.
+
+```jsonc
+// in:  { "reason": "load" | "scheduled" }
+// out: { "ok": true }
+```
+
+### The kv-as-cache pattern
+
+The canonical recipe for network extensions:
+
+1. `refresh` fetches over HTTP and writes results to kv, timestamped with `now_ms`.
+2. `search` reads only kv — always instant, always within budget.
+3. `activate` may also fetch (user-triggered, 2–10 s budget) for manual refresh.
+
+Never do network in `search` — the 150 ms keystroke budget will cancel it.
+
 ## Host functions
 
 Importable from the `extism:host/user` namespace; the Rust SDK wraps them:
@@ -104,7 +137,20 @@ Importable from the `extism:host/user` namespace; the Rust SDK wraps them:
 |---|---|---|
 | `kv_get(key) -> Option<String>` | `kv` | per-extension namespace |
 | `kv_set(key, value)` | `kv` | 10 MB quota per extension |
+| `kv_list(prefix) -> Vec<String>` | `kv` | keys only, max 10 000 |
+| `kv_delete(key)` | `kv` | |
 | `clipboard_write(text)` | `clipboard` | wl-copy under the hood |
+| `now_ms() -> u64` | none | wall clock (std::time doesn't work in wasm32-unknown-unknown) |
+| `open_url(url)` | `open_url` | http(s) only, opens default browser |
+| `log_message(text)` | none | `[ext:<name>] …` to stderr, 4 KB cap |
+
+SDK wrapper names: `kv_read`, `kv_write`, `kv_keys`, `kv_remove`, `clipboard`,
+`now`, `open`, `debug`.
+
+**Compatibility:** importing a host function the running Portunus doesn't have
+fails at load with a visible Settings error. Extensions using `kv_list`,
+`kv_delete`, `now_ms`, `open_url`, `log_message`, or `refresh` scheduling
+require a Portunus build that ships them.
 
 **HTTP** has no custom host function — use Extism's built-in HTTP
 (`extism_pdk::http::request` in Rust). The host derives the allowlist from

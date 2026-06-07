@@ -619,6 +619,7 @@ pub fn run() {
                     &ext_reload_kv,
                     &ext_reload_frecency,
                     true,
+                    Some(Arc::clone(&ext_reload_notify)),
                 );
                 eprintln!("[extensions] reloaded");
                 ext_reload_notify();
@@ -691,6 +692,14 @@ pub fn run() {
             let startup_file_entries = Arc::clone(&file_entries);
             let startup_ext_kv = Arc::clone(&ext_kv);
             let startup_frecency = frecency_state.clone();
+            let startup_notify = Arc::clone(&notify_cb);
+
+            // Interval scheduler for extensions with [background] refresh.
+            extensions::start_refresh_scheduler(
+                Arc::clone(&bg_registry),
+                Arc::clone(&notify_cb),
+            );
+
             std::thread::spawn(move || {
                 // Built here, not in the setup closure: DictProvider::new() now
                 // builds an embedded word index (BK-tree), too heavy for the
@@ -750,6 +759,7 @@ pub fn run() {
                     &startup_ext_kv,
                     &startup_frecency,
                     false,
+                    Some(startup_notify),
                 );
             });
             Ok(())

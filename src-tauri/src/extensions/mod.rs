@@ -63,12 +63,17 @@ pub fn discover() -> Vec<Discovered> {
 /// already-loaded extensions (the `--reload-extensions` hot-reload path, so a
 /// recompiled wasm is picked up). Compiles modules — call from a background
 /// thread; the registry write lock is only taken for pointer swaps.
+///
+/// Extensions with a `[background]` section get a detached `refresh("load")`
+/// so their kv cache warms immediately; `notify_cb` fires afterwards so an
+/// open launcher picks the fresh data up.
 pub fn sync(
     registry: &Registry,
     enabled: &HashMap<String, bool>,
     kv_store: &Arc<ExtensionKv>,
     frecency: &FrecencyState,
     force: bool,
+    notify_cb: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
     let discovered = discover();
     let on_disk: Vec<&Discovered> = discovered.iter().collect();
@@ -113,7 +118,19 @@ pub fn sync(
         }
         match WasmProvider::load(m, wasm_path, kv_store.clone()) {
             Ok(p) => {
-                crate::util::write(registry).set_extension(&d.name, Some(Arc::new(p)));
+                let p = Arc::new(p);
+                crate::util::write(registry).set_extension(&d.name, Some(p.clone()));
+                // Warm the cache off-thread; sync must never wait on network.
+                if p.background_interval_secs().is_some() {
+                    let ncb = notify_cb.clone();
+                    std::thread::spawn(move || {
+                        if p.refresh("load").is_ok() {
+                            if let Some(ncb) = ncb {
+                                ncb();
+                            }
+                        }
+                    });
+                }
             }
             Err(e) => {
                 eprintln!("[ext:{}] {e}", d.name);
@@ -123,6 +140,76 @@ pub fn sync(
     }
 }
 
+/// Interval scheduler for extensions declaring `[background]`. One global
+/// thread; refreshes run sequentially on each extension's dedicated
+/// background instance, so neither the keystroke path nor other extensions
+/// are blocked by a slow refresh.
+///
+/// First sighting of an extension schedules it one full interval out — the
+/// load-time refresh in `sync()` already covered "now". Five consecutive
+/// failures stop its schedule until the extension is reloaded.
+pub fn start_refresh_scheduler(registry: Registry, notify_cb: Arc<dyn Fn() + Send + Sync>) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(30);
+    const MAX_REFRESH_FAILURES: u32 = 5;
+
+    std::thread::spawn(move || {
+        let mut next_run: HashMap<String, std::time::Instant> = HashMap::new();
+        let mut failures: HashMap<String, u32> = HashMap::new();
+        loop {
+            std::thread::sleep(TICK);
+
+            // Snapshot due extensions under a brief read lock; run outside it.
+            let scheduled: Vec<(String, u64, Arc<WasmProvider>)> = {
+                let reg = crate::util::read(&registry);
+                reg.extension_names()
+                    .into_iter()
+                    .filter_map(|name| {
+                        let p = reg.extension(&name)?;
+                        let interval = p.background_interval_secs()?;
+                        Some((name, interval, p))
+                    })
+                    .collect()
+            };
+
+            // Drop schedule state for unloaded extensions (so a reload
+            // restarts both the schedule and the failure counter).
+            let live: std::collections::HashSet<&str> =
+                scheduled.iter().map(|(n, _, _)| n.as_str()).collect();
+            next_run.retain(|n, _| live.contains(n.as_str()));
+            failures.retain(|n, _| live.contains(n.as_str()));
+
+            let now = std::time::Instant::now();
+            for (name, interval_secs, ext) in scheduled {
+                let interval = std::time::Duration::from_secs(interval_secs);
+                let Some(&due) = next_run.get(&name) else {
+                    next_run.insert(name, now + interval);
+                    continue;
+                };
+                if now < due || failures.get(&name).copied().unwrap_or(0) >= MAX_REFRESH_FAILURES
+                {
+                    continue;
+                }
+                next_run.insert(name.clone(), now + interval);
+                match ext.refresh("scheduled") {
+                    Ok(()) => {
+                        failures.remove(&name);
+                        notify_cb();
+                    }
+                    Err(_) => {
+                        let n = failures.entry(name.clone()).or_insert(0);
+                        *n += 1;
+                        if *n >= MAX_REFRESH_FAILURES {
+                            eprintln!(
+                                "[ext:{name}] background refresh stopped after {n} consecutive failures (reload to retry)"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -130,6 +217,7 @@ pub struct PermissionsInfo {
     network: Vec<String>,
     kv: bool,
     clipboard: bool,
+    open_url: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -146,6 +234,8 @@ pub struct ExtensionInfo {
     error: Option<String>,
     /// True when the extension failed repeatedly and was benched this session.
     benched: bool,
+    /// Set when the manifest declares `[background]` — shown as a chip.
+    background_interval_secs: Option<u64>,
 }
 
 #[tauri::command]
@@ -177,10 +267,15 @@ pub fn list_extensions(
                     network: m.permissions.network.clone(),
                     kv: m.permissions.kv,
                     clipboard: m.permissions.clipboard,
+                    open_url: m.permissions.open_url,
                 }),
                 enabled,
                 loaded: provider.is_some(),
                 benched: provider.as_ref().is_some_and(|p| p.is_benched()),
+                background_interval_secs: d
+                    .manifest
+                    .as_ref()
+                    .and_then(|(m, _)| m.background.as_ref().map(|b| b.interval_secs())),
                 error,
             }
         })
@@ -253,8 +348,12 @@ pub fn rescan_extensions(
     let kv_store = kv_state.0.clone();
     let frecency = frecency.inner().clone();
     std::thread::spawn(move || {
-        sync(&registry, &enabled, &kv_store, &frecency, true);
         use tauri::Emitter;
+        let notify_app = app.clone();
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = notify_app.emit("search-invalidated", ());
+        });
+        sync(&registry, &enabled, &kv_store, &frecency, true, Some(notify));
         let _ = app.emit("search-invalidated", ());
     });
 }

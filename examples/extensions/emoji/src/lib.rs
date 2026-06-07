@@ -11,8 +11,12 @@ use portunus_ext_sdk::guest::extism_pdk;
 use portunus_ext_sdk::guest::{clipboard, plugin_fn, FnResult, Json};
 use portunus_ext_sdk::{
     ActivateInput, ActivateOutput, ExtensionResult, MetadataItem, PreviewContent, PreviewInput,
-    SearchInput, SearchOutput,
+    ResultIcon, SearchInput, SearchOutput,
 };
+
+/// Pre-encoded result icon (icon.png as base64) — guests embed the encoded
+/// form directly rather than pulling in a base64 dependency.
+const ICON_B64: &str = include_str!("../icon.b64");
 
 /// (emoji, name, keywords) — a tiny built-in set; a real extension would embed
 /// a full emoji database the same way.
@@ -57,6 +61,10 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
                 subtitle: Some(keywords.to_string()),
                 relevance,
                 actions: vec!["copy".to_string()],
+                icon: Some(ResultIcon {
+                    mime: "image/png".to_string(),
+                    data_base64: ICON_B64.trim().to_string(),
+                }),
             })
         })
         .collect();

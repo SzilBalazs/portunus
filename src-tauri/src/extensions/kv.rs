@@ -102,6 +102,40 @@ impl ExtensionKv {
         .map_err(|e| e.to_string())
     }
 
+    /// Keys matching a prefix in one extension's namespace, capped — feeds the
+    /// `kv_list` host function (cache enumeration/eviction).
+    pub fn list(&self, extension: &str, prefix: &str) -> Vec<String> {
+        const MAX_KEYS: usize = 10_000;
+        // Escape LIKE metacharacters in the prefix (same hazard as
+        // frecency::delete_prefix: '_' is a single-char wildcard).
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let conn = util::lock(&self.conn);
+        let mut keys = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT key FROM kv WHERE extension = ?1 AND key LIKE ?2 || '%' ESCAPE '\\'
+             ORDER BY key LIMIT ?3",
+        ) {
+            if let Ok(rows) = stmt.query_map(params![extension, escaped, MAX_KEYS as i64], |row| {
+                row.get::<_, String>(0)
+            }) {
+                keys.extend(rows.flatten());
+            }
+        }
+        keys
+    }
+
+    /// Deletes one key from an extension's namespace.
+    pub fn delete(&self, extension: &str, key: &str) {
+        let conn = util::lock(&self.conn);
+        let _ = conn.execute(
+            "DELETE FROM kv WHERE extension = ?1 AND key = ?2",
+            params![extension, key],
+        );
+    }
+
     /// Names of every extension with stored data — used to find orphans after
     /// an extension directory disappears.
     pub fn extension_names(&self) -> Vec<String> {

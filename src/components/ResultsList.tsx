@@ -61,7 +61,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
                 }
               }}
             >
-              <ResultIcon icon_path={result.icon_path} title={result.title} kind={result.kind} />
+              <ResultIcon icon_path={result.icon_path} iconDataUri={result.icon_data_uri} title={result.title} kind={result.kind} />
               <div className="result-text">
                 <div className="result-title">{result.title}</div>
                 {result.subtitle && <div className="result-subtitle">{shortenPath(result.subtitle)}</div>}

@@ -95,6 +95,10 @@ pub struct SearchResult {
     pub score: f32,
     pub exec: Option<String>,
     pub icon_path: Option<String>,
+    /// Pre-built `data:` URI for a validated extension-supplied icon. The
+    /// frontend renders it directly; never read `ext.icon` (unvalidated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_data_uri: Option<String>,
     pub file_size: Option<u64>,
     pub created: Option<u64>,
     pub modified: Option<u64>,
@@ -119,6 +123,7 @@ impl Default for SearchResult {
             score: 0.0,
             exec: None,
             icon_path: None,
+            icon_data_uri: None,
             file_size: None,
             created: None,
             modified: None,

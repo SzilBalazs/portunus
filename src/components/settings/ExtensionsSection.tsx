@@ -11,6 +11,12 @@ interface Props {
   onChange: (c: Config) => void;
 }
 
+function fmtInterval(secs: number): string {
+  if (secs % 3600 === 0) return `${secs / 3600}h`;
+  if (secs % 60 === 0) return `${secs / 60}m`;
+  return `${secs}s`;
+}
+
 /** Human summary of what an extension may touch — shown BEFORE first enable. */
 function PermissionChips({ info }: { info: ExtensionInfo }) {
   if (!info.permissions) return null;
@@ -19,7 +25,10 @@ function PermissionChips({ info }: { info: ExtensionInfo }) {
     chips.push(`network: ${info.permissions.network.join(", ")}`);
   if (info.permissions.kv) chips.push("storage");
   if (info.permissions.clipboard) chips.push("clipboard");
+  if (info.permissions.open_url) chips.push("open urls");
   if (chips.length === 0) chips.push("no permissions");
+  if (info.background_interval_secs != null)
+    chips.push(`background: every ${fmtInterval(info.background_interval_secs)}`);
   return (
     <div className="settings-field-desc">
       {chips.map(c => (

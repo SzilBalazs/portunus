@@ -35,6 +35,20 @@ pub struct ExtensionManifest {
     pub permissions: Permissions,
     #[serde(default)]
     pub limits: Limits,
+    /// Present = the host schedules the extension's `refresh` export.
+    pub background: Option<BackgroundConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackgroundConfig {
+    pub refresh_interval_secs: u64,
+}
+
+impl BackgroundConfig {
+    /// Interval clamped to host-enforced bounds (1 min – 1 day).
+    pub fn interval_secs(&self) -> u64 {
+        self.refresh_interval_secs.clamp(60, 86_400)
+    }
 }
 
 fn default_entry() -> String {
@@ -48,6 +62,8 @@ pub struct Permissions {
     pub network: Vec<String>,
     pub kv: bool,
     pub clipboard: bool,
+    /// May open http(s) URLs in the default browser.
+    pub open_url: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

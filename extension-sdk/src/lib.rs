@@ -31,7 +31,7 @@ pub struct SearchOutput {
 /// `id` is opaque to the host; it is namespaced to `ext:<name>:<id>` before
 /// entering the launcher, and the full result is passed back verbatim on
 /// activate/preview, so extensions never need to persist search state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtensionResult {
     pub id: String,
     pub title: String,
@@ -44,6 +44,19 @@ pub struct ExtensionResult {
     /// Optional action ids; the first is the default on Enter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
+    /// Optional small icon shown next to the result in the launcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<ResultIcon>,
+}
+
+/// Small inline icon for a search result. Same mime allowlist as image
+/// previews (png/jpeg/gif/webp); capped at 32 KB base64 by the host. An
+/// invalid icon is dropped (the result keeps the default glyph) — it never
+/// fails the search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultIcon {
+    pub mime: String,
+    pub data_base64: String,
 }
 
 /// Input to the extension's exported `activate` function.
@@ -66,6 +79,24 @@ pub struct ActivateOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewInput {
     pub result: ExtensionResult,
+}
+
+/// Input to the extension's optional exported `refresh` function.
+///
+/// Declared via `[background] refresh_interval_secs` in the manifest. The host
+/// calls `refresh` once when the extension loads and then on the interval —
+/// off the keystroke path, on a dedicated instance — so extensions can keep
+/// kv-cached HTTP data warm while `search` stays offline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefreshInput {
+    /// "load" (extension just loaded) or "scheduled" (interval tick).
+    pub reason: String,
+}
+
+/// Output of the extension's optional exported `refresh` function.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefreshOutput {
+    pub ok: bool,
 }
 
 /// Declarative preview content rendered by the host. Extensions never ship UI.
@@ -108,7 +139,12 @@ pub mod guest {
     extern "ExtismHost" {
         fn kv_get(key: String) -> Json<Option<String>>;
         fn kv_set(key: String, value: String);
+        fn kv_list(prefix: String) -> Json<Vec<String>>;
+        fn kv_delete(key: String);
         fn clipboard_write(text: String);
+        fn now_ms() -> u64;
+        fn open_url(url: String);
+        fn log_message(message: String);
     }
 
     /// Read a value from this extension's key-value store.
@@ -128,5 +164,36 @@ pub mod guest {
     /// Requires `clipboard = true` in the manifest permissions.
     pub fn clipboard(text: &str) -> Result<(), extism_pdk::Error> {
         unsafe { clipboard_write(text.to_string()) }
+    }
+
+    /// List keys in this extension's key-value store matching a prefix
+    /// (at most 10 000 returned). Requires `kv = true`.
+    pub fn kv_keys(prefix: &str) -> Result<Vec<String>, extism_pdk::Error> {
+        let Json(keys) = unsafe { kv_list(prefix.to_string())? };
+        Ok(keys)
+    }
+
+    /// Delete a key from this extension's key-value store. Requires `kv = true`.
+    pub fn kv_remove(key: &str) -> Result<(), extism_pdk::Error> {
+        unsafe { kv_delete(key.to_string()) }
+    }
+
+    /// Current wall-clock time in milliseconds since the Unix epoch.
+    /// (`std::time` does not work on wasm32-unknown-unknown — use this for
+    /// cache timestamps.) No permission required.
+    pub fn now() -> Result<u64, extism_pdk::Error> {
+        unsafe { now_ms() }
+    }
+
+    /// Open a http(s) URL in the user's default browser.
+    /// Requires `open_url = true` in the manifest permissions.
+    pub fn open(url: &str) -> Result<(), extism_pdk::Error> {
+        unsafe { open_url(url.to_string()) }
+    }
+
+    /// Write a debug line to the Portunus log (stderr), prefixed with the
+    /// extension name. Capped at 4 KB per message. No permission required.
+    pub fn debug(message: &str) -> Result<(), extism_pdk::Error> {
+        unsafe { log_message(message.to_string()) }
     }
 }

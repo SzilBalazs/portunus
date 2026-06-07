@@ -4,12 +4,26 @@ import { ClockIcon, PlusIcon, BookIcon } from "../icons";
 
 interface Props {
   icon_path?: string;
+  iconDataUri?: string;
   title: string;
   kind: string;
 }
 
-export default function ResultIcon({ icon_path, title, kind }: Props) {
+export default function ResultIcon({ icon_path, iconDataUri, title, kind }: Props) {
   const [failed, setFailed] = useState(false);
+
+  // Extension-supplied icon (host-validated data: URI); on error falls
+  // through to the kind glyph below.
+  if (iconDataUri && !failed) {
+    return (
+      <img
+        className="result-icon-img"
+        src={iconDataUri}
+        alt=""
+        onError={() => setFailed(true)}
+      />
+    );
+  }
 
   if (icon_path && !failed) {
     return (
