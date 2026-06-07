@@ -1,5 +1,6 @@
 import { Config } from "../../types";
 import ThemeGrid from "./ThemeGrid";
+import Toggle from "./Toggle";
 
 interface Props {
   config: Config;
@@ -10,7 +11,7 @@ export default function AppearanceSection({ config, onChange }: Props) {
   const set = (patch: Partial<Config["appearance"]>) =>
     onChange({ ...config, appearance: { ...config.appearance, ...patch } });
 
-  const { theme, font_size } = config.appearance;
+  const { theme, font_size, animate_results } = config.appearance;
 
   return (
     <div>
@@ -52,6 +53,20 @@ export default function AppearanceSection({ config, onChange }: Props) {
               onClick={() => set({ font_size: Math.min(18, font_size + 1) })}
             >+</button>
           </div>
+        </div>
+      </div>
+
+      <div className="settings-field">
+        <div className="settings-field-label">
+          <div className="settings-field-name">Result animations</div>
+          <div className="settings-field-desc">Slide-in animation when results appear</div>
+        </div>
+        <div className="settings-field-control">
+          <Toggle
+            label="Result animations"
+            checked={animate_results ?? true}
+            onChange={v => set({ animate_results: v })}
+          />
         </div>
       </div>
     </div>

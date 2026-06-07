@@ -262,11 +262,12 @@ impl Default for ContentConfig {
 pub struct AppearanceConfig {
     pub theme: String,
     pub font_size: u32,
+    pub animate_results: bool,
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
-        Self { theme: "warm-dark".to_string(), font_size: 13 }
+        Self { theme: "warm-dark".to_string(), font_size: 13, animate_results: true }
     }
 }
 

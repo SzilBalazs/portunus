@@ -433,6 +433,11 @@ html, body, #root {
   font-size: 13px;
 }
 
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
 .result-row {
   display: grid;
   grid-template-columns: 28px 1fr auto 16px;
@@ -441,7 +446,14 @@ html, body, #root {
   padding: 9px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  animation: row-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) calc(var(--row-i, 0) * 16ms) both;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .result-row { animation: none; }
+}
+
+:root[data-animate-results="false"] .result-row { animation: none; }
 
 .result-row:hover { background: var(--bg-row-hov); }
 .result-row.selected {

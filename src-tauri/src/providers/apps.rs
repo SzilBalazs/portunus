@@ -364,10 +364,10 @@ impl Provider for AppProvider {
                         .score(Utf32Str::new(desc, &mut char_buf), &mut matcher)
                         .map(|s| (s as f32 * 0.8) as u32)
                 });
-                let score = match (name_score, desc_score) {
-                    (Some(n), Some(d)) => n.max(d),
-                    (Some(n), None) => n,
-                    (None, Some(d)) => d,
+                let (score, base) = match (name_score, desc_score) {
+                    (Some(n), Some(d)) => (n.max(d), super::SCORE_APP),
+                    (Some(n), None) => (n, super::SCORE_APP),
+                    (None, Some(d)) => (d, super::SCORE_FILE),
                     (None, None) => return None,
                 };
                 Some((score, SearchResult {
@@ -375,7 +375,7 @@ impl Provider for AppProvider {
                     title: app.name.clone(),
                     subtitle: app.description.clone(),
                     kind: "app".to_string(),
-                    score: super::SCORE_APP + super::fuzzy_bonus(score),
+                    score: base + super::fuzzy_bonus(score),
                     exec: Some(app.exec.clone()),
                     icon_path: app.icon_path.clone(),
                     ..Default::default()

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, type CSSProperties } from "react";
 import { SearchResult } from "../types";
 import { groupLabel, formatBytes, shortenPath } from "../utils";
 import ResultIcon from "./ResultIcon";
@@ -51,6 +51,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
             <div
               ref={i === selectedIndex ? selectedRef : null}
               className={`result-row${i === selectedIndex ? " selected" : ""}`}
+              style={{ '--row-i': i } as CSSProperties}
               role="option"
               aria-selected={i === selectedIndex}
               onClick={() => {
