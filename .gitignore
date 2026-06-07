@@ -18,6 +18,8 @@ dist-ssr
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
+extension-sdk/target/
+examples/extensions/emoji/target/
 
 # Editor directories and files
 .vscode/*

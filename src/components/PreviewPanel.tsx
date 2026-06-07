@@ -1,5 +1,6 @@
 import { getPreview } from '../providers/registry';
 import type { SearchResult } from '../types';
+import ExtensionPreview from './ExtensionPreview';
 
 interface Props {
   result: SearchResult | null;
@@ -11,7 +12,9 @@ interface Props {
 }
 
 export default function PreviewPanel({ result, onLaunch, onStopTimer, onReveal, terms }: Props) {
-  const Preview = getPreview(result?.kind);
+  // Extension kinds are dynamic (`ext-<name>`), so they route by id prefix
+  // instead of the kind registry.
+  const Preview = result?.id.startsWith('ext:') ? ExtensionPreview : getPreview(result?.kind);
   if (!Preview || !result) return <div className="preview-empty" />;
   return <Preview key={result.kind} result={result} onLaunch={onLaunch} onStopTimer={onStopTimer} onReveal={onReveal} terms={terms} />;
 }

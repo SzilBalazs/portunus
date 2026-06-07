@@ -1,0 +1,56 @@
+[
+  {
+    "file": "src-tauri/src/extensions/manifest.rs",
+    "line": 48,
+    "summary": "Network permission entries are never validated — a wildcard '\"*\"' is accepted silently and grants unrestricted outbound HTTP via Extism",
+    "failure_scenario": "Extension manifest declares `network = [\"*\"]`. wasm.rs passes the array verbatim to `with_allowed_hosts()`, which in Extism accepts glob patterns. The extension can call any URL from inside the WASM sandbox. Combined with the clipboard permission it can exfiltrate clipboard contents to an arbitrary server. No warning appears in list_extensions or the Settings UI. Fix: reject entries that contain '*' or '?' in manifest::load."
+  },
+  {
+    "file": "src-tauri/src/providers/wasm.rs",
+    "line": 153,
+    "summary": "Oversized search output is counted as a failure and benches the extension after 3 occurrences, permanently disabling a healthy extension for the session",
+    "failure_scenario": "An extension returns detailed results for a one-character query totalling >2 MB (200 results × ~10 KB each is well within realistic JSON). call_with_budget calls record_failure(), which increments fail_count. The success path (fail_count reset to 0) is only reached when json.len() <= MAX_OUTPUT_BYTES. Three broad queries bench the extension until app restart. The author sees 'search returned N bytes (cap 2097152)' with no actionable guidance. Fix: return empty results without incrementing fail_count for the oversized case."
+  },
+  {
+    "file": "src-tauri/src/providers/wasm.rs",
+    "line": 156,
+    "summary": "`*guard = None` destroys the live wasm instance unnecessarily on oversized output — only trap/error paths warrant a rebuild",
+    "failure_scenario": "plugin.call() returned Ok (the wasm module ran cleanly), but guard is set to None, forcing a full module re-instantiation (compilation + host-fn wiring) on the next call. The only documented rationale for nulling the instance is post-trap state being untrustworthy (comment at file top). For oversized output the module state is fine. Every oversized query wastes expensive instantiation on the next call. Fix: remove *guard = None from the Ok branch; keep it only in the Err branch."
+  },
+  {
+    "file": "src-tauri/src/frecency.rs",
+    "line": 122,
+    "summary": "SQLite LIKE pattern built from extension name treats `_` as a single-character wildcard, deleting frecency rows of neighboring extensions on uninstall",
+    "failure_scenario": "Extensions `my_ext` and `my-ext` are both installed and used. User uninstalls `my_ext`. delete_prefix runs: `DELETE FROM frecency WHERE id LIKE 'ext:my_ext:%'`. SQLite LIKE treats `_` as 'any one character', so the pattern also matches `ext:my-ext:*`. All frecency history for `my-ext` is silently deleted. Fix: escape `_` and `%` in the prefix before binding, e.g. `REPLACE(REPLACE(?1, '_', '\\_'), '%', '\\%') || '%' ESCAPE '\\'`."
+  },
+  {
+    "file": "src-tauri/src/providers/wasm.rs",
+    "line": 233,
+    "summary": "Image preview MIME type from extension output is not validated; arbitrary mime types are passed to the renderer, exposing WebKitGTK image codec attack surface",
+    "failure_scenario": "Extension returns `{type:'image', mime:'image/x-jxl', data_base64:'...'}` with malformed codec bytes. wasm.rs only checks data_base64 length, not the mime field. The renderer displays `<img src='data:image/x-jxl;base64,...'>`, invoking an obscure WebKitGTK decoder. If that decoder has a memory-safety bug, a malicious extension triggers it without any wasm sandbox escape. SVG-script XSS via img is blocked by HTML spec, but codec attacks are not. Fix: allowlist mime to ['image/png','image/jpeg','image/gif','image/webp'] in wasm.rs before the size check."
+  },
+  {
+    "file": "src-tauri/src/providers/wasm.rs",
+    "line": 122,
+    "summary": "Instance Mutex held across the entire wasm call; concurrent activate() call from the UI thread blocks for up to search_timeout_ms",
+    "failure_scenario": "User types a query hitting a slow extension (budget up to 500ms with clamped manifest). Simultaneously, they press Enter to activate a result from that same extension. The Tauri command handler calls extension_activate → call_with_budget, which tries to lock &self.instance. It blocks until the search thread finishes (up to 500ms). The window cannot hide, the result is not launched, and the UI appears frozen. At the default 150ms budget this is a minor stutter; at 500ms it is visibly broken. Fix: add a separate instance per call context (search vs activate) or use try_lock with a fallback."
+  },
+  {
+    "file": "src-tauri/src/extensions/manifest.rs",
+    "line": 31,
+    "summary": "Custom `kinds` values are not validated; an extension declaring `kinds: [\"app\"]` produces results that appear under the APPS group with a letter-avatar instead of the puzzle-piece icon",
+    "failure_scenario": "Extension declares `kinds: ['app']` in manifest.toml. WasmProvider.kind is set to 'app'. utils.ts groupLabel checks `kind.startsWith('ext-')` — false, so results group under APPS. ResultIcon.tsx checks the same prefix — false, falls through to the letter-avatar. The extension is indistinguishable from a native app result. If the extension is malicious it can visually impersonate an app. Fix: in manifest::load, validate that every entry in kinds starts with 'ext-', or derive kind exclusively from the name on the host side and ignore manifest.kinds."
+  },
+  {
+    "file": "src-tauri/src/extensions/mod.rs",
+    "line": 81,
+    "summary": "Orphan cleanup is driven by KV table presence; extensions that never wrote KV data are never detected as orphans, leaving their frecency rows in the DB after uninstall",
+    "failure_scenario": "Extension 'weather' (no KV use) is installed for a month and builds up frecency history. User deletes the directory. sync() runs: kv_store.extension_names() returns no entry for 'weather' (it never wrote KV). The orphan loop never fires. frecency rows for 'ext:weather:*' accumulate indefinitely. If a new extension is later installed with the same name, it starts with borrowed frecency scores it didn't earn. Fix: maintain an extension registry table in the KV DB, or derive the orphan list from the frecency table directly."
+  },
+  {
+    "file": "src-tauri/src/providers/mod.rs",
+    "line": 230,
+    "summary": "Every search spawns one OS thread per extension plus one watchdog thread per wasm call; under sustained typing with many slow extensions, live thread count grows proportionally",
+    "failure_scenario": "10 extensions all declare search_timeout_ms=500 (clamped max). User types at 10 keystrokes/sec. Each search spawns 10 extension threads (mod.rs) + 10 watchdog threads (wasm.rs:143) = 20 threads, each living up to 550ms. Steady state: ~110 live threads. A malicious extension that always times out maximises this; combined with the watchdog threads per call, thread exhaustion can cause new spawns to silently fail and drop all extension results for that keystroke. Fix: use a bounded thread pool (e.g. rayon or a dedicated tokio task per extension slot) and reuse instances."
+  }
+]

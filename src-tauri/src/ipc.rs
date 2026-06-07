@@ -19,6 +19,7 @@ pub fn start_socket_listener(
     app: tauri::AppHandle,
     reindex_fn: Option<Arc<dyn Fn() + Send + Sync>>,
     reload_fn: Arc<dyn Fn() + Send + Sync>,
+    reload_extensions_fn: Arc<dyn Fn() + Send + Sync>,
 ) {
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
@@ -34,6 +35,7 @@ pub fn start_socket_listener(
             let app = app.clone();
             let reindex_fn = reindex_fn.clone();
             let reload_fn = Arc::clone(&reload_fn);
+            let reload_extensions_fn = Arc::clone(&reload_extensions_fn);
             std::thread::spawn(move || {
                 use std::io::BufRead;
                 // Prevent a stalled client from blocking this handler forever.
@@ -67,6 +69,8 @@ pub fn start_socket_listener(
                     }
                 } else if cmd == "reload-config" {
                     std::thread::spawn(move || reload_fn());
+                } else if cmd == "reload-extensions" {
+                    std::thread::spawn(move || reload_extensions_fn());
                 }
             });
         }

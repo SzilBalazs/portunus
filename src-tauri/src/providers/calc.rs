@@ -7,7 +7,7 @@ use super::{Provider, SearchResult};
 pub struct CalcProvider;
 
 impl Provider for CalcProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "calc"
     }
 

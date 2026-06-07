@@ -1399,3 +1399,44 @@ mark.preview-hl {
   from { opacity: 0; transform: translateX(-50%) translateY(6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ---------- extension preview ---------- */
+
+.ext-preview {
+  padding: 16px 18px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.ext-preview h1, .ext-preview h2, .ext-preview h3 {
+  margin: 0.4em 0 0.3em;
+  font-size: 1.1em;
+}
+
+.ext-preview p { margin: 0.3em 0; }
+
+.ext-preview code {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.ext-preview-metadata { border-collapse: collapse; width: 100%; }
+
+.ext-preview-metadata td { padding: 4px 8px 4px 0; vertical-align: top; }
+
+/* width:1% + nowrap = shrink the label column to its content. */
+.ext-preview-metadata td.ext-preview-label {
+  color: var(--fg-mute);
+  white-space: nowrap;
+  width: 1%;
+  padding-right: 18px;
+}
+
+.ext-preview-image { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.ext-preview-row { padding: 5px 0; }

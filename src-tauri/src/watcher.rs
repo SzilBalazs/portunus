@@ -86,6 +86,8 @@ pub fn start_config_watcher(
     notify_cb: Arc<dyn Fn() + Send + Sync>,
     file_entries: SharedFileEntries,
     file_watcher_tx: FileWatcherTx,
+    ext_kv: Arc<crate::extensions::kv::ExtensionKv>,
+    frecency: crate::FrecencyState,
 ) {
     use notify_debouncer_full::notify::Watcher as _;
 
@@ -173,6 +175,8 @@ pub fn start_config_watcher(
                 &notify_cb,
                 &file_entries,
                 &file_watcher_tx,
+                &ext_kv,
+                &frecency,
             );
             *last = new_cfg;
         }

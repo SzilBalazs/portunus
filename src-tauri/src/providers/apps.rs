@@ -335,7 +335,7 @@ fn parse_desktop(path: &std::path::Path, current_desktop: &str) -> Option<Parsed
 // ── Provider impl ─────────────────────────────────────────────────────────────
 
 impl Provider for AppProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "apps"
     }
 

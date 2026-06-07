@@ -20,6 +20,7 @@ pub struct Config {
     pub content: ContentConfig,
     pub appearance: AppearanceConfig,
     pub dict: DictConfig,
+    pub extensions: ExtensionsConfig,
 }
 
 impl Default for Config {
@@ -35,8 +36,18 @@ impl Default for Config {
             content: ContentConfig::default(),
             appearance: AppearanceConfig::default(),
             dict: DictConfig::default(),
+            extensions: ExtensionsConfig::default(),
         }
     }
+}
+
+/// WASM extension enablement. A discovered extension absent from the map is
+/// DISABLED — dropping a folder into the extensions dir must never run code
+/// until the user reviews its permissions and enables it in Settings.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ExtensionsConfig {
+    pub enabled: std::collections::HashMap<String, bool>,
 }
 
 // ── sections ──────────────────────────────────────────────────────────────────

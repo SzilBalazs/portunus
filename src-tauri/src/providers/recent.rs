@@ -32,7 +32,7 @@ impl RecentProvider {
 }
 
 impl Provider for RecentProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "recent"
     }
 

@@ -91,3 +91,10 @@ depth = 3
 # path       = "~/Projects"
 # depth      = 4
 # extensions = ["rs", "toml", "md"]   # code only, no PDFs or images
+
+# ── WASM extensions ───────────────────────────────────────────────────────────
+# Third-party extensions live in ~/.local/share/portunus/extensions/<name>/.
+# A newly installed extension is DISABLED until enabled here or in Settings →
+# Extensions (review its permissions first).
+# [extensions.enabled]
+# emoji = true

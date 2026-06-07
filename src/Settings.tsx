@@ -13,11 +13,12 @@ import FrecencySection from "./components/settings/FrecencySection";
 import ContentSection from "./components/settings/ContentSection";
 import DebugSection from "./components/settings/DebugSection";
 import AppearanceSection from "./components/settings/AppearanceSection";
+import ExtensionsSection from "./components/settings/ExtensionsSection";
 import { applyTheme } from "./theme";
 import "./settings.css";
 import "./themes.css";
 
-type Section = "general" | "providers" | "dict" | "files" | "search" | "frecency" | "content" | "debug" | "appearance";
+type Section = "general" | "providers" | "extensions" | "dict" | "files" | "search" | "frecency" | "content" | "debug" | "appearance";
 
 interface NavItem {
   id: Section;
@@ -42,6 +43,15 @@ const NAV: NavItem[] = [
     icon: (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    ),
+  },
+  {
+    id: "extensions",
+    label: "Extensions",
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/>
       </svg>
     ),
   },
@@ -436,6 +446,7 @@ export default function Settings() {
               <>
                 {activeSection === "general"   && <GeneralSection   config={config} onChange={setConfig} />}
                 {activeSection === "providers" && <ProvidersSection config={config} onChange={setConfig} />}
+                {activeSection === "extensions" && <ExtensionsSection config={config} onChange={setConfig} />}
                 {activeSection === "dict"      && <DictSection      config={config} onChange={setConfig} />}
                 {activeSection === "files"     && <FilesSection     config={config} onChange={setConfig} />}
                 {activeSection === "search"    && <SearchSection    config={config} onChange={setConfig} />}

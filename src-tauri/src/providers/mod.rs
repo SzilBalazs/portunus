@@ -6,9 +6,11 @@ pub mod dict;
 pub mod files;
 pub mod recent;
 pub mod timer;
+pub mod wasm;
 
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -24,6 +26,14 @@ pub const SCORE_DICT: f32 = 3_000_000.0;
 /// only matter when little else matched.
 pub const SCORE_DICT_FILL: f32 = 500_000.0;
 pub const SCORE_APP: f32 = 2_000_000.0;
+/// Base for extension results — between apps (2M) and calc/dict (3M).
+pub const SCORE_EXTENSION: f32 = 2_500_000.0;
+/// Width of the band extension relevance (0–100) maps into, on top of
+/// `SCORE_EXTENSION`. Host-private: authors only ever see the 0–100 scale.
+/// Sized so frecency can compete: one launch ≈ weight (5k) ≈ 20 relevance
+/// points — a couple of launches reorder typical relevance gaps, while
+/// relevance still rules untouched results. At 100k frecency was invisible.
+pub const EXTENSION_BAND: f32 = 25_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
 /// Subtracted from file/content/folder results whose path contains a hidden
@@ -92,6 +102,10 @@ pub struct SearchResult {
     /// the content provider for PDF results; drives which page the preview opens on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_page: Option<u32>,
+    /// Original extension DTO for `ext:` results. The frontend passes it back
+    /// verbatim on activate/preview so extensions stay stateless.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ext: Option<portunus_ext_sdk::ExtensionResult>,
 }
 
 impl Default for SearchResult {
@@ -109,6 +123,7 @@ impl Default for SearchResult {
             created: None,
             modified: None,
             match_page: None,
+            ext: None,
         }
     }
 }
@@ -125,12 +140,16 @@ pub fn fuzzy_setup(query: &str) -> (nucleo_matcher::pattern::Pattern, nucleo_mat
 
 pub trait Provider: Send + Sync {
     #[allow(dead_code)]
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
     fn search(&self, query: &str) -> Vec<SearchResult>;
 }
 
 pub struct PluginRegistry {
     providers: Vec<Box<dyn Provider>>,
+    /// WASM extensions, keyed by extension name. Kept out of `providers` so
+    /// search can fan them out in parallel instead of paying each one's
+    /// timeout sequentially per keystroke.
+    extensions: HashMap<String, Arc<wasm::WasmProvider>>,
     max_results: usize,
     frecency: Option<Arc<FrecencyStore>>,
     frecency_weight: f32,
@@ -143,11 +162,34 @@ impl PluginRegistry {
     pub fn new(max_results: usize) -> Self {
         Self {
             providers: Vec::new(),
+            extensions: HashMap::new(),
             max_results,
             frecency: None,
             frecency_weight: 0.0,
             dict_fill: None,
         }
+    }
+
+    /// Adds, replaces, or (with None) removes an extension. The single
+    /// mutation path for extension state — build instances before taking the
+    /// write lock, this only swaps pointers.
+    pub fn set_extension(&mut self, name: &str, provider: Option<Arc<wasm::WasmProvider>>) {
+        match provider {
+            Some(p) => {
+                self.extensions.insert(name.to_string(), p);
+            }
+            None => {
+                self.extensions.remove(name);
+            }
+        }
+    }
+
+    pub fn extension(&self, name: &str) -> Option<Arc<wasm::WasmProvider>> {
+        self.extensions.get(name).cloned()
+    }
+
+    pub fn extension_names(&self) -> Vec<String> {
+        self.extensions.keys().cloned().collect()
     }
 
     /// Configure dict sparse-fill gating: `(fill_threshold, fill_max)`, or None
@@ -163,7 +205,7 @@ impl PluginRegistry {
     /// Replace a provider by id, or remove it if `new` is None.
     /// Acquires the write lock only for the retain+push (microseconds),
     /// so index building should happen before calling this.
-    pub fn replace(&mut self, id: &'static str, new: Option<Box<dyn Provider>>) {
+    pub fn replace(&mut self, id: &str, new: Option<Box<dyn Provider>>) {
         self.providers.retain(|p| p.id() != id);
         if let Some(p) = new {
             self.providers.push(p);
@@ -181,11 +223,50 @@ impl PluginRegistry {
     }
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
+        // Fan extensions out first so their wall-clock overlaps the built-ins.
+        // Threads are detached: a hung extension is abandoned at the deadline
+        // (its own watchdog cancels it; repeated failures bench it), so the
+        // keystroke path is bounded by one budget regardless of extension count.
+        let pending = if self.extensions.is_empty() || query.is_empty() {
+            None
+        } else {
+            let (tx, rx) = mpsc::channel();
+            let mut budget_ms = 0;
+            let mut spawned = 0;
+            for ext in self.extensions.values() {
+                // Benched extensions would fail instantly anyway — don't pay
+                // a thread spawn per keystroke for them.
+                if ext.is_benched() {
+                    continue;
+                }
+                budget_ms = budget_ms.max(ext.search_budget_ms());
+                let ext = ext.clone();
+                let tx = tx.clone();
+                let q = query.to_string();
+                std::thread::spawn(move || {
+                    let _ = tx.send(ext.search(&q));
+                });
+                spawned += 1;
+            }
+            (spawned > 0).then_some((rx, spawned, budget_ms + 50))
+        };
+
         let mut results: Vec<SearchResult> = self
             .providers
             .iter()
             .flat_map(|p| p.search(query))
             .collect();
+
+        if let Some((rx, count, budget_ms)) = pending {
+            let deadline = Instant::now() + Duration::from_millis(budget_ms);
+            for _ in 0..count {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                match rx.recv_timeout(remaining) {
+                    Ok(batch) => results.extend(batch),
+                    Err(_) => break,
+                }
+            }
+        }
 
         // Dict sparse-fill gating: for a plain query, dict rows are fill
         // candidates — keep them only when other results are sparse, capped at

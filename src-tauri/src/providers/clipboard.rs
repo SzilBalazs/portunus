@@ -88,7 +88,7 @@ impl ClipboardProvider {
 }
 
 impl Provider for ClipboardProvider {
-    fn id(&self) -> &'static str { "clipboard" }
+    fn id(&self) -> &str { "clipboard" }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
         let q = query.trim().to_lowercase();

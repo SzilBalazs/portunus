@@ -1,0 +1,12 @@
+api = 1
+name = "emoji"
+version = "0.1.0"
+description = "Search emoji by name and copy them to the clipboard"
+author = "Portunus examples"
+kinds = ["ext-emoji"]
+
+[permissions]
+clipboard = true
+
+[limits]
+search_timeout_ms = 100

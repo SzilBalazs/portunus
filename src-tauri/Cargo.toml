@@ -36,3 +36,5 @@ rayon = "1"
 leptess = { version = "0.14", optional = true }
 notify-debouncer-full = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+extism = "1.30.0"
+portunus-ext-sdk = { path = "../extension-sdk", default-features = false }

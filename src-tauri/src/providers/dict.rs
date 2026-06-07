@@ -268,7 +268,7 @@ impl DictProvider {
 }
 
 impl Provider for DictProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "dict"
     }
 

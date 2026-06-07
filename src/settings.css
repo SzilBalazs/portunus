@@ -813,7 +813,7 @@ a:focus-visible,
   border-radius: 5px;
   font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   cursor: pointer;
-  transition: filter 0.1s, background 0.1s;
+  transition: background 0.1s;
 }
 
 .settings-reindex-revert {
@@ -833,7 +833,9 @@ a:focus-visible,
   color: var(--text-on-accent);
 }
 
-.settings-reindex-apply:hover { filter: brightness(1.08); }
+/* Hover via background, not filter: a filter transition spawns a compositing
+   layer per hover, which flickers in WebKitGTK on transparent windows. */
+.settings-reindex-apply:hover { background: color-mix(in srgb, var(--accent) 90%, white); }
 
 .settings-reindex-strip--progress {
   flex-direction: column;

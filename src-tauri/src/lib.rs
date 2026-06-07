@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod content_index;
+mod extensions;
 mod frecency;
 mod ipc;
 mod office;
@@ -472,6 +473,15 @@ pub fn run() {
             None
         }));
 
+    // Extension KV store: opened once, shared by host functions, sync, and
+    // the Tauri commands.
+    let ext_kv: Arc<extensions::kv::ExtensionKv> =
+        Arc::new(extensions::kv::ExtensionKv::open().unwrap_or_else(|e| {
+            eprintln!("[extensions] failed to open kv store ({e}) — falling back to in-memory");
+            extensions::kv::ExtensionKv::open_in_memory()
+        }));
+    let extensions_enabled = cfg.extensions.enabled.clone();
+
     let registry: Registry = Arc::new(RwLock::new(providers::PluginRegistry::new(max_results)));
     if dict_cfg.enabled {
         registry
@@ -502,9 +512,10 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(registry)
-        .manage(frecency_state)
+        .manage(frecency_state.clone())
         .manage(config_state)
         .manage(Arc::clone(&content_state))
+        .manage(extensions::ExtensionKvState(Arc::clone(&ext_kv)))
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
@@ -572,6 +583,8 @@ pub fn run() {
             let reload_notify = Arc::clone(&notify_cb);
             let reload_file_entries = Arc::clone(&file_entries);
             let reload_file_watcher_tx = Arc::clone(&file_watcher_tx);
+            let reload_ext_kv = Arc::clone(&ext_kv);
+            let reload_frecency = frecency_state.clone();
             let reload_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                 let new_cfg = config::Config::load();
                 let mut last = reload_last.lock().unwrap();
@@ -586,11 +599,37 @@ pub fn run() {
                     &reload_notify,
                     &reload_file_entries,
                     &reload_file_watcher_tx,
+                    &reload_ext_kv,
+                    &reload_frecency,
                 );
                 *last = new_cfg;
             });
 
-            ipc::start_socket_listener(app.handle().clone(), reindex_fn, Arc::clone(&reload_fn));
+            // --reload-extensions: force-rebuild every loaded extension so a
+            // recompiled wasm is picked up — the extension author's hot-reload loop.
+            let ext_reload_registry = Arc::clone(&bg_registry);
+            let ext_reload_kv = Arc::clone(&ext_kv);
+            let ext_reload_frecency = frecency_state.clone();
+            let ext_reload_notify = Arc::clone(&notify_cb);
+            let reload_extensions_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                let enabled = config::Config::load().extensions.enabled;
+                extensions::sync(
+                    &ext_reload_registry,
+                    &enabled,
+                    &ext_reload_kv,
+                    &ext_reload_frecency,
+                    true,
+                );
+                eprintln!("[extensions] reloaded");
+                ext_reload_notify();
+            });
+
+            ipc::start_socket_listener(
+                app.handle().clone(),
+                reindex_fn,
+                Arc::clone(&reload_fn),
+                Arc::clone(&reload_extensions_fn),
+            );
 
             // Start watchers before start_config_watcher so that file_watcher_tx /
             // content_watcher_tx are populated before any config-change event can fire.
@@ -626,6 +665,8 @@ pub fn run() {
                 Arc::clone(&notify_cb),
                 Arc::clone(&file_entries),
                 Arc::clone(&file_watcher_tx),
+                Arc::clone(&ext_kv),
+                frecency_state.clone(),
             );
 
             preview::setup(app.handle(), Arc::clone(&shared_config));
@@ -648,6 +689,8 @@ pub fn run() {
             let startup_ci = Arc::clone(&content_state);
             let startup_cb = Arc::clone(&progress_cb);
             let startup_file_entries = Arc::clone(&file_entries);
+            let startup_ext_kv = Arc::clone(&ext_kv);
+            let startup_frecency = frecency_state.clone();
             std::thread::spawn(move || {
                 // Built here, not in the setup closure: DictProvider::new() now
                 // builds an embedded word index (BK-tree), too heavy for the
@@ -698,6 +741,16 @@ pub fn run() {
 
                 APPS_READY.store(true, Ordering::Release);
                 let _ = handle.emit("apps-ready", ());
+
+                // Extensions load after apps-ready: wasm compilation must never
+                // delay the launcher becoming usable.
+                extensions::sync(
+                    &bg_registry,
+                    &extensions_enabled,
+                    &startup_ext_kv,
+                    &startup_frecency,
+                    false,
+                );
             });
             Ok(())
         })
@@ -732,6 +785,11 @@ pub fn run() {
             providers::clipboard::decode_clipboard_entry,
             // Dict provider
             providers::dict::get_dict_definitions,
+            // Extensions
+            extensions::list_extensions,
+            extensions::extension_activate,
+            extensions::extension_preview,
+            extensions::rescan_extensions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

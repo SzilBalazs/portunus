@@ -15,7 +15,7 @@ impl ContentProvider {
 }
 
 impl Provider for ContentProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "content"
     }
 

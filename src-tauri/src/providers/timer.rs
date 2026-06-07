@@ -195,7 +195,7 @@ fn hint_result() -> SearchResult {
 }
 
 impl Provider for TimerProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "timer"
     }
 

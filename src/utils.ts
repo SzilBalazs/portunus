@@ -9,6 +9,7 @@ export function groupLabel(kind: string): string | null {
   if (kind === "file" || kind === "folder") return "FILES";
   if (kind === "timer-item" || kind === "timer-create" || kind === "timer-new" || kind === "timer-expired" || kind === "timer-hint") return "TIMERS";
   if (kind === "clipboard" || kind === "clipboard-image") return "CLIPBOARD";
+  if (kind.startsWith("ext-")) return "EXTENSIONS";
   return null;
 }
 

@@ -169,7 +169,7 @@ impl FileProvider {
 }
 
 impl Provider for FileProvider {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "files"
     }
 

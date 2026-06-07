@@ -20,6 +20,7 @@ FLAGS:
   --clipboard         Show the launcher pre-filled with \"clipboard\"
   --reindex           Rebuild the content search index
   --reload-config     Reload config from file without restarting
+  --reload-extensions Re-discover and reload WASM extensions (picks up rebuilt wasm)
   --version, -V       Print version and exit
   --help, -h          Show this help message", env!("CARGO_PKG_VERSION"));
         return true;
@@ -41,6 +42,13 @@ FLAGS:
     }
     if std::env::args().any(|a| a == "--reload-config") {
         if !ipc::try_signal_running("reload-config") {
+            eprintln!("portunus: no running instance found");
+            std::process::exit(1);
+        }
+        return true;
+    }
+    if std::env::args().any(|a| a == "--reload-extensions") {
+        if !ipc::try_signal_running("reload-extensions") {
             eprintln!("portunus: no running instance found");
             std::process::exit(1);
         }

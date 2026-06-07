@@ -72,6 +72,39 @@ export interface Config {
     theme: string;
     font_size: number;
   };
+  extensions: {
+    /** Per-extension enable map keyed by name. Absent = disabled. */
+    enabled: Record<string, boolean>;
+  };
+}
+
+/** Wire DTO an extension returned for a result; round-tripped on activate/preview. */
+export interface ExtensionResult {
+  id: string;
+  title: string;
+  subtitle?: string;
+  relevance: number;
+  actions?: string[];
+}
+
+/** Declarative preview content returned by an extension's `preview` export. */
+export type PreviewContent =
+  | { type: "markdown"; content: string }
+  | { type: "metadata"; items: { label: string; value: string }[] }
+  | { type: "image"; mime: string; data_base64: string }
+  | { type: "list"; items: { title: string; subtitle?: string }[] };
+
+/** One installed extension, as reported by the `list_extensions` command. */
+export interface ExtensionInfo {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  permissions: { network: string[]; kv: boolean; clipboard: boolean } | null;
+  enabled: boolean;
+  loaded: boolean;
+  error: string | null;
+  benched: boolean;
 }
 
 export interface SearchResult {
@@ -88,6 +121,8 @@ export interface SearchResult {
   modified?: number;
   /** 0-based PDF page where the content query mainly matched (content provider only). */
   match_page?: number;
+  /** Original extension DTO for `ext:` results; passed back on activate/preview. */
+  ext?: ExtensionResult;
 }
 
 export interface ExpiredTimer {

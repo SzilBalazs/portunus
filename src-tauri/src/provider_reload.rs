@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::{config, content_index, providers, ContentWatcherTx, FileWatcherTx, Registry, SharedFileEntries};
+use crate::extensions::kv::ExtensionKv;
+use crate::{
+    config, content_index, providers, ContentWatcherTx, FileWatcherTx, FrecencyState, Registry,
+    SharedFileEntries,
+};
 
 /// Spawn a thread that calls `build()` to produce an optional provider, replaces
 /// it in the registry under `id`, logs `name`, then fires `notify_cb`.
@@ -35,6 +39,8 @@ pub fn rebuild_providers(
     notify_cb: &Arc<dyn Fn() + Send + Sync>,
     file_entries: &SharedFileEntries,
     file_watcher_tx: &FileWatcherTx,
+    ext_kv: &Arc<ExtensionKv>,
+    frecency: &FrecencyState,
 ) {
     // Update per-search scalars instantly (no rebuild needed).
     shared.write().unwrap().update_from(new_cfg);
@@ -153,6 +159,21 @@ pub fn rebuild_providers(
             eprintln!("[config] dict provider disabled");
         }
         notify_cb();
+    }
+
+    if new_cfg.extensions != old_cfg.extensions {
+        let enabled = new_cfg.extensions.enabled.clone();
+        let reg2 = Arc::clone(registry);
+        let ncb = Arc::clone(notify_cb);
+        let kv = Arc::clone(ext_kv);
+        let frec = frecency.clone();
+        // Wasm compilation is slow — sync builds instances off-thread and only
+        // takes the registry write lock for pointer swaps.
+        std::thread::spawn(move || {
+            crate::extensions::sync(&reg2, &enabled, &kv, &frec, false);
+            eprintln!("[config] extensions reloaded");
+            ncb();
+        });
     }
 
     if new_cfg.content != old_cfg.content {

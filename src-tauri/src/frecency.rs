@@ -64,7 +64,7 @@ impl FrecencyStore {
     }
 
     pub fn record_launch(&self, id: &str, kind: &str) {
-        if !matches!(kind, "app" | "file" | "folder") {
+        if !matches!(kind, "app" | "file" | "folder" | "extension") {
             return;
         }
         // Normalize recent:<path> → file:<path> so both providers share one frecency score.
@@ -112,5 +112,41 @@ impl FrecencyStore {
 
     pub fn all_scores(&self) -> HashMap<String, f32> {
         util::read(&self.cache).clone()
+    }
+
+    /// Removes every record whose id starts with `prefix` — used when an
+    /// extension is uninstalled (`ext:<name>:`), so its history doesn't
+    /// outlive it.
+    pub fn delete_prefix(&self, prefix: &str) {
+        // Escape LIKE metacharacters: extension names may contain '_', which
+        // LIKE would treat as a single-char wildcard and match neighbors
+        // (deleting `ext:my_ext:%` must not hit `ext:my-ext:...`).
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let conn = util::lock(&self.conn);
+        let _ = conn.execute(
+            "DELETE FROM frecency WHERE id LIKE ?1 || '%' ESCAPE '\\'",
+            params![escaped],
+        );
+        drop(conn);
+        util::write(&self.cache).retain(|k, _| !k.starts_with(prefix));
+    }
+
+    /// Extension names that have frecency history (`ext:<name>:...` ids).
+    /// Part of the uninstall-orphan census: an extension that never wrote kv
+    /// data is otherwise invisible after its directory is deleted.
+    pub fn extension_names(&self) -> Vec<String> {
+        let cache = util::read(&self.cache);
+        let mut names: Vec<String> = cache
+            .keys()
+            .filter_map(|id| id.strip_prefix("ext:"))
+            .filter_map(|rest| rest.split(':').next())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 }

@@ -86,6 +86,17 @@ export default function ResultIcon({ icon_path, title, kind }: Props) {
     );
   }
 
+  // WASM extension results: generic puzzle-piece glyph.
+  if (kind.startsWith("ext-")) {
+    return (
+      <div className="result-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16">
+          <path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z" />
+        </svg>
+      </div>
+    );
+  }
+
   if (kind === "file") {
     return (
       <div className="result-icon">
