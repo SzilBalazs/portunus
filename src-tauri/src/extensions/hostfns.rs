@@ -1,7 +1,7 @@
 //! Host functions exposed to extensions.
 //!
 //! Every function checks the extension's manifest-declared permissions at call
-//! time — an extension always gets the symbols, but calls without the matching
+//! time - an extension always gets the symbols, but calls without the matching
 //! permission grant return errors. Bodies must never panic: a panic unwinding
 //! across the wasmtime FFI boundary is undefined behavior, so everything here
 //! is Result-based and locks recover from poisoning.
@@ -72,7 +72,7 @@ host_fn!(kv_delete(ctx: ExtensionCtx; key: String) {
     Ok(())
 });
 
-// Wall clock for cache staleness — std::time doesn't work on
+// Wall clock for cache staleness - std::time doesn't work on
 // wasm32-unknown-unknown. Not sensitive, so no permission gate.
 host_fn!(now_ms(_ctx: ExtensionCtx;) -> u64 {
     Ok(std::time::SystemTime::now()

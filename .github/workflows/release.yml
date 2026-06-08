@@ -1,0 +1,95 @@
+name: Release
+
+# Builds a self-contained AppImage and attaches it to a GitHub Release.
+# Triggered by pushing a version tag (e.g. `git tag v0.1.0 && git push --tags`),
+# or run manually from the Actions tab. The AppImage bundles libpdfium, the
+# poppler tools, and the English tesseract data so PDF preview, content search,
+# and OCR work with nothing installed on the user's machine.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    # 22.04 ships WebKitGTK 4.1 and an older glibc, which keeps the AppImage
+    # runnable on a wide range of distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libtesseract-dev libleptonica-dev \
+            libssl-dev \
+            poppler-utils \
+            libfuse2 \
+            file desktop-file-utils
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Fetch bundled runtime assets
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/resources/bin src-tauri/resources/lib src-tauri/resources/tessdata
+
+          # libpdfium: latest prebuilt from bblanchon/pdfium-binaries.
+          PDFIUM_TAG=$(curl -fsSL https://api.github.com/repos/bblanchon/pdfium-binaries/releases/latest \
+            | grep -oP '"tag_name":\s*"\K[^"]+')
+          echo "Using pdfium tag: $PDFIUM_TAG"
+          curl -fsSL -o /tmp/pdfium.tgz \
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_TAG//\//%2F}/pdfium-linux-x64.tgz"
+          mkdir -p /tmp/pdfium && tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+          cp /tmp/pdfium/lib/libpdfium.so src-tauri/resources/libpdfium.so
+
+          # English OCR data (fast model: smaller, plenty accurate for search).
+          curl -fsSL -o src-tauri/resources/tessdata/eng.traineddata \
+            "https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata"
+
+          # poppler tools, plus the shared libraries they link against (so the
+          # bundled binaries run without poppler installed on the host). Core
+          # glibc libraries are skipped; linuxdeploy provides those.
+          cp "$(command -v pdftotext)" src-tauri/resources/bin/
+          cp "$(command -v pdftoppm)" src-tauri/resources/bin/
+          for b in pdftotext pdftoppm; do
+            ldd "$(command -v "$b")" | awk '/=> \//{print $3}' | while read -r lib; do
+              case "$lib" in
+                *ld-linux*|*/libc.so*|*/libm.so*|*/libpthread*|*/libdl.so*|*/librt.so*) ;;
+                *) cp -n "$lib" src-tauri/resources/lib/ || true ;;
+              esac
+            done
+          done
+          echo "Bundled assets:" && find src-tauri/resources -type f
+
+      - name: Install JS dependencies
+        run: bun install
+
+      - name: Build AppImage
+        # The bundle overlay adds the resources/ files fetched above. A plain
+        # `bun tauri build` (no overlay) would produce a build with no bundled
+        # assets that relies on system pdfium/poppler/tesseract instead.
+        # APPIMAGE_EXTRACT_AND_RUN lets linuxdeploy (itself an AppImage) run on
+        # hosts without FUSE; NO_STRIP avoids a linuxdeploy strip failure.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "1"
+        run: bun tauri build -- --config tauri.bundle.conf.json
+
+      - name: Upload AppImage to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/bundle/appimage/*.AppImage

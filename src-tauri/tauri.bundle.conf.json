@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/libpdfium.so": "libpdfium.so",
+      "resources/tessdata/eng.traineddata": "tessdata/eng.traineddata",
+      "resources/bin/pdftotext": "bin/pdftotext",
+      "resources/bin/pdftoppm": "bin/pdftoppm",
+      "resources/lib/*": "lib/"
+    }
+  }
+}

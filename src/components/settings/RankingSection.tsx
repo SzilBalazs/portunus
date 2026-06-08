@@ -31,7 +31,7 @@ export default function RankingSection({ config, onChange }: Props) {
     <div>
       <div className="settings-section-header">
         <div className="settings-section-name">Ranking</div>
-        <div className="settings-section-desc">Control how results are ordered — history, match quality, and strictness.</div>
+        <div className="settings-section-desc">Control how results are ordered: history, match quality, and strictness.</div>
       </div>
 
       <NumberField

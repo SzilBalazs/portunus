@@ -145,7 +145,7 @@ html, body, #root {
   to   { opacity: 1; }
 }
 
-/* In Quicklook the file preview is pure reader — header and metadata are
+/* In Quicklook the file preview is pure reader - header and metadata are
    dropped, so the document body claims the whole surface, edge to edge. */
 .file-preview-ql { padding: 0; gap: 0; }
 
@@ -171,7 +171,7 @@ html, body, #root {
   min-height: 0;
   overflow: auto;
   /* Reserve the scrollbar gutter so clientWidth stays constant whether or not the
-     vertical scrollbar is showing — otherwise a page sized near the viewport
+     vertical scrollbar is showing - otherwise a page sized near the viewport
      height makes the scrollbar flicker on/off and the measured width oscillates. */
   scrollbar-gutter: stable;
   /* Extra bottom room so the floating HUD clears the page. */
@@ -179,7 +179,7 @@ html, body, #root {
   display: flex;
   overscroll-behavior: contain;
 }
-/* Center every child (page, spinner, error) via auto margins — NOT align/justify
+/* Center every child (page, spinner, error) via auto margins - NOT align/justify
    center, which would collapse to start-clipping when the page overflows and make
    the top/left unreachable by scroll. */
 .pdf-ql > * { margin: auto; }
@@ -216,7 +216,7 @@ html, body, #root {
     0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
-/* Centered spinner — only on the very first load (nothing to show yet). */
+/* Centered spinner - only on the very first load (nothing to show yet). */
 .pdf-ql-spinner {
   width: 26px;
   height: 26px;
@@ -226,7 +226,7 @@ html, body, #root {
   animation: pdf-ql-spin 0.7s linear infinite;
 }
 
-/* Quiet top-right pip while a sharper render is in flight — the current page
+/* Quiet top-right pip while a sharper render is in flight - the current page
    stays visible (CSS-scaled) underneath, so zoom never blanks. */
 .pdf-ql-rendering {
   position: absolute;
@@ -243,7 +243,7 @@ html, body, #root {
 
 @keyframes pdf-ql-spin { to { transform: rotate(360deg); } }
 
-/* Floating glass HUD, bottom-center — page + zoom + a quiet key legend. */
+/* Floating glass HUD, bottom-center - page + zoom + a quiet key legend. */
 .pdf-ql-hud {
   position: absolute;
   bottom: 12px;

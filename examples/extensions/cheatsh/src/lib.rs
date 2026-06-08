@@ -96,7 +96,7 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
             results: vec![ExtensionResult {
                 id: term.to_string(),
                 title: format!("cheat.sh/{term}"),
-                subtitle: Some("list not cached yet \u{2014} activate to load".into()),
+                subtitle: Some("list not cached yet, press Enter to load".into()),
                 relevance: 50.0,
                 actions: vec!["open".into()],
                 ..Default::default()

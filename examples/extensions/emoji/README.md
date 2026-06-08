@@ -1,4 +1,4 @@
-# emoji — example Portunus extension
+# emoji: example Portunus extension
 
 Searches a small emoji set by name/keyword; Enter copies the emoji to the
 clipboard. Demonstrates `search`, `activate`, `preview`, and the

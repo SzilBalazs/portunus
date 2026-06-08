@@ -10,7 +10,7 @@ pub fn handle_cli_args() -> bool {
     }
 
     if std::env::args().any(|a| a == "--help" || a == "-h") {
-        println!("portunus {} — application launcher and poweruser search for Linux
+        println!("portunus {}: application launcher and power-user search for Linux
 
 USAGE:
   portunus [FLAG]
@@ -56,7 +56,7 @@ FLAGS:
     }
     if std::env::args().any(|a| a == "--reindex") {
         if !ipc::try_signal_running("reindex") {
-            // No running instance — run standalone with stderr progress.
+            // No running instance - run standalone with stderr progress.
             let cfg = config::Config::load();
             if cfg.content.enabled {
                 match content_index::ContentIndex::open() {

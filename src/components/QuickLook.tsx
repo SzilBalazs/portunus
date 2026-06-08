@@ -16,7 +16,7 @@ const VIEWPORT_SELECTOR = '.pdf-ql, .text-preview-wrap, .folder-contents';
 
 /**
  * Full-card overlay that re-renders the selected result's preview at large size.
- * Reuses the same `getPreview(kind)` component the side panel uses — preview
+ * Reuses the same `getPreview(kind)` component the side panel uses - preview
  * renderers are flex-sized, so a bigger container just makes them bigger.
  *
  * Quicklook is modal: App.tsx suppresses result navigation while it's open, and
@@ -30,7 +30,7 @@ export default function QuickLook({ result, onLaunch, onClose, terms }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Don't hijack Ctrl/Meta/Alt combos — those drive PDF page-flip & zoom.
+      // Don't hijack Ctrl/Meta/Alt combos - those drive PDF page-flip & zoom.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const vp = innerRef.current?.querySelector<HTMLElement>(VIEWPORT_SELECTOR);
       if (!vp) return;

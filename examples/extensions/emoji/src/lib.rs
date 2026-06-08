@@ -5,7 +5,7 @@
 //!          ~/.local/share/portunus/extensions/emoji/extension.wasm
 //!          alongside manifest.toml, then `portunus --reload-extensions`.
 
-// The pdk macros expand to `extism_pdk::…` paths — this alias satisfies them
+// The pdk macros expand to `extism_pdk::…` paths - this alias satisfies them
 // without adding extism-pdk as a direct dependency.
 use portunus_ext_sdk::guest::extism_pdk;
 use portunus_ext_sdk::guest::{clipboard, plugin_fn, FnResult, Json};
@@ -14,11 +14,11 @@ use portunus_ext_sdk::{
     ResultIcon, SearchInput, SearchOutput,
 };
 
-/// Pre-encoded result icon (icon.png as base64) — guests embed the encoded
+/// Pre-encoded result icon (icon.png as base64) - guests embed the encoded
 /// form directly rather than pulling in a base64 dependency.
 const ICON_B64: &str = include_str!("../icon.b64");
 
-/// (emoji, name, keywords) — a tiny built-in set; a real extension would embed
+/// (emoji, name, keywords) - a tiny built-in set; a real extension would embed
 /// a full emoji database the same way.
 const EMOJI: &[(&str, &str, &str)] = &[
     ("😄", "grinning face", "smile happy joy"),

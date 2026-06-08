@@ -121,7 +121,7 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
 
   const choosePreset = (p: Preset) => {
     if (p.requires && !depOk(p.requires)) return; // blocked: dependency missing
-    if (preset === p.id) return; // already active — re-selecting would wipe an added screenshot folder
+    if (preset === p.id) return; // already active - re-selecting would wipe an added screenshot folder
     setPreset(p.id);
     setScreenshotDir(null); // preset rewrites dirs, so drop any added screenshot folder
     setDraft(d => ({
@@ -364,7 +364,7 @@ function ProvidersStep({
                 ) : p.note ? (
                   <span className="onb-prov-note">{p.note}</span>
                 ) : p.dep && !available ? (
-                  /* head already shows the "needs {dep}" chip — don't double up */
+                  /* head already shows the "needs {dep}" chip - don't double up */
                   null
                 ) : (
                   <span className={`onb-chip${available ? " onb-chip--ok" : " onb-chip--warn"}`}>

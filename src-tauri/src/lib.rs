@@ -8,6 +8,7 @@ mod office;
 mod preview;
 mod provider_reload;
 mod providers;
+mod runtime_assets;
 mod util;
 mod watcher;
 
@@ -94,14 +95,16 @@ fn check_dependencies() -> Vec<DepStatus> {
             id: "poppler",
             label: "pdftotext",
             feature: "PDF content indexing",
-            available: binary_in_path("pdftotext"),
+            available: runtime_assets::poppler_bundled() || binary_in_path("pdftotext"),
             install_hint: "poppler",
         },
         DepStatus {
             id: "tesseract",
             label: "tesseract",
             feature: "OCR (images & scanned PDFs)",
-            available: binary_in_path("tesseract"),
+            // OCR is linked in via leptess; it needs language data, which is
+            // bundled in packaged builds or provided by a system tesseract.
+            available: runtime_assets::tessdata_path().is_some() || binary_in_path("tesseract"),
             install_hint: "tesseract + tesseract-data-eng",
         },
         DepStatus {
@@ -323,13 +326,13 @@ fn estimate_dir_index(
 fn is_content_index_empty(state: tauri::State<'_, ContentState>) -> bool {
     // try_lock so we never block the UI behind an in-progress reindex (which
     // holds this lock for its full duration). A live index is only contended
-    // while content is enabled — exactly the case where the answer is moot.
+    // while content is enabled - exactly the case where the answer is moot.
     if let Ok(guard) = state.try_lock() {
         if let Some(idx) = guard.as_ref() {
             return idx.is_empty();
         }
     }
-    // No open index (content disabled) — count rows in the on-disk DB directly.
+    // No open index (content disabled) - count rows in the on-disk DB directly.
     // `open` is resilient: a corrupt DB is recreated empty rather than surfacing an
     // error, so a `true` here means genuinely empty (the first-build prompt is then
     // accurate). A residual Err is a hard I/O/permission failure with no rebuild
@@ -360,10 +363,10 @@ fn take_config_error() -> Option<String> {
 /// results are searchable. Holds the content lock for the whole run so concurrent
 /// config-triggered rebuilds serialise rather than racing the DB.
 ///
-/// `full` controls cache reuse: `true` clears the index first (a hard rebuild —
+/// `full` controls cache reuse: `true` clears the index first (a hard rebuild -
 /// the `--reindex` path and any OCR-settings change, which invalidate cached
 /// text). `false` keeps existing rows so `run_content_indexer`'s mtime-skip and
-/// `remove_stale` apply only the delta — the cache-preserving path for dir /
+/// `remove_stale` apply only the delta - the cache-preserving path for dir /
 /// extension / depth / size edits.
 fn run_full_reindex(
     content_state: &ContentState,
@@ -429,6 +432,18 @@ pub fn run() {
         return;
     }
 
+    // The AppImage's linuxdeploy GTK hook hard-codes `GDK_BACKEND=x11`, which
+    // drops the window onto XWayland and loses the compositor's fractional/HiDPI
+    // scaling (the window renders tiny). Portunus is a Wayland app, so when we
+    // are running from the AppImage inside a Wayland session prefer the Wayland
+    // backend. Must happen before any GTK init. `PORTUNUS_FORCE_X11` opts out.
+    if std::env::var_os("APPDIR").is_some()
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("PORTUNUS_FORCE_X11").is_none()
+    {
+        std::env::set_var("GDK_BACKEND", "wayland");
+    }
+
     let cfg = config::Config::load();
 
     let shared_config: config::SharedConfig = Arc::new(RwLock::new(
@@ -457,7 +472,7 @@ pub fn run() {
     // Shared between FileProvider and the file watcher; populated in the startup thread.
     let file_entries: SharedFileEntries = Arc::new(RwLock::new(vec![]));
 
-    // Open content index early (fast — just opens/creates the SQLite file).
+    // Open content index early (fast - just opens/creates the SQLite file).
     // Wrapped in Arc<Mutex<Option<...>>> so rebuild_providers can open/replace it at runtime.
     let content_state: Arc<Mutex<Option<Arc<content_index::ContentIndex>>>> =
         Arc::new(Mutex::new(if content_cfg.enabled {
@@ -476,7 +491,7 @@ pub fn run() {
     // the Tauri commands.
     let ext_kv: Arc<extensions::kv::ExtensionKv> =
         Arc::new(extensions::kv::ExtensionKv::open().unwrap_or_else(|e| {
-            eprintln!("[extensions] failed to open kv store ({e}) — falling back to in-memory");
+            eprintln!("[extensions] failed to open kv store ({e}) - falling back to in-memory");
             extensions::kv::ExtensionKv::open_in_memory()
         }));
     let extensions_enabled = cfg.extensions.enabled.clone();
@@ -502,7 +517,7 @@ pub fn run() {
                 Some(arc)
             }
             Err(e) => {
-                eprintln!("[frecency] failed to open DB: {e} — frecency disabled");
+                eprintln!("[frecency] failed to open DB: {e} - frecency disabled");
                 None
             }
         }
@@ -517,6 +532,10 @@ pub fn run() {
         .manage(Arc::clone(&content_state))
         .manage(extensions::ExtensionKvState(Arc::clone(&ext_kv)))
         .setup(move |app| {
+            // Resolve bundled native assets (pdfium, poppler, tessdata) before
+            // any provider or preview path needs them.
+            runtime_assets::init(app.path().resource_dir().ok());
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
             }
@@ -559,7 +578,7 @@ pub fn run() {
             }));
 
             // trigger_reindex_fn: called by the trigger_full_reindex Tauri command
-            // (settings "Apply & Reindex"). `full` is chosen by the UI — true only
+            // (settings "Apply & Reindex"). `full` is chosen by the UI - true only
             // when OCR settings changed; otherwise an incremental, cache-preserving run.
             let tri_ci = Arc::clone(&content_state);
             let tri_reg = Arc::clone(&bg_registry);
@@ -606,7 +625,7 @@ pub fn run() {
             });
 
             // --reload-extensions: force-rebuild every loaded extension so a
-            // recompiled wasm is picked up — the extension author's hot-reload loop.
+            // recompiled wasm is picked up - the extension author's hot-reload loop.
             let ext_reload_registry = Arc::clone(&bg_registry);
             let ext_reload_kv = Arc::clone(&ext_kv);
             let ext_reload_frecency = frecency_state.clone();
@@ -709,7 +728,7 @@ pub fn run() {
                     if dict_provider.available {
                         bg_registry.write().unwrap().register(dict_provider);
                     } else {
-                        eprintln!("[portunus] dict: `dict` not found — dictionary provider disabled");
+                        eprintln!("[portunus] dict: `dict` not found - dictionary provider disabled");
                     }
                 }
                 if providers_cfg.files {

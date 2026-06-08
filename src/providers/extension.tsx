@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { registerProvider } from './registry';
 
-// Launch routing for WASM extension results. They carry no `exec` — Enter goes
+// Launch routing for WASM extension results. They carry no `exec` - Enter goes
 // through the extension's own `activate` export (backend hides the window).
 // Kinds are dynamic (`ext-<name>`), so matching is by id prefix, not kind.
 registerProvider({

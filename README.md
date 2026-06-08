@@ -1,19 +1,21 @@
 # Portunus
 
-Application launcher and power-user search for Wayland.
-
-> TODO
+A keyboard-first application launcher and search tool for Wayland. Type to find
+and launch apps, jump to files, do quick math, look up words, set timers, browse
+clipboard history, and search the text inside your documents, all from one box.
+The window stays hidden until you summon it with a keybind, then disappears the
+moment you launch something or press Escape.
 
 ## Features
 
-- **Fuzzy app & file search** — `.desktop` files, indexed directories, and GTK recent files with frecency ranking
-- **Inline calculator** — type `log2(10^8)` directly in the search bar
-- **Dictionary lookup** — `define serendipity` or `dict serendipity` (requires `dictd`)
-- **Countdown timers** — `timer 5m break`, `timer 1h30m`
-- **Clipboard history** — full-text search through `cliphist` entries (Wayland)
-- **Content search** — `! invoice 2024` instantly search the contents of images and PDFs with optional OCR - you can easily search your screenshots!
-- **Preview panel** — images, PDFs, text files, folder listings, and clipboard content
-- **Extreme speed** — non-blocking Rust backend with blazing-fast runtime indexing
+- **Fuzzy app & file search**: `.desktop` entries, indexed directories, and GTK recent files, ranked by how often you use them
+- **Inline calculator**: type `log2(10^8)` straight into the search bar
+- **Dictionary lookup**: `define serendipity` or `dict serendipity` (needs `dictd`)
+- **Countdown timers**: `timer 5m break`, `timer 1h30m`
+- **Clipboard history**: full-text search through `cliphist` entries (Wayland)
+- **Content search**: prefix a query with `!` to search the text inside PDFs, office documents, and images. OCR reads scanned PDFs and screenshots
+- **Preview panel**: images, PDFs, text files, folder listings, and clipboard contents
+- **Fast by default**: a non-blocking Rust backend indexes in the background, so results appear as you type
 
 ## Install
 
@@ -28,12 +30,19 @@ chmod +x Portunus-x86_64.AppImage
 
 ### Optional runtime dependencies
 
+The AppImage already bundles everything needed for PDF preview, content search,
+and OCR (libpdfium, the poppler tools, and the English tesseract data), so those
+work with no extra setup. Two features rely on system tools that are not bundled:
+
 | Package | Feature | Arch | Ubuntu/Debian |
 |---|---|---|---|
 | `cliphist` + `wl-clipboard` | Clipboard history | `sudo pacman -S cliphist wl-clipboard` | `sudo apt install cliphist wl-clipboard` |
-| `dictd` | Dictionary lookup | `sudo pacman -S dictd` | `sudo apt install dictd` |
-| `poppler` | PDF content search | `sudo pacman -S poppler` | `sudo apt install poppler-utils` |
-| `pdfium-bin` | PDF preview | bundled | bundled |
+| `dictd` | Dictionary definitions | `sudo pacman -S dictd` | `sudo apt install dictd` |
+
+If you build from source instead of using the AppImage, you also need the PDF and
+OCR tools installed on your system: `poppler` (or `poppler-utils`), a `pdfium`
+build such as `pdfium-bin`, and tesseract with the language data you want
+(`tesseract` + `tesseract-data-eng`).
 
 ## Compositor setup
 
@@ -48,7 +57,7 @@ Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it. O
 | **river / niri / labwc** | Should work, not yet tested | Generic Wayland; configure keybind per compositor |
 | **X11** | Partial, not yet tested | Clipboard features require Wayland |
 
-I would greatly appreciate it if you could report issues for untested compositors. If everything worked easily out of the box feel free to open a github issue so I can update the table.
+Reports for the untested compositors are welcome, whether it worked or not, so I can update this table. Open a GitHub issue either way.
 
 ### Hyprland
 
@@ -86,14 +95,11 @@ On first launch Portunus writes a default config to `~/.config/portunus/config.t
 | Bun | package manager + JS runtime |
 | `libwebkit2gtk-4.1-dev` | Tauri WebView |
 | `libssl-dev` | |
-| `libtesseract-dev` + `libleptonica-dev` | Only needed with `--features ocr` |
+| `libtesseract-dev` + `libleptonica-dev` | OCR is always built in, so these are required |
 
 ```bash
-# Standard build (no OCR)
+# Build
 bun tauri build
-
-# With OCR (requires libtesseract-dev + libleptonica-dev)
-bun tauri build -- --features ocr
 
 # Type-check only
 cargo check --manifest-path src-tauri/Cargo.toml
@@ -105,12 +111,13 @@ bun x tsc --noEmit
 ```
 portunus [FLAG]
 
-  --show              Show the launcher (signals a running instance)
+  --show              Show the launcher window (signals a running instance)
   --clipboard         Show the launcher pre-filled with "clipboard"
   --reindex           Rebuild the content search index
-  --reload-config     Reload config without restarting
+  --reload-config     Reload config from file without restarting
+  --reload-extensions Re-discover and reload WASM extensions (picks up rebuilt wasm)
   --version, -V       Print version and exit
-  --help, -h          Show this message
+  --help, -h          Show this help message
 ```
 
 ## License

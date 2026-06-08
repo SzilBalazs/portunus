@@ -18,6 +18,11 @@ dist-ssr
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
+# Bundled native assets, populated by the release workflow (see src-tauri/resources/README.md)
+src-tauri/resources/libpdfium.so
+src-tauri/resources/tessdata/
+src-tauri/resources/bin/
+src-tauri/resources/lib/
 extension-sdk/target/
 examples/extensions/emoji/target/
 examples/extensions/cheatsh/target/

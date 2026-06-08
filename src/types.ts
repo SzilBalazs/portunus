@@ -81,7 +81,7 @@ export interface ExtensionResult {
   subtitle?: string;
   relevance: number;
   actions?: string[];
-  /** Unvalidated — render `SearchResult.icon_data_uri` instead. */
+  /** Unvalidated - render `SearchResult.icon_data_uri` instead. */
   icon?: { mime: string; data_base64: string };
 }
 

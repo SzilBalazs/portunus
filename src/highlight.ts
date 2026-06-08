@@ -2,7 +2,7 @@
 //
 // The query terms are derived the same way the Rust content provider tokenizes
 // them (see src-tauri/src/providers/content.rs), and matching is word-prefix /
-// case-insensitive to mirror the porter stemmer used by the FTS index — so
+// case-insensitive to mirror the porter stemmer used by the FTS index - so
 // searching `run` highlights `running`.
 
 const HL_CLASS = "preview-hl";

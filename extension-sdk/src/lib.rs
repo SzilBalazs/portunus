@@ -51,7 +51,7 @@ pub struct ExtensionResult {
 
 /// Small inline icon for a search result. Same mime allowlist as image
 /// previews (png/jpeg/gif/webp); capped at 32 KB base64 by the host. An
-/// invalid icon is dropped (the result keeps the default glyph) — it never
+/// invalid icon is dropped (the result keeps the default glyph) - it never
 /// fails the search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultIcon {
@@ -84,8 +84,8 @@ pub struct PreviewInput {
 /// Input to the extension's optional exported `refresh` function.
 ///
 /// Declared via `[background] refresh_interval_secs` in the manifest. The host
-/// calls `refresh` once when the extension loads and then on the interval —
-/// off the keystroke path, on a dedicated instance — so extensions can keep
+/// calls `refresh` once when the extension loads and then on the interval -
+/// off the keystroke path, on a dedicated instance - so extensions can keep
 /// kv-cached HTTP data warm while `search` stays offline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshInput {
@@ -115,7 +115,7 @@ pub enum PreviewContent {
     /// external network requests are allowed (CSP: `default-src 'none';
     /// style-src 'unsafe-inline' data:; img-src data:`). The host injects
     /// theme CSS variables and a base reset. Capped at 128 KB. Pure CSS/HTML
-    /// only — use for rich layouts (weather cards, file trees, charts) the
+    /// only - use for rich layouts (weather cards, file trees, charts) the
     /// declarative types can't express.
     Html { content: String },
     /// Sequence of named sections, each a two-column command/description table.
@@ -123,7 +123,7 @@ pub enum PreviewContent {
     /// description text. Perfect for cheat sheets, man pages, shortcut references.
     Sections { items: Vec<SectionItem> },
     /// Monospace code block. `lang` is informational (no syntax highlighting added
-    /// yet — it is reserved for future use and passed through unchanged).
+    /// yet - it is reserved for future use and passed through unchanged).
     Code { lang: String, content: String },
 }
 
@@ -210,7 +210,7 @@ pub mod guest {
     }
 
     /// Current wall-clock time in milliseconds since the Unix epoch.
-    /// (`std::time` does not work on wasm32-unknown-unknown — use this for
+    /// (`std::time` does not work on wasm32-unknown-unknown - use this for
     /// cache timestamps.) No permission required.
     pub fn now() -> Result<u64, extism_pdk::Error> {
         unsafe { now_ms() }

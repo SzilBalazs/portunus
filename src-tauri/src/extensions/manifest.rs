@@ -11,7 +11,7 @@ use serde::Deserialize;
 /// Wire-contract major this host implements (mirrors portunus-ext-sdk).
 pub const SUPPORTED_API: u32 = portunus_ext_sdk::API_VERSION;
 
-/// Hard cap on `extension.wasm` size — anything bigger is rejected at load.
+/// Hard cap on `extension.wasm` size - anything bigger is rejected at load.
 const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,7 +45,7 @@ pub struct BackgroundConfig {
 }
 
 impl BackgroundConfig {
-    /// Interval clamped to host-enforced bounds (1 min – 1 day).
+    /// Interval clamped to host-enforced bounds (1 min - 1 day).
     pub fn interval_secs(&self) -> u64 {
         self.refresh_interval_secs.clamp(60, 86_400)
     }
@@ -127,7 +127,7 @@ pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
             manifest.name
         ));
     }
-    // Name feeds the `ext:<name>:<id>` grammar and kv namespacing — keep it tame.
+    // Name feeds the `ext:<name>:<id>` grammar and kv namespacing - keep it tame.
     if manifest.name.is_empty()
         || !manifest
             .name
@@ -139,12 +139,12 @@ pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
     if manifest.entry.contains('/') || manifest.entry.contains("..") {
         return Err("entry may not contain path separators".to_string());
     }
-    // Extism's allowed_hosts accepts glob patterns — a wildcard would grant
+    // Extism's allowed_hosts accepts glob patterns - a wildcard would grant
     // unrestricted outbound HTTP while looking innocuous in the permission UI.
     for host in &manifest.permissions.network {
         if host.is_empty() || host.contains('*') || host.contains('?') {
             return Err(format!(
-                "network permission \"{host}\": wildcards are not allowed — list exact hosts"
+                "network permission \"{host}\": wildcards are not allowed - list exact hosts"
             ));
         }
     }

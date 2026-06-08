@@ -46,7 +46,7 @@ export default function DictSection({ config, onChange }: Props) {
 
       {missing && (
         <div className="settings-dep-inline-warn">
-          ⚠ Enabled but <code>{dictDep!.label}</code> is missing — install <code>{dictDep!.install_hint}</code>
+          ⚠ Enabled but <code>{dictDep!.label}</code> is missing. Install <code>{dictDep!.install_hint}</code>
         </div>
       )}
 

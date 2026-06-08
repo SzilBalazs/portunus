@@ -109,7 +109,7 @@ impl FrecencyStore {
         util::read(&self.cache).clone()
     }
 
-    /// Removes every record whose id starts with `prefix` — used when an
+    /// Removes every record whose id starts with `prefix` - used when an
     /// extension is uninstalled (`ext:<name>:`), so its history doesn't
     /// outlive it.
     pub fn delete_prefix(&self, prefix: &str) {

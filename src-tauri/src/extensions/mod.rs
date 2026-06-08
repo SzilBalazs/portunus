@@ -1,7 +1,7 @@
 //! WASM extension system: discovery, lifecycle, and Tauri commands.
 //!
 //! Extensions live in `$XDG_DATA_HOME/portunus/extensions/<name>/` as
-//! `manifest.toml` + `extension.wasm`. Discovery is passive — a dropped-in
+//! `manifest.toml` + `extension.wasm`. Discovery is passive - a dropped-in
 //! extension shows up disabled in Settings and only runs once the user has
 //! reviewed its permissions and enabled it.
 
@@ -38,7 +38,7 @@ pub struct Discovered {
     pub error: Option<String>,
 }
 
-/// Scans the extensions dir. Never touches wasm — manifest parsing only.
+/// Scans the extensions dir. Never touches wasm - manifest parsing only.
 pub fn discover() -> Vec<Discovered> {
     let dir = extensions_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -61,7 +61,7 @@ pub fn discover() -> Vec<Discovered> {
 
 /// Reconciles loaded extensions with disk + config. `force` rebuilds even
 /// already-loaded extensions (the `--reload-extensions` hot-reload path, so a
-/// recompiled wasm is picked up). Compiles modules — call from a background
+/// recompiled wasm is picked up). Compiles modules - call from a background
 /// thread; the registry write lock is only taken for pointer swaps.
 ///
 /// Extensions with a `[background]` section get a detached `refresh("load")`
@@ -80,7 +80,7 @@ pub fn sync(
 
     // Clean up state belonging to extensions whose directory is gone. The
     // orphan census is the union of every store that records per-extension
-    // state — kv alone would miss extensions that only have frecency history.
+    // state - kv alone would miss extensions that only have frecency history.
     let disk_names: std::collections::HashSet<&str> =
         on_disk.iter().map(|d| d.name.as_str()).collect();
     let mut known: std::collections::HashSet<String> =
@@ -111,7 +111,7 @@ pub fn sync(
             continue;
         }
         let Some((m, wasm_path)) = d.manifest.clone() else {
-            continue; // invalid manifest — surfaced via list_extensions
+            continue; // invalid manifest - surfaced via list_extensions
         };
         if !force && loaded.contains(&d.name) {
             continue;
@@ -145,7 +145,7 @@ pub fn sync(
 /// background instance, so neither the keystroke path nor other extensions
 /// are blocked by a slow refresh.
 ///
-/// First sighting of an extension schedules it one full interval out — the
+/// First sighting of an extension schedules it one full interval out - the
 /// load-time refresh in `sync()` already covered "now". Five consecutive
 /// failures stop its schedule until the extension is reloaded.
 pub fn start_refresh_scheduler(registry: Registry, notify_cb: Arc<dyn Fn() + Send + Sync>) {
@@ -229,12 +229,12 @@ pub struct ExtensionInfo {
     permissions: Option<PermissionsInfo>,
     enabled: bool,
     loaded: bool,
-    /// Manifest/load error, or the most recent runtime error — the author's
+    /// Manifest/load error, or the most recent runtime error - the author's
     /// primary debugging signal, shown in the Settings tab.
     error: Option<String>,
     /// True when the extension failed repeatedly and was benched this session.
     benched: bool,
-    /// Set when the manifest declares `[background]` — shown as a chip.
+    /// Set when the manifest declares `[background]` - shown as a chip.
     background_interval_secs: Option<u64>,
 }
 
@@ -283,7 +283,7 @@ pub fn list_extensions(
 }
 
 /// Splits `ext:<name>:<local>` and returns the loaded provider plus nothing
-/// else the caller needs to parse — the id grammar lives here only.
+/// else the caller needs to parse - the id grammar lives here only.
 fn provider_for_id(
     registry: &crate::providers::PluginRegistry,
     id: &str,
@@ -308,7 +308,7 @@ pub fn extension_activate(
     action: Option<String>,
 ) -> Result<(), String> {
     // Hide first: activation may briefly wait on an in-flight search call
-    // holding the instance lock (up to the search budget) — the launcher must
+    // holding the instance lock (up to the search budget) - the launcher must
     // dismiss instantly on Enter, like launch_app does. Failures still land
     // in last_error / Settings.
     if let Some(window) = app.get_webview_window("main") {
@@ -338,7 +338,7 @@ pub async fn extension_preview(
 }
 
 /// Re-discovers the extensions dir and force-reloads wasm bytes. Wired to the
-/// Settings tab button and the `portunus --reload-extensions` CLI flag — the
+/// Settings tab button and the `portunus --reload-extensions` CLI flag - the
 /// extension author's iteration loop.
 #[tauri::command]
 pub fn rescan_extensions(

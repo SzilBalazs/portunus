@@ -7,13 +7,13 @@ import type { PreviewProps } from "../providers/registry";
 import type { PreviewContent } from "../types";
 
 // Per-id preview cache so flipping between results doesn't re-invoke the
-// extension. Cleared wholesale when it grows — previews are tiny and queries
+// extension. Cleared wholesale when it grows - previews are tiny and queries
 // are short-lived, an LRU would be overkill.
 const cache = new Map<string, PreviewContent | null>();
 const CACHE_MAX = 100;
 
 // Extension reloads (Rescan button, `portunus --reload-extensions`) emit
-// search-invalidated after swapping instances — drop cached previews and bump
+// search-invalidated after swapping instances - drop cached previews and bump
 // the version so even the currently-shown preview refetches (its result id is
 // unchanged, so the id-keyed effect alone wouldn't rerun).
 let cacheVersion = 0;
@@ -30,9 +30,9 @@ const subscribeVersion = (cb: () => void) => {
 
 /**
  * Renders the declarative preview an extension returned for the selected
- * result. Extensions never ship UI — they return data (markdown, metadata,
+ * result. Extensions never ship UI - they return data (markdown, metadata,
  * image, list) and this component renders it with the host's own widgets.
- * Raw HTML in markdown is NOT rendered (no rehype-raw) — extension content
+ * Raw HTML in markdown is NOT rendered (no rehype-raw) - extension content
  * stays inert.
  */
 
@@ -85,7 +85,7 @@ export default function ExtensionPreview({ result }: PreviewProps) {
     cache.get(result.id),
   );
 
-  // Synchronously update state from cache before the browser paints — prevents
+  // Synchronously update state from cache before the browser paints - prevents
   // the one-frame flash where the previous result's content is visible while
   // result.id has already changed but the async useEffect hasn't fired yet.
   useLayoutEffect(() => {

@@ -30,7 +30,7 @@ impl Provider for ContentProvider {
         }
 
         // Replace non-alphanumeric chars (except apostrophe) with spaces,
-        // then join tokens — FTS5 treats space-separated terms as AND.
+        // then join tokens - FTS5 treats space-separated terms as AND.
         let cleaned: String = q
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' })

@@ -1,12 +1,12 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   Portunus theme tokens — eye-comfort tuned.
+   Portunus theme tokens - eye-comfort tuned.
 
    Principles applied to every dark theme below:
-   • fg sits at ~L85, not pure white — reduces halation on long sessions
-   • accents are mid-saturation (chroma ~0.10–0.13) rather than vivid neon
-   • bg surfaces step in even ~3–5L increments so depth reads without jolts
+   • fg sits at ~L85, not pure white - reduces halation on long sessions
+   • accents are mid-saturation (chroma ~0.10-0.13) rather than vivid neon
+   • bg surfaces step in even ~3-5L increments so depth reads without jolts
    • row-sel uses a subtle accent tint, not a saturated accent block
-   • borders and lines are quiet — visible at glance, never demanding
+   • borders and lines are quiet - visible at glance, never demanding
    ───────────────────────────────────────────────────────────────────────── */
 
 /* ── Warm Dark (default) ──────────────────────────────────────────────────── */

@@ -79,9 +79,9 @@ impl ClipboardProvider {
         let cliphist = binary_in_path("cliphist");
         let wl_copy = binary_in_path("wl-copy");
         if !cliphist {
-            eprintln!("[portunus] clipboard: cliphist not found — clipboard provider disabled");
+            eprintln!("[portunus] clipboard: cliphist not found - clipboard provider disabled");
         } else if !wl_copy {
-            eprintln!("[portunus] clipboard: wl-copy not found — clipboard provider disabled");
+            eprintln!("[portunus] clipboard: wl-copy not found - clipboard provider disabled");
         }
         cliphist && wl_copy
     }

@@ -2,7 +2,7 @@
 
 Portunus can be extended with sandboxed WebAssembly modules. An extension is a
 search provider: it receives the launcher query, returns results, and handles
-activation (Enter) and an optional preview panel — all through a small, versioned
+activation (Enter) and an optional preview panel, all through a small, versioned
 JSON wire contract. Extensions never ship UI; the host renders everything.
 
 - **Runtime:** [Extism](https://extism.org/) (wasmtime). No WASI.
@@ -23,7 +23,7 @@ Settings → Extensions and enables it explicitly. Dropping a folder never runs 
 ## manifest.toml
 
 ```toml
-api = 1                        # REQUIRED — wire API major; unknown majors are rejected
+api = 1                        # REQUIRED: wire API major; unknown majors are rejected
 name = "emoji"                 # must match the directory name; [a-zA-Z0-9_-] only
 version = "0.1.0"
 description = "Search and copy emoji"
@@ -32,7 +32,7 @@ kinds = ["ext-emoji"]          # result kind; must start with "ext-"; defaults t
 entry = "extension.wasm"       # default; no path separators
 
 [permissions]
-network = ["api.github.com"]   # exact hosts only — wildcards are rejected; omit for none
+network = ["api.github.com"]   # exact hosts only; wildcards are rejected; omit for none
 kv = true                      # per-extension key-value storage
 clipboard = true               # clipboard_write host function
 
@@ -40,11 +40,11 @@ clipboard = true               # clipboard_write host function
 search_timeout_ms = 100        # clamped to [10, 500]
 activate_timeout_ms = 2000     # clamped to [10, 10000]
 
-[background]                   # optional — schedules your `refresh` export
+[background]                   # optional: schedules your `refresh` export
 refresh_interval_secs = 600    # clamped to [60, 86400]
 ```
 
-**Permissions are self-declared** — they bound what your extension *can* do, and
+**Permissions are self-declared.** They bound what your extension *can* do, and
 they are shown to the user before enabling. The user's consent at enable time is
 the trust gate; declare the minimum you need.
 
@@ -64,7 +64,7 @@ for you.
     "id": "grinning-face",       // opaque local id; host namespaces it
     "title": "😄 grinning face",
     "subtitle": "smile happy",    // optional
-    "relevance": 87.5,            // 0–100, higher = better
+    "relevance": 87.5,            // 0-100, higher = better
     "actions": ["copy"],          // optional; first = default on Enter
     "icon": {                     // optional; shown instead of the default glyph
       "mime": "image/png",        // png/jpeg/gif/webp only
@@ -73,19 +73,19 @@ for you.
 } ] }
 ```
 
-- Relevance is your only ranking input — the host maps 0–100 into its internal
+- Relevance is your only ranking input. The host maps 0-100 into its internal
   score space. Out-of-range values are clamped.
 - At most 200 results are taken per query; titles/subtitles are clamped to 2 KB.
 - Icons are validated host-side: png/jpeg/gif/webp, at most 32 KB base64. An
   invalid icon is dropped (the result keeps the default glyph) and the error
-  shows in Settings — a bad icon never fails the search.
+  shows in Settings; a bad icon never fails the search.
 - **`search` runs on the keystroke path with a hard ~150 ms budget. Never do
   network I/O in `search`.** Overruns are cancelled and count as failures.
 
 ### `activate` (required for actionable results)
 
 ```jsonc
-// in — the result EXACTLY as you returned it, plus the chosen action (or null)
+// in: the result EXACTLY as you returned it, plus the chosen action (or null)
 { "result": { ...ExtensionResult }, "action": "copy" }
 // out
 { "ok": true }
@@ -172,7 +172,7 @@ Settings; the result still appears without a preview.
 
 #### Utility classes
 
-The host injects a small design-system sheet. Use these classes directly — no
+The host injects a small design-system sheet. Use these classes directly; no
 `<style>` block needed for common patterns.
 
 **Color**
@@ -191,8 +191,8 @@ The host injects a small design-system sheet. Use these classes directly — no
 | `.text-xs` | 10 px, slight letter-spacing |
 | `.text-sm` | 11 px |
 | `.text-lg` | 16 px |
-| `.text-hero` | 42 px, weight 200 — for big numbers |
-| `.text-label` | 10 px uppercase, muted — section headers |
+| `.text-hero` | 42 px, weight 200, for big numbers |
+| `.text-label` | 10 px uppercase, muted, for section headers |
 | `.mono` | monospace stack, 12 px |
 | `.truncate` | single-line ellipsis |
 
@@ -220,7 +220,7 @@ The host injects a small design-system sheet. Use these classes directly — no
 |---|---|
 | `.tag` | small muted chip (`--accent-soft` fill) |
 | `.tag-accent` | small accent-filled chip (dark text) |
-| `.bar` | 3 px accent progress bar — set `width` inline |
+| `.bar` | 3 px accent progress bar; set `width` inline |
 | `.accent-line` | left border in `--accent-border` + 8 px indent |
 
 **Example** (no custom CSS needed):
@@ -241,7 +241,7 @@ The host injects a small design-system sheet. Use these classes directly — no
 ### `refresh` (optional)
 
 Declared via `[background]` in the manifest. The host calls it once when the
-extension loads and then on the interval — on a **dedicated instance**, so a
+extension loads and then on the interval, on a **dedicated instance**, so a
 slow refresh never blocks search. This is where network work belongs: fetch,
 write kv, return. 30 s budget. Failures show in Settings but never bench the
 extension; five consecutive failures pause the schedule until reload.
@@ -256,10 +256,10 @@ extension; five consecutive failures pause the schedule until reload.
 The canonical recipe for network extensions:
 
 1. `refresh` fetches over HTTP and writes results to kv, timestamped with `now_ms`.
-2. `search` reads only kv — always instant, always within budget.
-3. `activate` may also fetch (user-triggered, 2–10 s budget) for manual refresh.
+2. `search` reads only kv, so it is always instant and always within budget.
+3. `activate` may also fetch (user-triggered, 2-10 s budget) for manual refresh.
 
-Never do network in `search` — the 150 ms keystroke budget will cancel it.
+Never do network in `search`; the 150 ms keystroke budget will cancel it.
 
 ## Host functions
 
@@ -284,7 +284,7 @@ fails at load with a visible Settings error. Extensions using `kv_list`,
 `kv_delete`, `now_ms`, `open_url`, `log_message`, or `refresh` scheduling
 require a Portunus build that ships them.
 
-**HTTP** has no custom host function — use Extism's built-in HTTP
+**HTTP** has no custom host function; use Extism's built-in HTTP
 (`extism_pdk::http::request` in Rust). The host derives the allowlist from
 `[permissions].network`; requests to other hosts fail.
 
@@ -328,12 +328,12 @@ cp manifest.toml "$DEST/"
 portunus --reload-extensions
 ```
 
-`portunus --reload-extensions` force-reloads the wasm bytes of every extension —
+`portunus --reload-extensions` force-reloads the wasm bytes of every extension;
 that command is your hot-reload loop. The Rescan button in Settings → Extensions
 does the same.
 
 Any language with an [Extism PDK](https://extism.org/docs/concepts/pdk)
-(Go/TinyGo, Zig, C, JS via the JS PDK, …) works too — implement the same JSON
+(Go/TinyGo, Zig, C, JS via the JS PDK, and more) works too: implement the same JSON
 exports and import the host functions above.
 
 ## Sandbox, limits, failure behavior
@@ -341,11 +341,11 @@ exports and import the host functions above.
 - No filesystem, no process spawning, no network beyond the manifest allowlist.
 - 64 MB linear memory cap; `extension.wasm` must be ≤ 32 MB.
 - Each call runs under a wall-clock watchdog (cancelled via wasmtime epoch
-  interruption). A trapped/timed-out call returns empty results — it never
+  interruption). A trapped/timed-out call returns empty results; it never
   crashes or stalls the launcher.
 - After a failed call the instance is rebuilt from disk before the next one.
   **Three consecutive failures bench the extension for the session**; the error
-  shows in Settings → Extensions (your primary debugging signal — check there
+  shows in Settings → Extensions (your primary debugging signal, check there
   first when "my extension returns nothing").
 - Result ids are namespaced `ext:<name>:<your-id>` by the host. Your local id is
   opaque and may contain anything, including colons.

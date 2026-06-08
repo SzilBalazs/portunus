@@ -51,7 +51,7 @@ export default function ProvidersSection({ config, onChange }: Props) {
               <div className="settings-field-desc">{desc}</div>
               {missing && (
                 <div className="settings-dep-inline-warn">
-                  ⚠ Enabled but <code>{status!.label}</code> is missing — install <code>{status!.install_hint}</code>
+                  ⚠ Enabled but <code>{status!.label}</code> is missing. Install <code>{status!.install_hint}</code>
                 </div>
               )}
             </div>
@@ -77,7 +77,7 @@ export default function ProvidersSection({ config, onChange }: Props) {
               <span className="settings-dep-tool">
                 {d.available
                   ? <>{d.label} ✓</>
-                  : <>{d.label} missing — install <code>{d.install_hint}</code></>}
+                  : <>{d.label} missing. Install <code>{d.install_hint}</code></>}
               </span>
             </div>
           ))

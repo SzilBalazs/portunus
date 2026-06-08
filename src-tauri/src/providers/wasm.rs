@@ -1,7 +1,7 @@
 //! WASM extension provider: wraps one Extism plugin instance as a `Provider`.
 //!
 //! Isolation guarantees, in order of importance:
-//! - a trapping/hanging extension never panics or stalls the host — every call
+//! - a trapping/hanging extension never panics or stalls the host - every call
 //!   is bounded by a cancel-handle watchdog and returns `Result`;
 //! - after any failed call the instance is rebuilt from disk before reuse
 //!   (post-trap module state is not trustworthy);
@@ -31,14 +31,14 @@ const MEMORY_MAX_PAGES: u32 = 1024;
 const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 /// Per-query result cap (host truncates before scoring).
 const MAX_RESULTS: usize = 200;
-/// Title/subtitle clamp — UI sanity, not a wire error.
+/// Title/subtitle clamp - UI sanity, not a wire error.
 const MAX_FIELD_BYTES: usize = 2048;
 /// Base64 payload cap for image previews (~1 MB decoded).
 const MAX_IMAGE_B64_BYTES: usize = 1_400_000;
-/// Base64 payload cap per result icon — icons are tiny and re-sent on every
+/// Base64 payload cap per result icon - icons are tiny and re-sent on every
 /// keystroke, so this is deliberately far below the preview cap.
 const MAX_ICON_B64_BYTES: usize = 32_768;
-/// Mainstream formats only — an arbitrary mime would hand extension-controlled
+/// Mainstream formats only - an arbitrary mime would hand extension-controlled
 /// bytes to whatever obscure WebKitGTK codec matches it (codec bugs are a
 /// sandbox-independent attack surface).
 const ALLOWED_IMAGE_MIME: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -46,7 +46,7 @@ const ALLOWED_IMAGE_MIME: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
 const PREVIEW_TIMEOUT_MS: u64 = 500;
-/// Background `refresh` budget — generous, it runs on a dedicated instance
+/// Background `refresh` budget - generous, it runs on a dedicated instance
 /// off the keystroke path.
 const REFRESH_TIMEOUT_SECS: u64 = 30;
 
@@ -64,11 +64,11 @@ pub struct WasmProvider {
     /// Interactive instance (search/activate).
     /// None = needs re-instantiation before the next call.
     instance: Mutex<Option<Plugin>>,
-    /// Dedicated preview instance — preview calls can block for hundreds of ms
+    /// Dedicated preview instance - preview calls can block for hundreds of ms
     /// (network I/O in the extension), which must never delay a search call or
     /// stall rapid result navigation.
     preview_instance: Mutex<Option<Plugin>>,
-    /// Dedicated background instance for `refresh` — a refresh may hold its
+    /// Dedicated background instance for `refresh` - a refresh may hold its
     /// instance for seconds, which must never block a keystroke's search.
     /// Lazily created on first refresh; only extensions with `[background]`
     /// ever pay for it.
@@ -80,7 +80,7 @@ pub struct WasmProvider {
 
 impl WasmProvider {
     /// Loads a validated manifest + wasm file into a live instance.
-    /// Compiles the module — call from a background thread, never under the
+    /// Compiles the module - call from a background thread, never under the
     /// registry write lock.
     pub fn load(
         manifest: ExtensionManifest,
@@ -123,7 +123,7 @@ impl WasmProvider {
         Ok(provider)
     }
 
-    /// Search wall-clock budget — the registry sizes its fan-out deadline off
+    /// Search wall-clock budget - the registry sizes its fan-out deadline off
     /// the largest budget among loaded extensions.
     pub fn search_budget_ms(&self) -> u64 {
         self.limits.search_timeout_ms
@@ -178,7 +178,7 @@ impl WasmProvider {
         }
 
         // Watchdog: cancel the in-flight call if it outlives its budget.
-        // recv_timeout keeps the thread cheap — it exits the moment the call
+        // recv_timeout keeps the thread cheap - it exits the moment the call
         // finishes, and epoch interruption makes cancel() safe mid-execution.
         let cancel = plugin.cancel_handle();
         let (done_tx, done_rx) = mpsc::channel::<()>();
@@ -193,16 +193,16 @@ impl WasmProvider {
 
         match outcome {
             Ok(json) => {
-                // The module ran cleanly — reset the interactive failure streak.
+                // The module ran cleanly - reset the interactive failure streak.
                 if interactive {
                     self.fail_count.store(0, Ordering::Relaxed);
                 }
                 if json.len() > MAX_OUTPUT_BYTES {
                     // Author bug (too much data), not a runtime failure: the
-                    // instance is healthy, so keep it and don't bench —
+                    // instance is healthy, so keep it and don't bench -
                     // surface the error in Settings and drop the response.
                     let e = format!(
-                        "{function} returned {} bytes (cap {MAX_OUTPUT_BYTES}) — return less data per call",
+                        "{function} returned {} bytes (cap {MAX_OUTPUT_BYTES}) - return less data per call",
                         json.len()
                     );
                     drop(guard);
@@ -213,10 +213,10 @@ impl WasmProvider {
             }
             Err(e) => {
                 let e = format!("{function}: {}", e.root_cause());
-                // Post-trap instance state is unreliable — rebuild next call.
+                // Post-trap instance state is unreliable - rebuild next call.
                 *guard = None;
                 drop(guard);
-                // Background refresh failures stay visible but never bench —
+                // Background refresh failures stay visible but never bench -
                 // a broken refresh must not take down working search.
                 if interactive {
                     self.record_failure(&e);
@@ -266,7 +266,7 @@ impl WasmProvider {
     }
 
     /// Validates a result icon and builds its `data:` URI, or returns None
-    /// (with the error surfaced in Settings) — a bad icon never drops the
+    /// (with the error surfaced in Settings) - a bad icon never drops the
     /// result and never fails the search.
     fn icon_data_uri(&self, icon: &portunus_ext_sdk::ResultIcon) -> Option<String> {
         if !ALLOWED_IMAGE_MIME.contains(&icon.mime.as_str()) {
@@ -300,7 +300,7 @@ impl WasmProvider {
     }
 
     /// Runs the extension's optional `refresh` export on the dedicated
-    /// background instance — never contends with interactive calls.
+    /// background instance - never contends with interactive calls.
     pub fn refresh(&self, reason: &str) -> Result<(), String> {
         let input = serde_json::to_string(&RefreshInput { reason: reason.to_string() })
             .map_err(|e| e.to_string())?;

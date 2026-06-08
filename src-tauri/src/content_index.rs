@@ -10,10 +10,8 @@ use rusqlite::{params, Connection};
 use crate::config::ContentConfig;
 use crate::util;
 
-#[cfg(feature = "ocr")]
 use std::cell::RefCell;
 
-#[cfg(feature = "ocr")]
 static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Set while a full-scan reindex (full or incremental) is running. Used to
@@ -150,7 +148,7 @@ impl ContentIndex {
             // Empty `text` is a negative-cache tombstone: a file that extracted to
             // nothing (e.g. an OCR'd screenshot with no detectable text) or errored.
             // We still write its file_meta below so the mtime+size skip catches it
-            // next run instead of re-extracting it every startup — but we skip the
+            // next run instead of re-extracting it every startup - but we skip the
             // content_fts/pdf_page_fts inserts so it never surfaces in search.
             if !u.text.trim().is_empty() {
                 tx.execute(
@@ -203,7 +201,7 @@ impl ContentIndex {
 
     pub fn search(&self, fts_query: &str, limit: usize) -> rusqlite::Result<Vec<(String, f64, String, i64, u64)>> {
         let db = util::lock(&self.db);
-        // \x02 = STX, \x03 = ETX — used as highlight start/end markers in the snippet.
+        // \x02 = STX, \x03 = ETX - used as highlight start/end markers in the snippet.
         let mut stmt = db.prepare(
             "SELECT content_fts.path, rank, snippet(content_fts, 1, '\x02', '\x03', '…', 20), \
              COALESCE(m.mtime, 0), COALESCE(m.size, 0) \
@@ -238,7 +236,7 @@ impl ContentIndex {
     ///
     /// Ranks pages by how many *distinct* query terms they cover (so a multi-part
     /// query lands on the page holding the most of them), and breaks ties toward the
-    /// earliest page — rather than FTS BM25, which favours shorter pages and would
+    /// earliest page - rather than FTS BM25, which favours shorter pages and would
     /// e.g. pick a repeated header on the last page over the first.
     pub fn best_page(&self, path: &str, fts_query: &str) -> Option<u32> {
         let terms: Vec<String> = fts_query
@@ -272,7 +270,7 @@ impl ContentIndex {
             .ok()?;
 
         // Pages arrive in ascending order; keep the first that strictly beats the best
-        // coverage so far — that yields max distinct terms, earliest page on ties.
+        // coverage so far - that yields max distinct terms, earliest page on ties.
         let mut best: Option<(u32, u32)> = None; // (coverage, page)
         for (page, text) in rows.flatten() {
             let lower = text.to_lowercase();
@@ -336,7 +334,7 @@ impl ContentIndex {
 // ── text extraction ───────────────────────────────────────────────────────────
 
 fn pdftotext(path: &str) -> Result<String, String> {
-    let out = std::process::Command::new("pdftotext")
+    let out = crate::runtime_assets::poppler_command("pdftotext")
         .args([path, "-"])
         .output()
         .map_err(|e| e.to_string())?;
@@ -346,17 +344,18 @@ fn pdftotext(path: &str) -> Result<String, String> {
     String::from_utf8(out.stdout).map_err(|e| e.to_string())
 }
 
-#[cfg(feature = "ocr")]
 thread_local! {
     static LEPTESS: RefCell<Option<leptess::LepTess>> = RefCell::new(None);
 }
 
-#[cfg(feature = "ocr")]
 fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
     LEPTESS.with(|cell| {
         let mut api_opt = cell.borrow_mut();
         if api_opt.is_none() {
-            *api_opt = leptess::LepTess::new(None, lang).ok();
+            // Prefer the bundled tessdata dir (AppImage); fall back to the
+            // system install when running from source.
+            let datapath = crate::runtime_assets::tessdata_path();
+            *api_opt = leptess::LepTess::new(datapath.as_deref(), lang).ok();
         }
         let api = api_opt.as_mut().ok_or("tesseract unavailable")?;
         api.set_image(path).map_err(|e| format!("{e:?}"))?;
@@ -366,18 +365,12 @@ fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
 
 fn extract_pdf(path: &str, ocr_fallback: bool, lang: &str) -> Result<String, String> {
     let text = pdftotext(path)?;
-    #[cfg(not(feature = "ocr"))]
-    {
-        let _ = (ocr_fallback, lang);
-        return Ok(text);
-    }
-    #[cfg(feature = "ocr")]
     {
         if text.trim().len() >= 50 || !ocr_fallback {
             return Ok(text);
         }
 
-        // No meaningful text layer — render pages to images via pdftoppm and OCR each
+        // No meaningful text layer - render pages to images via pdftoppm and OCR each
         let tmp_dir = std::env::temp_dir().join(format!(
             "portunus_pdftoppm_{}_{}",
             std::process::id(),
@@ -386,7 +379,7 @@ fn extract_pdf(path: &str, ocr_fallback: bool, lang: &str) -> Result<String, Str
         std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
         let prefix = tmp_dir.join("page");
 
-        let result = std::process::Command::new("pdftoppm")
+        let result = crate::runtime_assets::poppler_command("pdftoppm")
             .args(["-tiff", "-r", "150", path, prefix.to_str().unwrap_or("page")])
             .output();
 
@@ -455,7 +448,6 @@ fn extract_text(path: &str, cfg: &ContentConfig) -> Result<String, String> {
     if ext == "pdf" {
         extract_pdf(path, cfg.ocr_pdf_fallback, &cfg.ocr_language)
     } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        #[cfg(feature = "ocr")]
         if cfg.ocr_images {
             return ocr_file(path, &cfg.ocr_language);
         }
@@ -530,7 +522,7 @@ fn collect_eligible(cfg: &ContentConfig) -> Vec<(std::path::PathBuf, u64, i64)> 
 }
 
 /// A pre-index time/size estimate for a single directory. Counts are exact (a
-/// cheap metadata-only walk); the seconds range is a coarse heuristic — see
+/// cheap metadata-only walk); the seconds range is a coarse heuristic - see
 /// `estimate_dir`. Serialized to the frontend for the per-directory estimate row.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DirEstimate {
@@ -545,7 +537,7 @@ pub struct DirEstimate {
 /// Cost is modelled as `count * fixed + total_mb * per_mb` because the dominant
 /// term differs by type: a subprocess spawn (PDF) or OCR init is per-file, while
 /// read/tokenise/extract scales with bytes. Calibrated coarsely against real
-/// runs — see `estimate_dir`.
+/// runs - see `estimate_dir`.
 struct Cost {
     fixed: f64,
     per_mb: f64,
@@ -561,7 +553,7 @@ impl Cost {
 /// and produces file counts plus a min/max indexing-time estimate. No text is
 /// extracted, so this is fast even on large trees.
 ///
-/// The seconds are a size-weighted heuristic — they set expectations, not promises.
+/// The seconds are a size-weighted heuristic - they set expectations, not promises.
 /// Each bucket's cost is `files * fixed_overhead + megabytes * per_mb_rate`, so a
 /// folder of small screenshots and one of large scans estimate very differently
 /// even at the same file count. PDFs dominate the uncertainty: with a text layer a
@@ -752,7 +744,7 @@ fn collect_updates(
             }
 
             // Empty text on a successful extract (e.g. an image that OCR'd to
-            // nothing) or an extract error both yield an empty-text FileUpdate —
+            // nothing) or an extract error both yield an empty-text FileUpdate -
             // a negative-cache tombstone. upsert_batch writes its file_meta but no
             // FTS row, so the mtime+size fast-path skips it next run instead of
             // re-running the (expensive) extraction every startup.
@@ -792,7 +784,7 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
     let path_str = path.to_string_lossy().into_owned();
 
     if !path.exists() {
-        if log { eprintln!("[content] event: path gone, removing — {path_str}"); }
+        if log { eprintln!("[content] event: path gone, removing - {path_str}"); }
         // Remove the path itself plus any children (handles directory deletions/moves-out
         // where individual file events are not fired for the contents).
         let removed_children = index.remove_prefix(&path_str).unwrap_or(0) > 0;
@@ -802,7 +794,7 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
     }
 
     if path.is_dir() {
-        if log { eprintln!("[content] event: directory appeared, walking — {path_str}"); }
+        if log { eprintln!("[content] event: directory appeared, walking - {path_str}"); }
         // Directory appeared (created or moved in): walk it and index all eligible files.
         // Individual file Create events are not fired for files inside a moved-in directory.
         // Honour the per-dir depth limit from config, just like the initial index does.
@@ -832,17 +824,17 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
     }
 
     if !is_event_path_eligible(path, cfg) {
-        if log { eprintln!("[content] event: not eligible — {path_str}"); }
+        if log { eprintln!("[content] event: not eligible - {path_str}"); }
         return index.remove_path(&path_str).is_ok();
     }
 
     let Ok(meta) = std::fs::metadata(path) else {
-        if log { eprintln!("[content] event: metadata failed — {path_str}"); }
+        if log { eprintln!("[content] event: metadata failed - {path_str}"); }
         return false;
     };
     let size = meta.len();
     if size > cfg.max_file_bytes {
-        if log { eprintln!("[content] event: file too large ({size}) — {path_str}"); }
+        if log { eprintln!("[content] event: file too large ({size}) - {path_str}"); }
         return index.remove_path(&path_str).is_ok();
     }
     let mtime = meta
@@ -854,7 +846,7 @@ pub fn process_event_path(index: &Arc<ContentIndex>, path: &Path, cfg: &ContentC
 
     if let Ok(Some(m)) = index.get_meta(&path_str) {
         if m.mtime == mtime && m.size == size {
-            if log { eprintln!("[content] event: mtime+size unchanged, skipping — {path_str}"); }
+            if log { eprintln!("[content] event: mtime+size unchanged, skipping - {path_str}"); }
             return false;
         }
     }

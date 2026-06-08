@@ -6,9 +6,6 @@ description = "Application launcher and power-user search for Wayland"
 authors = ["SzilBalazs"]
 edition = "2021"
 
-[features]
-ocr = ["dep:leptess"]
-
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -33,7 +30,7 @@ roxmltree = "0.20"
 toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rayon = "1"
-leptess = { version = "0.14", optional = true }
+leptess = "0.14"
 notify-debouncer-full = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 extism = "1.30.0"

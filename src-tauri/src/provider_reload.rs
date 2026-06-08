@@ -71,8 +71,8 @@ pub fn rebuild_providers(
                 let new_by_path: HashMap<&str, &config::DirEntry> =
                     files_cfg.dirs.iter().map(|d| (d.path.as_str(), d)).collect();
 
-                // Case A: pure additions only — walk new dirs and extend.
-                // Case B: any removal or depth change — full re-walk to avoid
+                // Case A: pure additions only - walk new dirs and extend.
+                // Case B: any removal or depth change - full re-walk to avoid
                 //         nested-dir prefix-removal bugs (e.g. removing ~/Docs
                 //         when ~/Docs/Projects is still configured).
                 let only_additions = old_files_cfg.dirs.iter().all(|d| new_by_path.contains_key(d.path.as_str()))
@@ -160,7 +160,7 @@ pub fn rebuild_providers(
         let ncb = Arc::clone(notify_cb);
         let kv = Arc::clone(ext_kv);
         let frec = frecency.clone();
-        // Wasm compilation is slow — sync builds instances off-thread and only
+        // Wasm compilation is slow - sync builds instances off-thread and only
         // takes the registry write lock for pointer swaps.
         std::thread::spawn(move || {
             crate::extensions::sync(&reg2, &enabled, &kv, &frec, false, Some(Arc::clone(&ncb)));
@@ -208,7 +208,7 @@ pub fn rebuild_providers(
                 );
 
                 // "Heavy" changes require a full clear+rebuild, which is expensive.
-                // We never trigger that automatically — the settings UI stages these
+                // We never trigger that automatically - the settings UI stages these
                 // edits and the user confirms via "Apply & Reindex" (trigger_full_reindex),
                 // or a poweruser runs `portunus --reindex` after a manual config edit.
                 // Here we only register the provider (above) and apply cheap incremental
@@ -228,12 +228,12 @@ pub fn rebuild_providers(
                          (apply via Settings or `portunus --reindex`)"
                     );
                 } else if old_content_cfg.contents_eq(&new_content_cfg) {
-                    // Only indexing-speed settings (threads) changed — the index
+                    // Only indexing-speed settings (threads) changed - the index
                     // contents are unaffected, so a reindex would be pure waste and
                     // would race the progress bar against any in-flight run.
                     eprintln!("[content] non-content settings change; skipping reindex");
                 } else {
-                    // Cheap, non-destructive incremental update — same as the startup routine.
+                    // Cheap, non-destructive incremental update - same as the startup routine.
                     // Picks up added dirs, extension/depth changes, and removed dirs.
                     // Guarded so a config save mid-reindex doesn't start a second run.
                     match content_index::ReindexGuard::acquire() {

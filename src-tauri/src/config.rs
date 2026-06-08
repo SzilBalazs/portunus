@@ -40,7 +40,7 @@ impl Default for Config {
 }
 
 /// WASM extension enablement. A discovered extension absent from the map is
-/// DISABLED — dropping a folder into the extensions dir must never run code
+/// DISABLED - dropping a folder into the extensions dir must never run code
 /// until the user reviews its permissions and enables it in Settings.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -150,9 +150,9 @@ impl Default for FilesConfig {
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct SearchConfig {
-    /// Minimum fuzzy match quality, 0.0–1.0. Applied as a fraction of FUZZY_REFERENCE.
+    /// Minimum fuzzy match quality, 0.0-1.0. Applied as a fraction of FUZZY_REFERENCE.
     pub min_quality: f32,
-    /// How strongly launch history boosts results, 0–100. Maps to history_max_bonus.
+    /// How strongly launch history boosts results, 0-100. Maps to history_max_bonus.
     pub history_weight: u8,
 }
 
@@ -335,7 +335,7 @@ impl Config {
                 cfg
             }
             Err(e) => {
-                eprintln!("[config] failed to parse {}: {e} — using defaults", path.display());
+                eprintln!("[config] failed to parse {}: {e} - using defaults", path.display());
                 // Preserve the unparseable file so a clobbering autosave can't destroy
                 // it, and record the error so the settings UI can warn the user rather
                 // than silently resetting every setting to defaults.

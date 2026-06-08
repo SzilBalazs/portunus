@@ -64,7 +64,7 @@ function fmtSecs(secs: number): string {
 /** Collapses a min/max range to one value when both render the same. */
 function fmtRange(min: number, max: number): string {
   const a = fmtSecs(min), b = fmtSecs(max);
-  return a === b ? `~${a}` : `~${a} – ${b}`;
+  return a === b ? `~${a}` : `~${a}-${b}`;
 }
 
 /**
@@ -73,7 +73,7 @@ function fmtRange(min: number, max: number): string {
  * request id guards against a slow earlier walk overwriting a newer result.
  *
  * `extensions` must already be the *effective* list (per-dir override or the
- * global list) — never null — so the backend never falls back to its defaults.
+ * global list) - never null - so the backend never falls back to its defaults.
  */
 function useDirEstimate(
   path: string,
@@ -136,7 +136,7 @@ function DirEstimateRow({ estimate, loading }: { estimate: DirEstimate | null; l
     <div className={`settings-dir-estimate${loading ? " settings-dir-estimate--stale" : ""}`}>
       <span className="settings-dir-estimate-counts">{parts.join(" · ")}</span>
       <span className="settings-dir-estimate-sep">·</span>
-      <span className="settings-dir-estimate-time" title="Full-index estimate. PDFs without a text layer are OCR'd, which is far slower — hence the range.">
+      <span className="settings-dir-estimate-time" title="Full-index estimate. PDFs without a text layer are OCR'd, which is far slower, hence the range.">
         {fmtRange(estimate.est_secs_min, estimate.est_secs_max)}
       </span>
     </div>
@@ -223,7 +223,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
       </div>
 
       <div className="settings-section-note">
-        Requires: <strong>poppler</strong> (pdftotext/pdftoppm) for PDF text extraction. OCR additionally requires <strong>tesseract</strong> + <strong>tesseract-data-eng</strong>. Re-index on demand: <code style={{ fontFamily: "monospace" }}>portunus --reindex</code>
+        The AppImage bundles everything content search needs, so PDF extraction and OCR work out of the box. A source build instead uses the system <strong>poppler</strong> (pdftotext/pdftoppm) and <strong>tesseract</strong>. Re-index on demand: <code style={{ fontFamily: "monospace" }}>portunus --reindex</code>
       </div>
 
       {reindexError && !reindexing && (
@@ -286,7 +286,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
       <div className="settings-field">
         <div className="settings-field-label">
           <div className="settings-field-name">OCR images</div>
-          <div className="settings-field-desc">Run OCR on image files (jpg, png, webp…) using Tesseract — requires tesseract installed</div>
+          <div className="settings-field-desc">Run OCR on image files such as jpg, png, and webp using Tesseract</div>
         </div>
         <div className="settings-field-control">
           <Toggle label="OCR images" checked={cc.ocr_images} onChange={v => set({ ocr_images: v })} />
@@ -306,7 +306,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
       <div className="settings-field">
         <div className="settings-field-label">
           <div className="settings-field-name">OCR language</div>
-          <div className="settings-field-desc">Tesseract language code. Must have the corresponding tesseract-data-&lt;lang&gt; package installed. Multiple languages can be combined with <code style={{ fontFamily: "monospace" }}>+</code> (e.g. <code style={{ fontFamily: "monospace" }}>eng+hun</code>).</div>
+          <div className="settings-field-desc">Tesseract language code. English (eng) is bundled; other languages need the matching tesseract-data-&lt;lang&gt; data installed. Combine languages with <code style={{ fontFamily: "monospace" }}>+</code> (e.g. <code style={{ fontFamily: "monospace" }}>eng+hun</code>).</div>
         </div>
         <div className="settings-field-control">
           <input
@@ -345,7 +345,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           Indexed directories
         </div>
         <div className="settings-field-desc" style={{ marginBottom: 10 }}>
-          Depth controls recursion. Per-directory extensions override the global list above when set. Each card shows a live estimate of how long indexing that directory would take — narrow the extensions before applying to keep big folders fast.
+          Depth controls recursion. Per-directory extensions override the global list above when set. Each card shows a live estimate of how long indexing that directory would take. Narrow the extensions before applying to keep big folders fast.
         </div>
         <div className="settings-dir-list">
           {cc.dirs.map((dir, i) => (

@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 /// Locks a `Mutex`, recovering rather than panicking if a previous holder
 /// panicked and poisoned it. Our locks guard caches/indexes where the worst a
-/// stale-after-panic read can do is return slightly-off data — far better than
+/// stale-after-panic read can do is return slightly-off data - far better than
 /// cascading a single background panic into a crash on every later access.
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -34,7 +34,7 @@ pub fn binary_in_path(bin: &str) -> bool {
 
 /// Opens a SQLite database, recreating it from scratch if it fails a `quick_check`
 /// integrity probe. A corrupt DB (e.g. from a power loss mid-write) otherwise opens
-/// fine but then yields cryptic per-query failures — for our caches (frecency,
+/// fine but then yields cryptic per-query failures - for our caches (frecency,
 /// content index) the right recovery is simply to discard and rebuild, so callers
 /// get a usable connection instead of silent degradation. The `-wal`/`-shm` sidecars
 /// are removed alongside the main file so the recreated DB starts clean.
@@ -48,7 +48,7 @@ pub fn open_sqlite_resilient(path: &Path) -> rusqlite::Result<Connection> {
         return Ok(conn);
     }
     eprintln!(
-        "[db] integrity check failed for {} — recreating from scratch",
+        "[db] integrity check failed for {} - recreating from scratch",
         path.display()
     );
     drop(conn);

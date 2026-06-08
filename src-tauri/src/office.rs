@@ -303,7 +303,7 @@ fn escape_leading_block(s: &str) -> String {
         return format!("\\{s}");
     }
     // Unordered list: `-`, `+`, `*` followed by a space. (`*`/`**` without a
-    // space is emphasis from wrap_emphasis, not a list — leave it alone.)
+    // space is emphasis from wrap_emphasis, not a list - leave it alone.)
     if matches!(b.first(), Some(b'-') | Some(b'+') | Some(b'*'))
         && matches!(b.get(1), Some(b' ') | None)
     {

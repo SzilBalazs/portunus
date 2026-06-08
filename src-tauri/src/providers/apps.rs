@@ -119,7 +119,7 @@ fn build_icon_index() -> HashMap<String, String> {
         "/usr/share/pixmaps".to_string(),
     ];
 
-    // (size_dir, category_dir, base_score) — scanned in declaration order.
+    // (size_dir, category_dir, base_score) - scanned in declaration order.
     // SVG gets an additional +100 bonus inside index_dir.
     let targets: &[(&str, &str, u32)] = &[
         ("scalable", "apps", 190),
@@ -143,7 +143,7 @@ fn build_icon_index() -> HashMap<String, String> {
             continue;
         }
 
-        // /usr/share/pixmaps — icons live directly in the root dir.
+        // /usr/share/pixmaps - icons live directly in the root dir.
         index_dir(&root, 35, &mut index);
 
         // Enumerate installed themes (hicolor, Papirus, Adwaita, …).
@@ -236,7 +236,7 @@ fn servable_icon_path(path: &std::path::Path) -> Option<String> {
 /// Resolve a raw icon field to an absolute path using the pre-built index.
 fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
     if icon.starts_with('/') {
-        // Trust the shipped absolute path — it is the icon the app intends
+        // Trust the shipped absolute path - it is the icon the app intends
         // (a stem like "toolbox" could collide with an unrelated theme icon).
         // Out-of-scope paths are copied into the cache by servable_icon_path.
         let p = std::path::Path::new(icon);
@@ -251,7 +251,7 @@ fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
                 return servable_icon_path(&resolved);
             }
         }
-        // Dead path: don't guess from the file stem — names like "toolbox"
+        // Dead path: don't guess from the file stem - names like "toolbox"
         // collide with unrelated theme icons. Caller falls back to the
         // .desktop file stem instead.
         return None;

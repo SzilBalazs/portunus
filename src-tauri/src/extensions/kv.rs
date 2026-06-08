@@ -102,7 +102,7 @@ impl ExtensionKv {
         .map_err(|e| e.to_string())
     }
 
-    /// Keys matching a prefix in one extension's namespace, capped — feeds the
+    /// Keys matching a prefix in one extension's namespace, capped - feeds the
     /// `kv_list` host function (cache enumeration/eviction).
     pub fn list(&self, extension: &str, prefix: &str) -> Vec<String> {
         const MAX_KEYS: usize = 10_000;
@@ -136,7 +136,7 @@ impl ExtensionKv {
         );
     }
 
-    /// Names of every extension with stored data — used to find orphans after
+    /// Names of every extension with stored data - used to find orphans after
     /// an extension directory disappears.
     pub fn extension_names(&self) -> Vec<String> {
         let conn = util::lock(&self.conn);
@@ -149,7 +149,7 @@ impl ExtensionKv {
         names
     }
 
-    /// Drops all rows for an uninstalled extension (kv may hold secrets — the
+    /// Drops all rows for an uninstalled extension (kv may hold secrets - the
     /// user deleting the extension expects its data gone too).
     pub fn delete_extension(&self, extension: &str) {
         let conn = util::lock(&self.conn);

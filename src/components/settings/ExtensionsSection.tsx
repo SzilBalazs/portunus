@@ -17,7 +17,7 @@ function fmtInterval(secs: number): string {
   return `${secs}s`;
 }
 
-/** Human summary of what an extension may touch — shown BEFORE first enable. */
+/** Human summary of what an extension may touch - shown BEFORE first enable. */
 function PermissionChips({ info }: { info: ExtensionInfo }) {
   if (!info.permissions) return null;
   const chips: string[] = [];
@@ -44,7 +44,7 @@ export default function ExtensionsSection({ config, onChange }: Props) {
   const refresh = useCallback(() => {
     invoke<ExtensionInfo[]>("list_extensions")
       .then(next =>
-        // Skip the state update when nothing changed — a no-op refresh after
+        // Skip the state update when nothing changed - a no-op refresh after
         // Rescan would otherwise re-render every row (visible as a flash).
         setExts(prev =>
           prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
@@ -54,12 +54,12 @@ export default function ExtensionsSection({ config, onChange }: Props) {
   }, []);
   useEffect(refresh, [refresh]);
   // Fired by the backend when an extension rebuild completes (Rescan button,
-  // --reload-extensions, config toggle) — refresh loaded/error states then,
+  // --reload-extensions, config toggle) - refresh loaded/error states then,
   // instead of guessing with a timer.
   useTauriListener("search-invalidated", refresh, [refresh]);
   // Runtime errors happen while the user is in the LAUNCHER (a search call
   // traps); no event reaches this window, so refresh whenever it regains
-  // focus — same pattern Settings.tsx uses for config reloads.
+  // focus - same pattern Settings.tsx uses for config reloads.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
@@ -114,7 +114,7 @@ export default function ExtensionsSection({ config, onChange }: Props) {
               <div className="settings-field-name">
                 {info.name}
                 {info.version && <span className="settings-field-desc"> v{info.version}</span>}
-                {isNew && <span className="settings-field-desc"> — new, review &amp; enable</span>}
+                {isNew && <span className="settings-field-desc"> (new, review &amp; enable)</span>}
               </div>
               {info.description && <div className="settings-field-desc">{info.description}</div>}
               <PermissionChips info={info} />
@@ -123,7 +123,7 @@ export default function ExtensionsSection({ config, onChange }: Props) {
               )}
               {info.benched && (
                 <div className="settings-dep-inline-warn">
-                  <WarnIcon />Disabled for this session after repeated failures — fix and Rescan.
+                  <WarnIcon />Disabled for this session after repeated failures. Fix and Rescan.
                 </div>
               )}
             </div>

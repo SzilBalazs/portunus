@@ -16,11 +16,34 @@ const PDF_RENDER_WIDTH: u32 = 800;
 /// Hard ceiling so a runaway zoom can't allocate a multi-hundred-MB bitmap.
 const PDF_MAX_RENDER_WIDTH: u32 = 3000;
 
-/// Whether the pdfium system library can be loaded. Used by `check_dependencies`
-/// to report PDF-preview availability in Settings without waiting for the user
-/// to actually preview a PDF (where the failure would otherwise first surface).
+/// Binds to pdfium, preferring the bundled library (AppImage) and falling back
+/// to the system library for a source build.
+fn bind_pdfium() -> Result<pdfium_render::prelude::Pdfium, String> {
+    use pdfium_render::prelude::*;
+    let bindings = match crate::runtime_assets::pdfium_library() {
+        Some(path) => Pdfium::bind_to_library(&path)
+            .or_else(|_| Pdfium::bind_to_system_library()),
+        None => Pdfium::bind_to_system_library(),
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(Pdfium::new(bindings))
+}
+
+/// Whether pdfium can be loaded. Used by `check_dependencies` to report
+/// PDF-preview availability in Settings without waiting for the user to
+/// actually preview a PDF (where the failure would otherwise first surface).
+///
+/// This only *binds* the library (loads its symbols); it must NOT construct a
+/// `Pdfium`. `Pdfium::new` calls the global `FPDF_InitLibrary` and its `Drop`
+/// calls `FPDF_DestroyLibrary`, which would tear down the library state out
+/// from under the long-lived preview worker and deadlock pdfium.
 pub fn pdfium_available() -> bool {
     use pdfium_render::prelude::*;
+    if let Some(path) = crate::runtime_assets::pdfium_library() {
+        if Pdfium::bind_to_library(&path).is_ok() {
+            return true;
+        }
+    }
     Pdfium::bind_to_system_library().is_ok()
 }
 
@@ -31,12 +54,10 @@ fn start_pdf_worker(shared: SharedConfig) -> PdfWorkerHandle {
         use pdfium_render::prelude::*;
         // Read the flag fresh each message so the Debug toggle takes effect live.
         let log_pdf = || shared.read().unwrap().log_pdf;
-        let pdfium = Pdfium::bind_to_system_library()
-            .map(Pdfium::new)
-            .map_err(|e| {
-                eprintln!("[pdf] bind_to_system_library failed: {e}");
-                e.to_string()
-            });
+        let pdfium = bind_pdfium().map_err(|e| {
+            eprintln!("[pdf] failed to bind pdfium: {e}");
+            e
+        });
         while let Ok((path, page_idx, width, reply)) = rx.recv() {
             let log = log_pdf();
             let result = match &pdfium {
@@ -204,7 +225,7 @@ pub fn read_text_preview(path: String, terms: Option<Vec<String>>) -> Result<Str
     let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let reader = BufReader::new(file);
 
-    // No terms: keep the cheap streaming path — first window from the top.
+    // No terms: keep the cheap streaming path - first window from the top.
     if terms.is_empty() {
         let mut lines: Vec<String> = Vec::new();
         let mut total = 0usize;
@@ -220,7 +241,7 @@ pub fn read_text_preview(path: String, terms: Option<Vec<String>>) -> Result<Str
     }
 
     // Terms present: read up to SCAN_LINES, then center the window on the earliest
-    // section that covers the most *distinct* query terms — so a multi-part query
+    // section that covers the most *distinct* query terms - so a multi-part query
     // lands on the section holding all of them, not the first stray single match.
     const CLUSTER_LINES: usize = 10;
     let mut lines: Vec<String> = Vec::new();

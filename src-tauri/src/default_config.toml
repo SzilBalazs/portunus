@@ -1,4 +1,4 @@
-# Portunus configuration — copy to ~/.config/portunus/config.toml
+# Portunus configuration - copy to ~/.config/portunus/config.toml
 # All keys are optional; defaults are shown below.
 
 [general]
@@ -29,8 +29,8 @@ fill_threshold       = 3        # only fill when fewer than this many non-dict r
 fill_max             = 5        # max dictionary rows added when filling
 
 [search]
-min_quality    = 0.06  # minimum fuzzy match quality (0.0–1.0); scales with query length
-history_weight = 50    # how strongly launch history boosts results (0–100)
+min_quality    = 0.06  # minimum fuzzy match quality (0.0-1.0); scales with query length
+history_weight = 50    # how strongly launch history boosts results (0-100)
 
 [debug]
 log_scores  = false    # print nucleo score + threshold for every match candidate to stderr
@@ -41,7 +41,7 @@ log_pdf     = false    # print pdfium load/render/encode steps to stderr
 enabled        = true
 half_life_days = 14.0  # frecency score halves every N days of non-use
 
-# Full-text content search — query must start with ! to activate (e.g. "! invoice 2024").
+# Full-text content search - query must start with ! to activate (e.g. "! invoice 2024").
 # system deps: poppler (pdftotext/pdftoppm), tesseract + tesseract-data-eng (OCR)
 # re-index on demand: portunus --reindex
 [content]
@@ -64,7 +64,7 @@ extensions = [
 
 # Directories to index for content search.
 # Each entry requires a `path`; `depth` defaults to 2.
-# `extensions` is optional — if set, only those formats are indexed in that directory,
+# `extensions` is optional - if set, only those formats are indexed in that directory,
 # overriding the global list above. Useful to avoid OCR-heavy formats in large dirs.
 [[content.dirs]]
 path  = "~/Pictures/Screenshots"

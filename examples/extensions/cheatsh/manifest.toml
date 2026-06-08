@@ -1,8 +1,8 @@
 api = 1
 name = "cheatsh"
 version = "0.1.0"
-description = "cheat.sh command lookup"
-author = "you"
+description = "Look up command cheat sheets from cheat.sh"
+author = "Portunus examples"
 kinds = ["ext-cheatsh"]
 
 [permissions]

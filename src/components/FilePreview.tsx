@@ -16,7 +16,7 @@ import { highlightInElement, focusBestCluster, cellMatches, buildTermRegex } fro
  */
 function useTermHighlight<T extends HTMLElement>(terms: string[], dep: unknown) {
   const ref = useRef<T>(null);
-  // Layout effect so the marks + scroll land before the browser paints — using a
+  // Layout effect so the marks + scroll land before the browser paints - using a
   // plain effect leaves one frame of un-highlighted, top-scrolled content (a jump).
   useLayoutEffect(() => {
     if (!ref.current || !terms.length) return;
@@ -165,7 +165,7 @@ function getPdfUrl(path: string, page: number, width: number): Promise<string> {
 function PdfPreview({ path, page, quicklook = false }: { path: string; page: number; quicklook?: boolean }) {
   // `cur` is the displayed page; moves with Ctrl+←/→. Seed from the live page the
   // side preview last showed for this file (via pdfView) so opening Quicklook keeps
-  // the current page — falling back to the content-match page for a fresh file.
+  // the current page - falling back to the content-match page for a fresh file.
   const startPage = () => (pdfView.path === path ? pdfView.page : page);
   const [cur, setCur] = useState(startPage);
   const [count, setCount] = useState<number | null>(() => pdfPageCount.get(path) ?? null);
@@ -174,7 +174,7 @@ function PdfPreview({ path, page, quicklook = false }: { path: string; page: num
   // Quicklook measures its reader surface to size renders; side preview uses the
   // fixed 800px default (downscaled to fit, so resolution is plenty).
   // outerRef is the non-scrolling parent: measuring IT (not the scroll container)
-  // means the scrollbar appearing/disappearing can't change the measured width —
+  // means the scrollbar appearing/disappearing can't change the measured width -
   // otherwise width↔scrollbar feedback makes the page jump every frame.
   const outerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -333,7 +333,7 @@ function PdfPreview({ path, page, quicklook = false }: { path: string; page: num
       // While a Quicklook PDF is open, the background side preview ignores page-nav.
       if (!quicklook && pdfQuicklookMounted > 0) return;
       setCur((c) => {
-        // Until the page count is known, don't advance past the current page —
+        // Until the page count is known, don't advance past the current page -
         // otherwise rapid Ctrl+→ overshoots into a non-existent page and flashes
         // "Preview unavailable" until the count arrives.
         const max = count != null ? count - 1 : c;
@@ -839,7 +839,7 @@ interface Props {
   onReveal?: () => void;
   /** Matched content-search terms to highlight (empty for non-content searches). */
   terms?: string[];
-  /** Rendered in the full-card Quicklook overlay — enables the large scrollable PDF reader. */
+  /** Rendered in the full-card Quicklook overlay - enables the large scrollable PDF reader. */
   quicklook?: boolean;
 }
 

@@ -184,7 +184,7 @@ export default function Settings() {
   const diskConfigRef = useRef<Config | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while there are unsaved changes — blocks focus-triggered config reload
+  // True while there are unsaved changes - blocks focus-triggered config reload
   // so a GTK native popup (e.g. select) losing/regaining window focus can't
   // overwrite a just-made change before the autosave timer fires.
   const hasPendingRef = useRef(false);
@@ -223,9 +223,9 @@ export default function Settings() {
     let lastLoad = 0;
     win.onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
-      // Don't reload over staged heavy edits — that would silently discard them.
+      // Don't reload over staged heavy edits - that would silently discard them.
       if (pendingRef.current) return;
-      // Don't reload while there are unsaved light changes — a GTK native widget
+      // Don't reload while there are unsaved light changes - a GTK native widget
       // (e.g. a <select> popup) losing then regaining window focus would otherwise
       // overwrite the just-made change before the autosave timer fires.
       if (hasPendingRef.current) return;
@@ -290,7 +290,7 @@ export default function Settings() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       const toSave = stripHeavy(config, base, indexEmpty);
-      // Nothing cheap actually changed (only heavy edits are pending) — don't
+      // Nothing cheap actually changed (only heavy edits are pending) - don't
       // touch disk, but leave the staged change visible via the Apply strip.
       if (JSON.stringify(toSave) === JSON.stringify(base)) {
         hasPendingRef.current = false;

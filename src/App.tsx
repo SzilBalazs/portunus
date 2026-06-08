@@ -42,8 +42,8 @@ export default function App() {
   // list can distinguish "still loading" from a genuine zero-result query.
   const [searching, setSearching] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  // The pinned result shown in Quicklook (null = closed). Pinning the result —
-  // rather than tracking a boolean + selectedIndex — keeps the overlay on the
+  // The pinned result shown in Quicklook (null = closed). Pinning the result -
+  // rather than tracking a boolean + selectedIndex - keeps the overlay on the
   // same file even if background events reorder/extend the results underneath.
   const [quickResult, setQuickResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,7 +137,7 @@ export default function App() {
 
   useTauriListener<string>("window-show-query", payload => {
     setQuery(payload);
-    // Don't manually clear results — the query useEffect will re-search immediately.
+    // Don't manually clear results - the query useEffect will re-search immediately.
     inputRef.current?.focus();
     audioCtxWarmup();
   });
@@ -180,7 +180,7 @@ export default function App() {
       }
       if (results.length === 0) {
         // Suggest content search only once the regular search has resolved with
-        // nothing — otherwise the hint flashes before the first debounce lands.
+        // nothing - otherwise the hint flashes before the first debounce lands.
         if (searching) return [];
         return [{
           id: "content:hint",
@@ -273,7 +273,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       // While the onboarding wizard is open it owns all input.
       if (showOnboardingRef.current) return;
-      // Ignore keys when the window isn't focused — an always-on-top launcher can
+      // Ignore keys when the window isn't focused - an always-on-top launcher can
       // otherwise still receive (and act on) keystrokes meant for another window.
       if (!focusedRef.current) return;
       // Quicklook is modal: result navigation must not run underneath it. Arrow
@@ -352,7 +352,7 @@ export default function App() {
     ? query.trimStart().slice(1).trim().length > 0
     : query.trim().length > 0;
 
-  // Terms to highlight in the preview — only for content (`!`) searches.
+  // Terms to highlight in the preview - only for content (`!`) searches.
   const previewTerms = useMemo(
     () => (isContentSearch ? deriveContentTerms(query) : []),
     [isContentSearch, query],

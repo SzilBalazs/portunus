@@ -21,15 +21,15 @@ pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
 pub const SCORE_TIMER: f32 = 4_000_000.0;
 pub const SCORE_CALC: f32 = 3_000_000.0;
 pub const SCORE_DICT: f32 = 3_000_000.0;
-/// Sparse-fill dict rows — kept below files (1M) so they sink to the bottom and
+/// Sparse-fill dict rows - kept below files (1M) so they sink to the bottom and
 /// only matter when little else matched.
 pub const SCORE_DICT_FILL: f32 = 500_000.0;
 
 // ── Discoverable provider bases (apps, files, folders, extensions) ──
 pub const SCORE_APP: f32 = 2_000_000.0;
-/// Base for extension results — above apps (2M), below calc/dict (3M).
+/// Base for extension results - above apps (2M), below calc/dict (3M).
 pub const SCORE_EXTENSION: f32 = 2_500_000.0;
-/// Width of the band extension relevance (0–100) maps into, on top of
+/// Width of the band extension relevance (0-100) maps into, on top of
 /// `SCORE_EXTENSION`. Matches FUZZY_MAX_BONUS so relevance and fuzzy quality
 /// are on the same scale; frecency can bridge a few relevance points per launch.
 pub const EXTENSION_BAND: f32 = 300_000.0;
@@ -160,7 +160,7 @@ impl PluginRegistry {
     }
 
     /// Adds, replaces, or (with None) removes an extension. The single
-    /// mutation path for extension state — build instances before taking the
+    /// mutation path for extension state - build instances before taking the
     /// write lock, this only swaps pointers.
     pub fn set_extension(&mut self, name: &str, provider: Option<Arc<wasm::WasmProvider>>) {
         match provider {
@@ -223,7 +223,7 @@ impl PluginRegistry {
             let mut budget_ms = 0;
             let mut spawned = 0;
             for ext in self.extensions.values() {
-                // Benched extensions would fail instantly anyway — don't pay
+                // Benched extensions would fail instantly anyway - don't pay
                 // a thread spawn per keystroke for them.
                 if ext.is_benched() {
                     continue;
@@ -258,7 +258,7 @@ impl PluginRegistry {
         }
 
         // Dict sparse-fill gating: for a plain query, dict rows are fill
-        // candidates — keep them only when other results are sparse, capped at
+        // candidates - keep them only when other results are sparse, capped at
         // fill_max. Explicit "define"/"dict" queries bypass this entirely.
         if let Some((fill_threshold, fill_max)) = self.dict_fill {
             if !dict::is_explicit_dict_query(query) {
@@ -280,7 +280,7 @@ impl PluginRegistry {
         }
 
         // Apply frecency bonus before sort so heavily-used items surface correctly.
-        // Skip content results — they are already ranked by FTS5/BM25 relevance.
+        // Skip content results - they are already ranked by FTS5/BM25 relevance.
         if let Some(store) = &self.frecency {
             let scores = store.all_scores();
             for r in &mut results {

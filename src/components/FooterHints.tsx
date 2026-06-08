@@ -14,7 +14,7 @@ interface Props {
 const Nav = () => <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>;
 const Esc = () => <span className="hint"><kbd>Esc</kbd> close</span>;
 const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
-const Jump = () => <span className="hint"><kbd>alt</kbd><kbd>1–9</kbd> jump</span>;
+const Jump = () => <span className="hint"><kbd>alt</kbd><kbd>1-9</kbd> jump</span>;
 const CopyPath = () => <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy path</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
 const Peek = () => <span className="hint"><kbd>shift</kbd><kbd><EnterIcon /></kbd> peek</span>;
@@ -24,7 +24,7 @@ const Complete = () => <span className="hint"><kbd>Tab</kbd> complete</span>;
 function hints(selected: SearchResult | null, canComplete: boolean, quicklookOpen: boolean): ReactNode {
   const k = selected?.kind;
 
-  // While Quicklook is open the keys mean something different — keep the bar honest.
+  // While Quicklook is open the keys mean something different - keep the bar honest.
   if (quicklookOpen) return <>
     <span className="hint"><kbd>↑</kbd><kbd>↓</kbd> scroll</span>
     <Open />

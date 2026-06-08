@@ -16,7 +16,7 @@ export interface PreviewProps {
   onReveal?: () => void;
   /** Matched content-search terms to highlight in the preview (empty otherwise). */
   terms?: string[];
-  /** Rendered inside the full-card Quicklook overlay — enables large/scrollable layouts. */
+  /** Rendered inside the full-card Quicklook overlay - enables large/scrollable layouts. */
   quicklook?: boolean;
 }
 
