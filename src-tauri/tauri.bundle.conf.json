@@ -14,7 +14,8 @@
       "resources/tessdata/eng.traineddata": "tessdata/eng.traineddata",
       "resources/bin/pdftotext": "bin/pdftotext",
       "resources/bin/pdftoppm": "bin/pdftoppm",
-      "resources/lib/*": "lib/"
+      "resources/lib/*": "lib/",
+      "resources/ocrlib/*": "ocrlib/"
     }
   }
 }

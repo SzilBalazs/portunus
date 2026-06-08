@@ -1,6 +1,6 @@
 [package]
 name = "portunus"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 description = "Application launcher and power-user search for Wayland"
 authors = ["SzilBalazs"]
@@ -12,6 +12,10 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "portunus_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+lto = "thin"          # cross-crate inlining; "thin" keeps build time sane vs "fat"
+codegen-units = 1     # better optimization at cost of slower compile
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
