@@ -104,7 +104,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
-        run: bun tauri build -v -v --config src-tauri/tauri.bundle.conf.json
+        run: bun tauri build --config src-tauri/tauri.bundle.conf.json
 
       - name: Upload packages to release
         # The .deb links the host's system WebKit (Tauri auto-adds the dependency)
