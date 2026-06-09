@@ -437,13 +437,36 @@ function getImgUrl(path: string, width: number): Promise<string> {
 }
 
 function ImagePreview({ path, quicklook = false }: { path: string; quicklook?: boolean }) {
-  const width = quicklook ? IMG_QL_WIDTH : 800;
+  // Side preview measures its container so a wide image fills the panel and stays
+  // crisp on HiDPI, instead of floating at a fixed 800px. Quicklook keeps its
+  // larger fixed target. outerRef is the wrap itself; a no-op guard stops a stable
+  // size from churning re-renders/re-measures.
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState(0);
+  useLayoutEffect(() => {
+    if (quicklook) return;
+    const el = outerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.min(2400, Math.max(800, Math.round(el.clientWidth * dpr)));
+      setMeasured(prev => (prev === w ? prev : w));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [quicklook]);
+
+  const width = quicklook ? IMG_QL_WIDTH : measured;
   const key = imgKey(path, width);
   const [src, setSrc] = useState<string | null>(() => imgUrlCache.get(key) ?? null);
   const [loaded, setLoaded] = useState(() => imgUrlCache.has(key));
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    // Side preview waits for its measurement so the first render targets the real width.
+    if (!quicklook && width === 0) return;
     const cached = imgUrlCache.get(key);
     if (cached) { setSrc(cached); setLoaded(true); setError(false); return; }
     let cancelled = false;
@@ -452,10 +475,10 @@ function ImagePreview({ path, quicklook = false }: { path: string; quicklook?: b
       .then(url => { if (!cancelled) setSrc(url); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [key, path, width]);
+  }, [key, path, width, quicklook]);
 
   return (
-    <div className={`pdf-preview-wrap${!loaded && !error ? " is-loading" : ""}`}>
+    <div ref={outerRef} className={`pdf-preview-wrap${!loaded && !error ? " is-loading" : ""}`}>
       {!error && (
         <div
           className="pdf-skeleton"
@@ -920,18 +943,20 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], qu
       {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} terms={terms} />}
       {isFolder && <FolderContents path={filePath} />}
 
-      {!quicklook && (
+      {!quicklook && (result.modified || result.created) && (
       <div className="file-preview-meta">
         {result.modified && (
-          <span><span className="file-preview-meta-key">Modified </span>{formatDate(result.modified)}</span>
+          <div className="file-preview-meta-cell">
+            <span className="file-preview-meta-key">Modified</span>
+            <span className="file-preview-meta-val">{formatDate(result.modified)}</span>
+          </div>
         )}
         {result.created && (
-          <span><span className="file-preview-meta-key">Created </span>{formatDate(result.created)}</span>
+          <div className="file-preview-meta-cell">
+            <span className="file-preview-meta-key">Created</span>
+            <span className="file-preview-meta-val">{formatDate(result.created)}</span>
+          </div>
         )}
-        {!isFolder && result.file_size != null && (
-          <span><span className="file-preview-meta-key">Size </span>{formatBytes(result.file_size)}</span>
-        )}
-        <span><span className="file-preview-meta-key">Kind </span>{kind}</span>
       </div>
       )}
     </div>

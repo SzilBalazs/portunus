@@ -96,14 +96,31 @@ html, body, #root {
 
 .card {
   flex: 1;
+  min-height: 0;
   position: relative;
+  display: flex;
   background: var(--bg-card);
   border-radius: var(--radius);
   border: 1px solid var(--line);
   overflow: hidden;
+  box-shadow: 0 30px 80px -20px rgba(0,0,0,.7), 0 8px 24px -8px rgba(0,0,0,.5);
+}
+
+/* Inner clip layer. clip-path reliably clips composited descendants (e.g. the
+   app-preview icon's drop-shadow filter) to the rounded corners, which plain
+   overflow:hidden + border-radius does NOT in WebKit2GTK - that bug squared off
+   the card's right corners on app previews. Kept off .card so the card's outer
+   box-shadow glow isn't clipped away. */
+.card-clip {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
   display: grid;
   grid-template-rows: 64px 1fr 36px;
-  box-shadow: 0 30px 80px -20px rgba(0,0,0,.7), 0 8px 24px -8px rgba(0,0,0,.5);
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 1px);
+  clip-path: inset(0 round calc(var(--radius) - 1px));
 }
 
 /* ---------- quicklook overlay ---------- */
@@ -488,7 +505,7 @@ html, body, #root {
 
 .result-meta {
   font: 500 11px/1 "JetBrains Mono", "Fira Code", monospace;
-  color: var(--fg-dim);
+  color: var(--fg-mute);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -826,37 +843,34 @@ kbd {
 
 .file-preview-meta {
   display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  overflow: hidden;
-  padding-top: 8px;
+  align-items: baseline;
+  gap: 24px;
+  padding-top: 10px;
   border-top: 1px solid var(--line-soft);
-  font: 400 10px/1.4 "JetBrains Mono", "Fira Code", monospace;
-  color: var(--fg);
 }
 
-.file-preview-meta > span {
-  white-space: nowrap;
+.file-preview-meta-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 1;
 }
 
-.file-preview-meta > span:not(:last-child) {
-  flex-shrink: 0;
-}
-
-.file-preview-meta > span + span::before {
-  content: '·';
-  color: var(--fg-dim);
-  margin: 0 7px;
-}
+:root[data-show-metadata="false"] .file-preview-meta { display: none; }
 
 .file-preview-meta-key {
+  font: 600 9px/1 "JetBrains Mono", "Fira Code", monospace;
   color: var(--fg-mute);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
+}
+
+.file-preview-meta-val {
+  font: 400 11px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- pdf preview ---------- */
@@ -864,7 +878,11 @@ kbd {
 .pdf-preview-wrap {
   position: relative;
   border-radius: 4px;
-  background: var(--bg-deep);
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--bg-deep) 92%, #fff) 0%,
+    var(--bg-deep) 70%
+  );
   overflow: hidden;
   flex: 1;
   min-height: 0;
@@ -922,6 +940,7 @@ kbd {
   object-fit: contain;
   position: relative;
   z-index: 1;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
 @keyframes pdf-reveal {

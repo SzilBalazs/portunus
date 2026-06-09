@@ -11,7 +11,7 @@ export default function AppearanceSection({ config, onChange }: Props) {
   const set = (patch: Partial<Config["appearance"]>) =>
     onChange({ ...config, appearance: { ...config.appearance, ...patch } });
 
-  const { theme, font_size, animate_results } = config.appearance;
+  const { theme, font_size, animate_results, show_metadata } = config.appearance;
 
   return (
     <div>
@@ -66,6 +66,20 @@ export default function AppearanceSection({ config, onChange }: Props) {
             label="Result animations"
             checked={animate_results ?? true}
             onChange={v => set({ animate_results: v })}
+          />
+        </div>
+      </div>
+
+      <div className="settings-field">
+        <div className="settings-field-label">
+          <div className="settings-field-name">File metadata</div>
+          <div className="settings-field-desc">Show the modified/created row in file previews</div>
+        </div>
+        <div className="settings-field-control">
+          <Toggle
+            label="File metadata"
+            checked={show_metadata ?? true}
+            onChange={v => set({ show_metadata: v })}
           />
         </div>
       </div>

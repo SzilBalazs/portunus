@@ -415,6 +415,7 @@ export default function App() {
         const t = e.target as HTMLElement;
         if (t !== inputRef.current && !t.closest('pre, code')) e.preventDefault();
       }}>
+        <div className="card-clip">
         <div className="search-bar">
           {indexingProgress && (
             <div className="content-index-bar">
@@ -502,6 +503,7 @@ export default function App() {
             </button>
             <div className="brand">Portunus{version && <span className="brand-version">v{version}</span>}</div>
           </div>
+        </div>
         </div>
       </div>
     </div>
