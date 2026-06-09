@@ -3,7 +3,7 @@
   "bundle": {
     "linux": {
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": false
       },
       "deb": {
         "depends": ["libgtk-layer-shell0"]

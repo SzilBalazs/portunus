@@ -2,18 +2,26 @@ name: Release
 
 # Builds a self-contained AppImage and attaches it to a GitHub Release.
 # Triggered by pushing a version tag (e.g. `git tag v0.1.0 && git push --tags`),
-# or run manually from the Actions tab. The AppImage bundles libpdfium, the
+# or run manually from the Actions tab. Also runs on push to master and on PRs
+# as CI - those runs build but skip the upload step. The master build warms the
+# Swatinem/rust-cache: GitHub scopes caches per-branch (tag runs can only read
+# their own ref + the default branch), so without a master build each tag
+# release started from a cold cache. The AppImage bundles libpdfium, the
 # poppler tools, and the English tesseract data so PDF preview, content search,
 # and OCR work with nothing installed on the user's machine. libgtk-layer-shell
 # is a link dependency of the binary, so linuxdeploy carries it in automatically
-# (the layer-shell launcher mode needs it present). bundleMediaFramework (set in
-# tauri.bundle.conf.json) bundles the GStreamer plugins below so WebKit audio
-# (the timer chime) works inside the AppImage's repointed GStreamer environment.
+# (the layer-shell launcher mode needs it present). The timer chime is synthesized
+# via the WebKit Web Audio API (native, no GStreamer), so bundleMediaFramework is
+# off (tauri.bundle.conf.json) - no GStreamer plugins are bundled or installed,
+# which also avoids the gst-plugin-scanner stall on the AppImage's first window.
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -44,12 +52,7 @@ jobs:
             poppler-utils \
             libfuse2t64 \
             patchelf \
-            file desktop-file-utils \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-libav \
-            gstreamer1.0-pulseaudio
+            file desktop-file-utils
 
       - uses: oven-sh/setup-bun@v2
 
@@ -123,7 +126,21 @@ jobs:
           RUSTFLAGS: "-C link-arg=-Wl,-rpath,$ORIGIN/../lib/portunus/ocrlib"
         run: bun tauri build --config src-tauri/tauri.bundle.conf.json
 
+      - name: Upload packages as workflow artifact
+        # Runs on every trigger (master/PR/tag) so the built .deb + AppImage are
+        # downloadable from the run's Actions page even when no release is cut.
+        uses: actions/upload-artifact@v4
+        with:
+          name: portunus-packages
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+
       - name: Upload packages to release
+        # Tag pushes publish a release; master/PR runs build only (to warm the
+        # rust cache and act as CI), so skip the upload off-tag.
+        if: startsWith(github.ref, 'refs/tags/')
         # The .deb links the host's system WebKit (Tauri auto-adds the dependency)
         # so it never carries an old bundled WebKit and never lags - the no-lag
         # native path for Debian/Ubuntu. The AppImage stays as the portable
