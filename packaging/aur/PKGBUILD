@@ -6,7 +6,7 @@
 
 pkgname=portunus-bin
 _pkgname=portunus
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc="Application launcher and power-user search for Wayland"
 arch=('x86_64')
