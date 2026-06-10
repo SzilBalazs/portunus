@@ -53,6 +53,13 @@ fn search(query: String, registry: tauri::State<'_, Registry>) -> Vec<providers:
     registry.read().unwrap_or_else(|e| e.into_inner()).search(&query)
 }
 
+/// Content-scope search (the Tab-activated "Contents" mode): full-text matches
+/// over file contents only, never names/apps.
+#[tauri::command]
+fn search_content(query: String, registry: tauri::State<'_, Registry>) -> Vec<providers::SearchResult> {
+    registry.read().unwrap_or_else(|e| e.into_inner()).search_content(&query)
+}
+
 #[derive(serde::Serialize, Clone)]
 struct DepStatus {
     /// Stable identifier the frontend can match against (e.g. "dict").
@@ -819,6 +826,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Core
             search,
+            search_content,
             launch_app,
             reveal_file,
             hide_window,

@@ -109,6 +109,30 @@ export default function App() {
     inputRef.current?.focus();
   };
 
+  // Dedicated full-text "Contents" mode. Unlike clipboard it reuses the normal
+  // results list/preview - only the search routing, chrome, and a few keys change.
+  // Tab toggles it; Backspace on an empty query drops the chip.
+  const [contentMode, setContentMode] = useState(false);
+  const contentModeRef = useRef(false);
+  useEffect(() => { contentModeRef.current = contentMode; }, [contentMode]);
+
+  // Tab toggles content mode, keeping the typed query so a search flips between
+  // matching names and matching file contents.
+  const enterContentMode = (seed?: string) => {
+    setContentMode(true);
+    if (seed !== undefined) setQuery(seed);
+    setResults([]);
+    setResolvedEmpty(false);
+    inputRef.current?.focus();
+  };
+
+  const exitContentMode = () => {
+    setContentMode(false);
+    setResults([]);
+    setResolvedEmpty(false);
+    inputRef.current?.focus();
+  };
+
   useEffect(() => { queryRef.current = query; }, [query]);
   useEffect(() => { getVersion().then(setVersion); }, []);
 
@@ -169,6 +193,7 @@ export default function App() {
     // A plain `--show` always opens the clean launcher, never a stale clipboard
     // session. (`--clipboard` uses window-show-query, which re-enters the mode.)
     setClipboardMode(false);
+    setContentMode(false);
     setQuery("");
     setResults([]);
     inputRef.current?.focus();
@@ -199,18 +224,24 @@ export default function App() {
   // remainder (e.g. "clipboard foo" → mode filtered by "foo"). Same prefix the
   // backend provider triggers on; mirrors the inline provider's old behavior.
   useEffect(() => {
-    if (clipboardMode) return;
+    if (clipboardMode || contentMode) return;
     const m = /^(clip|clipb|clipbo|clipboa|clipboar|clipboard)\s+(.*)$/i.exec(query);
     if (m) enterClipboardMode(m[2], false);
-  }, [query, clipboardMode]);
+  }, [query, clipboardMode, contentMode]);
 
   useEffect(() => {
     if (clipboardMode) { setSearching(false); return; }
-    if (!query.trim()) { setResults([]); setSearching(false); setResolvedEmpty(false); return; }
+    const trimmed = query.trim();
+    // Content search needs >= 2 chars (matches the backend guard); below that
+    // there's nothing to run, so clear and show the prompt empty state.
+    if (!trimmed || (contentMode && trimmed.length < 2)) {
+      setResults([]); setSearching(false); setResolvedEmpty(false); return;
+    }
     let cancelled = false;
     setSearching(true);
+    const cmd = contentMode ? "search_content" : "search";
     const t = setTimeout(() => {
-      invoke<SearchResult[]>("search", { query }).then(r => {
+      invoke<SearchResult[]>(cmd, { query }).then(r => {
         if (!cancelled) { setResults(r); setSearching(false); setResolvedEmpty(r.length === 0); }
       }).catch(() => {
         // Don't strand the UI in "searching": clear so the empty state can show.
@@ -218,18 +249,13 @@ export default function App() {
       });
     }, 10);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, clipboardMode]);
+  }, [query, clipboardMode, contentMode]);
 
-  useEffect(() => { setSelectedIndex(0); }, [query]);
+  useEffect(() => { setSelectedIndex(0); }, [query, contentMode]);
 
   const displayResults = useMemo<SearchResult[]>(() => {
     if (!query.trim()) return [];
-    const isContent = query.trimStart().startsWith('!');
-    if (isContent) {
-      // Strip the '!' prefix; with no term yet ("!", "!  ") there is nothing to
-      // search, so show nothing rather than a stray disabled hint or empty state.
-      const term = query.trimStart().slice(1).trim();
-      if (!term) return [];
+    if (contentMode) {
       if (!contentEnabled) {
         return [{
           id: "content:disabled",
@@ -239,6 +265,8 @@ export default function App() {
           score: 0,
         }];
       }
+      // Below the 2-char minimum there's nothing to search yet.
+      if (query.trim().length < 2) return [];
       return results;
     }
     if (results.length === 0) {
@@ -255,7 +283,7 @@ export default function App() {
       }];
     }
     return results;
-  }, [query, results, contentEnabled, resolvedEmpty]);
+  }, [query, results, contentEnabled, resolvedEmpty, contentMode]);
 
   // Results can shrink without the query changing (search-invalidated). Snap the
   // selection back in bounds so the highlight/preview and Enter stay live.
@@ -265,7 +293,9 @@ export default function App() {
 
   const requery = () => {
     const q = queryRef.current;
-    if (q.trim()) invoke<SearchResult[]>("search", { query: q }).then(setResults);
+    if (!q.trim()) return;
+    const cmd = contentModeRef.current ? "search_content" : "search";
+    invoke<SearchResult[]>(cmd, { query: q }).then(setResults);
   };
 
   useTauriListener("search-invalidated", () => {
@@ -290,7 +320,7 @@ export default function App() {
       return;
     }
     if (result.kind === "content-hint") {
-      setQuery('! ' + queryRef.current.trim());
+      enterContentMode(queryRef.current.trim());
       return;
     }
     const ctx = makeCtx();
@@ -344,15 +374,27 @@ export default function App() {
         setSelectedIndex(displayResults.indexOf(target));
         launch(target);
       } else if (e.key === "Tab") {
-        // Accept the ghost completion if one is showing; otherwise keep focus
-        // in the input (no focusable peers to tab to in the launcher).
+        // Ghost completion wins if one is showing; otherwise Tab toggles the
+        // full-text "Contents" mode, keeping the query for an in-place re-search.
         e.preventDefault();
         const ghost = ghostRef.current;
-        if (ghost) setQuery(queryRef.current + ghost);
+        if (ghost) { setQuery(queryRef.current + ghost); return; }
+        if (contentModeRef.current) exitContentMode(); else enterContentMode();
+      } else if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey
+                 && contentModeRef.current && !queryRef.current) {
+        // Empty-query Backspace drops the Contents chip, back to normal search.
+        e.preventDefault();
+        exitContentMode();
       } else if (e.key === "Escape") {
         e.preventDefault();
-        // Esc closes the Quicklook overlay first, the window second.
+        // Esc closes the Quicklook overlay first.
         if (quickResult) { setQuickResult(null); return; }
+        // In content mode, Esc backs out one level: clear the query, else drop
+        // the chip. Only the bare launcher Esc hides the window.
+        if (contentModeRef.current) {
+          if (queryRef.current.trim()) setQuery(""); else exitContentMode();
+          return;
+        }
         setQuery("");
         setResults([]);
         invoke("hide_window");
@@ -390,17 +432,16 @@ export default function App() {
   }, [quickResult]);
 
   const calcResult = results.find(r => r.kind === "calc");
-  const isContentSearch = query.trimStart().startsWith('!');
-  // Whether there's an actual term to search. For content queries that means
-  // something after the '!'; a bare "!"/"!  " has no term (so no "No results").
-  const hasSearchTerm = isContentSearch
-    ? query.trimStart().slice(1).trim().length > 0
+  // Whether there's an actual term to search (drives the empty state). Content
+  // mode needs >= 2 chars; below that the list stays blank instead of "No results".
+  const hasSearchTerm = contentMode
+    ? query.trim().length >= 2
     : query.trim().length > 0;
 
-  // Terms to highlight in the preview - only for content (`!`) searches.
+  // Terms to highlight in the preview - only in content (full-text) mode.
   const previewTerms = useMemo(
-    () => (isContentSearch ? deriveContentTerms(query) : []),
-    [isContentSearch, query],
+    () => (contentMode ? deriveContentTerms(query) : []),
+    [contentMode, query],
   );
 
   const launchableResults = useMemo(
@@ -481,6 +522,21 @@ export default function App() {
               <rect x="8" y="2" width="8" height="4" rx="1" />
               <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
             </svg>
+          ) : contentMode ? (
+            <svg
+              className="search-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M9 13h6" />
+              <path d="M9 17h6" />
+            </svg>
           ) : (
             <svg
               className="search-icon"
@@ -497,22 +553,23 @@ export default function App() {
           )}
           <div className="search-input-area">
             {clipboardMode && <span className="search-hint-chip" style={{ marginLeft: 0, marginRight: 10 }}>Clipboard</span>}
+            {contentMode && <span className="search-hint-chip" style={{ marginLeft: 0, marginRight: 10 }}>Contents</span>}
             <span ref={mirrorRef} className="input-mirror" aria-hidden="true">{query}</span>
             <input
               ref={inputRef}
               className="search-input"
               type="text"
-              placeholder={clipboardMode ? "Search clipboard history…" : (loading ? "Loading…" : "Search…")}
+              placeholder={clipboardMode ? "Search clipboard history…" : contentMode ? "Search file contents…" : (loading ? "Loading…" : "Search…")}
               value={query}
               onChange={e => setQuery(e.target.value)}
               autoFocus
               spellCheck={false}
-              style={!clipboardMode && contentSized ? { width: inputWidth + 4 } : { flex: 1 }}
+              style={!clipboardMode && !contentMode && contentSized ? { width: inputWidth + 4 } : { flex: 1 }}
             />
-            {!clipboardMode && ghostSuffix && <span className="search-ghost">{ghostSuffix}</span>}
-            {!clipboardMode && hintChip && <span className="search-hint-chip">{hintChip}</span>}
-            {!clipboardMode && calcResult && <div className="calc-inline">= {calcResult.title}</div>}
-            {!clipboardMode && contentSized && <div className="search-spacer" />}
+            {!clipboardMode && !contentMode && ghostSuffix && <span className="search-ghost">{ghostSuffix}</span>}
+            {!clipboardMode && !contentMode && hintChip && <span className="search-hint-chip">{hintChip}</span>}
+            {!clipboardMode && !contentMode && calcResult && <div className="calc-inline">= {calcResult.title}</div>}
+            {!clipboardMode && !contentMode && contentSized && <div className="search-spacer" />}
           </div>
         </div>
 
@@ -536,6 +593,7 @@ export default function App() {
             onLaunch={launch}
             launchableResults={launchableResults}
             accents={accents}
+            emptyLabel={contentMode ? "No file contents match" : undefined}
           />
           <div className="preview-col">
             <PreviewPanel
@@ -558,14 +616,15 @@ export default function App() {
         )}
 
         <div className="footer">
-          <FooterHints selected={selected} canComplete={ghostSuffix !== null} quicklookOpen={quickResult != null} clipboardMode={clipboardMode} smartPaste={clipCaps.smart_paste} clipboardIdle={clipboardMode && query.trim() === ""} />
+          <FooterHints selected={selected} canComplete={ghostSuffix !== null} quicklookOpen={quickResult != null} clipboardMode={clipboardMode} contentMode={contentMode} smartPaste={clipCaps.smart_paste} clipboardIdle={clipboardMode && query.trim() === ""} />
           <div className="footer-right">
             <button
               className="footer-settings-btn"
               onClick={() => {
-                // Leave clipboard mode / clear the query so the launcher is clean
-                // when it's next shown over (or instead of) the settings window.
+                // Leave clipboard / content mode and clear the query so the launcher
+                // is clean when it's next shown over (or instead of) the settings window.
                 setClipboardMode(false);
+                setContentMode(false);
                 setQuery("");
                 setResults([]);
                 invoke("open_settings_window");

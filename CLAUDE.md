@@ -19,9 +19,9 @@ Portunus is a Tauri 2 app: a Rust backend exposed via Tauri IPC to a React 19 / 
 
 ### Backend (`src-tauri/src/`)
 
-`lib.rs` defines all Tauri commands: `search`, `launch_app`, `get_config`, `save_config`, `trigger_full_reindex`, `is_content_index_empty`, `open_settings_window`, `hide_window`, `is_apps_ready`.
+`lib.rs` defines all Tauri commands: `search`, `search_content`, `launch_app`, `get_config`, `save_config`, `trigger_full_reindex`, `is_content_index_empty`, `open_settings_window`, `hide_window`, `is_apps_ready`.
 
-**Provider system** - `providers/mod.rs` defines the `Provider` trait and `PluginRegistry`. The built-in providers are: `apps`, `files`, `recent`, `clipboard`, `calc`, `dict`, `content` (plus WASM extensions). Each implements `id()` + `search(query) -> Vec<SearchResult>`. `PluginRegistry::search()` merges results, applies frecency bonuses, sorts by composite score, and truncates to `max_results` (default 9).
+**Provider system** - `providers/mod.rs` defines the `Provider` trait and `PluginRegistry`. The built-in providers are: `apps`, `files`, `recent`, `clipboard`, `calc`, `dict`, `content` (plus WASM extensions). Each implements `id()` + `search(query) -> Vec<SearchResult>`. `PluginRegistry::search()` merges results, applies frecency bonuses, sorts by composite score, and truncates to `max_results` (default 9). The `content` provider is excluded from `search()`; it runs only via `PluginRegistry::search_content()`, the backend of the Tab-activated "Contents" mode (a launcher mode like clipboard - dedicated chip, Tab to toggle, Backspace to exit).
 
 **Scoring** - Composite score = category base + fuzzy score (nucleo-matcher) + frecency bonus. Base scores by kind: clipboard 5M, calc 3M, app 2M, file 1M, folder 0. Results with `nucleo_score < MIN_NUCLEO_SCORE` are filtered out.
 

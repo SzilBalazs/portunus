@@ -1,4 +1,4 @@
-// Matched-term highlighting for content-search (`!query`) previews.
+// Matched-term highlighting for content-mode (full-text) previews.
 //
 // The query terms are derived the same way the Rust content provider tokenizes
 // them (see src-tauri/src/providers/content.rs), and matching is word-prefix /
@@ -7,9 +7,9 @@
 
 const HL_CLASS = "preview-hl";
 
-/** Tokenizes a `!query` into the terms the content index matched on. */
+/** Tokenizes a content-mode query into the terms the content index matched on. */
 export function deriveContentTerms(query: string): string[] {
-  const q = query.trimStart().replace(/^!/, "").trim();
+  const q = query.trim();
   if (!q) return [];
   return q
     // Same cleaning as content.rs: keep alphanumerics + apostrophe, split on the rest.

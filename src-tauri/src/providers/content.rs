@@ -20,11 +20,9 @@ impl Provider for ContentProvider {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
+        // Content scope is selected by the caller (PluginRegistry::search_content),
+        // so the raw query is the search term - no activation prefix to strip.
         let q = query.trim();
-        if !q.starts_with('!') {
-            return vec![];
-        }
-        let q = q[1..].trim();
         if q.len() < 2 {
             return vec![];
         }

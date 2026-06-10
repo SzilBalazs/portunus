@@ -10,6 +10,8 @@ interface Props {
   quicklookOpen?: boolean;
   /** In the dedicated clipboard browser; hints + paste-vs-copy wording change. */
   clipboardMode?: boolean;
+  /** In the Tab-activated full-text "Contents" mode. */
+  contentMode?: boolean;
   /** wtype is available, so Enter pastes into the focused window vs copy-only. */
   smartPaste?: boolean;
   /** The clipboard list is unfiltered + unsearched (idle), so show the Tab hint. */
@@ -32,10 +34,24 @@ function hints(
   canComplete: boolean,
   quicklookOpen: boolean,
   clipboardMode: boolean,
+  contentMode: boolean,
   smartPaste: boolean,
   clipboardIdle: boolean,
 ): ReactNode {
   const k = selected?.kind;
+
+  // Full-text "Contents" mode: reuses the file row, but Tab flips back to name
+  // search and Esc backs out of the mode (not the window).
+  if (contentMode) {
+    const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
+    return <>
+      <Nav /><Open />
+      {isPdf && <PdfPageNav />}
+      <Peek />
+      <span className="hint"><kbd>Tab</kbd> names</span>
+      <span className="hint"><kbd>Esc</kbd> back</span>
+    </>;
+  }
 
   // Dedicated clipboard browser. Enter degrades to copy-and-close without wtype,
   // so the bar must say "copy" not "paste" (and drop the redundant ctrl+enter).
@@ -64,7 +80,7 @@ function hints(
   if (k === "dict") return <><Nav /><span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy definition</span><Esc /></>;
 
   if (k === "content-disabled") return <><span className="hint"><kbd><EnterIcon /></kbd> open settings</span><Esc /></>;
-  if (k === "content-hint") return <><span className="hint"><kbd><EnterIcon /></kbd> search contents</span><Esc /></>;
+  if (k === "content-hint") return <><span className="hint"><kbd>Tab</kbd> search contents</span><Esc /></>;
 
   if (k === "file" || k === "folder") {
     const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
@@ -85,6 +101,6 @@ function hints(
   return <><Nav /><Open /><Jump />{canComplete && <Complete />}<Esc /></>;
 }
 
-export default function FooterHints({ selected, canComplete, quicklookOpen = false, clipboardMode = false, smartPaste = false, clipboardIdle = false }: Props) {
-  return <div className="hints">{hints(selected, canComplete, quicklookOpen, clipboardMode, smartPaste, clipboardIdle)}</div>;
+export default function FooterHints({ selected, canComplete, quicklookOpen = false, clipboardMode = false, contentMode = false, smartPaste = false, clipboardIdle = false }: Props) {
+  return <div className="hints">{hints(selected, canComplete, quicklookOpen, clipboardMode, contentMode, smartPaste, clipboardIdle)}</div>;
 }

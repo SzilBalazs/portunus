@@ -14,9 +14,11 @@ interface Props {
   launchableResults: SearchResult[];
   /** Per-result dominant icon colour for the accent-bleed effect. */
   accents: Map<string, string>;
+  /** Empty-state text when a search resolves with no results. */
+  emptyLabel?: string;
 }
 
-export default function ResultsList({ results, selectedIndex, active, searching, onSelect, onLaunch, launchableResults, accents }: Props) {
+export default function ResultsList({ results, selectedIndex, active, searching, onSelect, onLaunch, launchableResults, accents, emptyLabel = "No results" }: Props) {
   const selectedRef = useRef<HTMLDivElement>(null);
   const selectedLabelRef = useRef<HTMLDivElement>(null);
   const colRef = useRef<HTMLDivElement>(null);
@@ -114,7 +116,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
         />
       )}
       {active && results.length === 0 && !searching && (
-        <div className="results-empty">No results</div>
+        <div className="results-empty">{emptyLabel}</div>
       )}
       {results.map((result, i) => {
         const label = groupLabel(result.kind);

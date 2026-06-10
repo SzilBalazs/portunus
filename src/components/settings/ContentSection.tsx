@@ -219,7 +219,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
     <div>
       <div className="settings-section-header">
         <div className="settings-section-name">Content search</div>
-        <div className="settings-section-desc">Full-text search inside files. Prefix your query with <code style={{ font: "400 11px/1 'JetBrains Mono',monospace", color: "var(--accent)", background: "var(--accent-soft)", borderRadius: 3, padding: "1px 4px" }}>!</code> to activate.</div>
+        <div className="settings-section-desc">Full-text search inside files. Press <code style={{ font: "400 11px/1 'JetBrains Mono',monospace", color: "var(--accent)", background: "var(--accent-soft)", borderRadius: 3, padding: "1px 4px" }}>Tab</code> in the launcher to activate.</div>
       </div>
 
       <div className="settings-section-note">

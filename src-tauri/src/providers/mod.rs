@@ -238,9 +238,12 @@ impl PluginRegistry {
             (spawned > 0).then_some((rx, spawned, budget_ms + 50))
         };
 
+        // The content provider runs only in content scope (search_content); the
+        // normal launcher never competes file-contents against names/apps.
         let mut results: Vec<SearchResult> = self
             .providers
             .iter()
+            .filter(|p| p.id() != "content")
             .flat_map(|p| p.search(query))
             .collect();
 
@@ -302,6 +305,26 @@ impl PluginRegistry {
         results.retain(|r| match &r.exec {
             Some(e) => seen.insert(e.clone()),
             None => true,
+        });
+        results.truncate(self.max_results);
+        results
+    }
+
+    /// Content-scope search: runs ONLY the content provider over the raw query
+    /// (no activation prefix). Results are already ranked by FTS5/BM25, so this
+    /// skips frecency and dict-fill - just sorts by score and truncates. Returns
+    /// an empty vec when no content provider is registered (index empty/disabled).
+    pub fn search_content(&self, query: &str) -> Vec<SearchResult> {
+        let mut results: Vec<SearchResult> = self
+            .providers
+            .iter()
+            .filter(|p| p.id() == "content")
+            .flat_map(|p| p.search(query))
+            .collect();
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(self.max_results);
         results

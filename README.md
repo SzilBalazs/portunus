@@ -12,7 +12,7 @@ moment you launch something or press Escape.
 - **Inline calculator**: type `log2(10^8)` straight into the search bar
 - **Dictionary lookup**: `define serendipity` or `dict serendipity` (needs `dictd`)
 - **Clipboard history**: full-text search through `cliphist` entries (Wayland)
-- **Content search**: prefix a query with `!` to search the text inside PDFs, office documents, and images. OCR reads scanned PDFs and screenshots
+- **Content search**: press `Tab` to search the text inside PDFs, office documents, and images. OCR reads scanned PDFs and screenshots
 - **Preview panel**: images, PDFs, text files, folder listings, and clipboard contents
 - **Fast by default**: a non-blocking Rust backend indexes in the background, so results appear as you type
 
@@ -77,7 +77,7 @@ bind = SUPER, V, exec, /path/to/portunus --clipboard
 | `define serendipity` | Dictionary definition |
 | `log2(10^8)` | Calculator |
 | `clipboard search term` | Browse clipboard history |
-| `!invoice 2024` | Search file contents |
+| `Tab` then `invoice 2024` | Search file contents |
 
 ## Configuration
 
