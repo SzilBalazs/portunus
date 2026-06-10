@@ -560,6 +560,7 @@ export default function App() {
             capabilities={clipCaps}
             onExit={exitClipboardMode}
             onClearQuery={() => setQuery("")}
+            onDeleteTag={() => { setClipboardMode(false); setQuery(""); setResults([]); inputRef.current?.focus(); }}
             onPasted={() => { setClipboardMode(false); setQuery(""); setResults([]); }}
           />
         ) : (

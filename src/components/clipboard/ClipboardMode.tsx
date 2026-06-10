@@ -25,6 +25,8 @@ interface Props {
   onExit: () => void;
   /** Esc with a non-empty query: clear it (handled by the parent's input state). */
   onClearQuery: () => void;
+  /** Backspace on an empty query: drop the Clipboard tag, back to the launcher. */
+  onDeleteTag: () => void;
   /** After paste/copy the launcher dismisses: clear query + exit mode. */
   onPasted: () => void;
 }
@@ -36,7 +38,7 @@ function animationsOff(): boolean {
   );
 }
 
-export default function ClipboardMode({ query, capabilities, onExit, onClearQuery, onPasted }: Props) {
+export default function ClipboardMode({ query, capabilities, onExit, onClearQuery, onDeleteTag, onPasted }: Props) {
   const [entries, setEntries] = useState<ClipboardEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -192,6 +194,7 @@ export default function ClipboardMode({ query, capabilities, onExit, onClearQuer
       }
       else if (e.ctrlKey && (e.key === "o" || e.key === "O")) { e.preventDefault(); openUrl(st.selectedIndex); }
       else if (e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); remove(st.selectedIndex); }
+      else if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey && !st.query) { e.preventDefault(); onDeleteTag(); }
       else if (e.key === "Tab" || e.key === "ISO_Left_Tab" || e.code === "Tab") {
         e.preventDefault();
         const back = e.shiftKey || shiftDown || e.key === "ISO_Left_Tab";
