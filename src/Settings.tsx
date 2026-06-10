@@ -139,14 +139,25 @@ const nonBlankDirs = (dirs: ContentDirEntry[]) => dirs.filter(d => d.path.trim()
 //   - first-time enable when the index is empty (initial build from scratch)
 //   - raising the max file size (previously-skipped large files now need indexing)
 // `indexEmpty` reflects whether the on-disk index currently has zero documents.
+//
+// Single source of truth for the "always heavy" content fields: each has a
+// change test, and on a cheap autosave the field is reset to its last-applied
+// (base) value. Keeping the set here means `contentHeavyPending` and `stripHeavy`
+// can't silently drift. The two *conditional* triggers - first-time enable and a
+// max-size increase - are asymmetric, so the callers handle them explicitly.
+type ContentField = keyof Config["content"];
+const HEAVY_CONTENT_FIELDS: { key: ContentField; changed: (c: Config["content"], b: Config["content"]) => boolean }[] = [
+  { key: "dirs", changed: (c, b) => JSON.stringify(nonBlankDirs(c.dirs)) !== JSON.stringify(nonBlankDirs(b.dirs)) },
+  { key: "extensions", changed: (c, b) => JSON.stringify(c.extensions) !== JSON.stringify(b.extensions) },
+  { key: "ocr_images", changed: (c, b) => c.ocr_images !== b.ocr_images },
+  { key: "ocr_pdf_fallback", changed: (c, b) => c.ocr_pdf_fallback !== b.ocr_pdf_fallback },
+  { key: "ocr_language", changed: (c, b) => c.ocr_language !== b.ocr_language },
+];
+
 function contentHeavyPending(cur: Config, base: Config, indexEmpty: boolean): boolean {
   const c = cur.content, b = base.content;
   return (
-    JSON.stringify(nonBlankDirs(c.dirs)) !== JSON.stringify(nonBlankDirs(b.dirs)) ||
-    JSON.stringify(c.extensions) !== JSON.stringify(b.extensions) ||
-    c.ocr_images !== b.ocr_images ||
-    c.ocr_pdf_fallback !== b.ocr_pdf_fallback ||
-    c.ocr_language !== b.ocr_language ||
+    HEAVY_CONTENT_FIELDS.some(f => f.changed(c, b)) ||
     (c.enabled && !b.enabled && indexEmpty) ||
     c.max_file_bytes > b.max_file_bytes
   );
@@ -157,14 +168,10 @@ function contentHeavyPending(cur: Config, base: Config, indexEmpty: boolean): bo
 // decrease) while leaving every reindex-triggering edit untouched on disk until
 // the user applies them via "Apply & Reindex".
 function stripHeavy(cur: Config, base: Config, indexEmpty: boolean): Config {
-  const content = {
-    ...cur.content,
-    dirs: base.content.dirs,
-    extensions: base.content.extensions,
-    ocr_images: base.content.ocr_images,
-    ocr_pdf_fallback: base.content.ocr_pdf_fallback,
-    ocr_language: base.content.ocr_language,
-  };
+  const content = { ...cur.content };
+  for (const { key } of HEAVY_CONTENT_FIELDS) {
+    (content as Record<ContentField, unknown>)[key] = base.content[key];
+  }
   if (cur.content.enabled && !base.content.enabled && indexEmpty) {
     content.enabled = base.content.enabled;
   }

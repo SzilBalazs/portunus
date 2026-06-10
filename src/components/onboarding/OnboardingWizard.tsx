@@ -47,8 +47,6 @@ const PROVIDERS: ProviderCard[] = [
     icon: I(<><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></>) },
   { id: "clipboard", name: "Clipboard", desc: "Search your clipboard history", example: "clipboard api", dep: "cliphist",
     icon: I(<><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></>) },
-  { id: "timer", name: "Timers", desc: "Set quick timers with a chime", example: "timer 5m tea",
-    icon: I(<><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 2h6"/></>) },
   { id: "content", name: "Content search", desc: "Full-text search inside files", example: "! invoice", note: "Set up next →",
     icon: I(<><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/><path d="M11 8v6"/></>) },
 ];

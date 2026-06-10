@@ -1,4 +1,4 @@
-import { registerProvider } from './registry';
+import { registerProvider, isCopyKey } from './registry';
 import DictPreview, { dictCache } from '../components/DictPreview';
 
 registerProvider({
@@ -7,7 +7,7 @@ registerProvider({
   handleLaunch: () => false,
 
   handleKeyDown: (e, result, ctx) => {
-    if (e.ctrlKey && !e.altKey && e.key === 'c' && result?.kind === 'dict') {
+    if (isCopyKey(e) && result?.kind === 'dict') {
       e.preventDefault();
       const copyDefinition = ctx.config?.dict.copy_definition ?? true;
       const cached = dictCache.get(result.title);

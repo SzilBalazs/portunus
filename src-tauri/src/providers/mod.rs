@@ -4,7 +4,6 @@ pub mod clipboard;
 pub mod content;
 pub mod dict;
 pub mod files;
-pub mod timer;
 pub mod wasm;
 
 use std::collections::HashMap;
@@ -18,7 +17,6 @@ use crate::frecency::FrecencyStore;
 // ── Utility provider bases (intent-triggered; not competed against by files/apps) ──
 pub const SCORE_CONTENT: f32 = 6_000_000.0;
 pub const SCORE_CLIPBOARD: f32 = 5_000_000.0;
-pub const SCORE_TIMER: f32 = 4_000_000.0;
 pub const SCORE_CALC: f32 = 3_000_000.0;
 pub const SCORE_DICT: f32 = 3_000_000.0;
 /// Sparse-fill dict rows - kept below files (1M) so they sink to the bottom and

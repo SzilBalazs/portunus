@@ -140,11 +140,6 @@ export interface SearchResult {
   ext?: ExtensionResult;
 }
 
-export interface ExpiredTimer {
-  id: number;
-  label: string;
-}
-
 /** One clipboard history entry, as returned by the `clipboard_list` command. */
 export interface ClipboardEntry {
   id: string;

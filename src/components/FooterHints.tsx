@@ -56,12 +56,6 @@ function hints(
     <span className="hint"><kbd>shift</kbd><kbd><EnterIcon /></kbd> / <kbd>Esc</kbd> close</span>
   </>;
 
-  if (k === "timer-item") return <><Nav /><span className="hint"><kbd>Del</kbd> stop timer</span><Esc /></>;
-  if (k === "timer-create" && selected?.exec) return <><span className="hint"><kbd><EnterIcon /></kbd> start timer</span><Esc /></>;
-  if (k === "timer-create") return <><span className="hint">type a duration</span><span className="hint"><kbd>5m</kbd> <kbd>1h30m</kbd> <kbd>30s</kbd></span><Esc /></>;
-  if (k === "timer-hint") return <><span className="hint"><kbd>|</kbd> start typing</span><Esc /></>;
-  if (k === "timer-expired") return <><Nav /><span className="hint"><kbd><EnterIcon /></kbd> dismiss</span><Esc /></>;
-
   if (k === "clipboard-mode") return <><Nav /><Open /><Esc /></>;
 
   if (k === "calc") return <><Nav /><span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy value</span><Esc /></>;

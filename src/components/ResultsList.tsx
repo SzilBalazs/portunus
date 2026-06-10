@@ -147,10 +147,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
               aria-selected={i === selectedIndex}
               onClick={() => {
                 onSelect(i);
-                // Clicking a running timer selects it (shows preview) but doesn't stop it.
-                if (result.kind !== "timer-item") {
-                  onLaunch(result);
-                }
+                onLaunch(result);
               }}
             >
               <ResultIcon icon_path={result.icon_path} iconDataUri={result.icon_data_uri} title={result.title} kind={result.kind} />

@@ -5,7 +5,6 @@ export interface LaunchContext {
   setQuery: (q: string) => void;
   setResults: (r: SearchResult[]) => void;
   requery: () => void;
-  removeExpiredTimer: (id: number) => void;
   /** Open the dedicated clipboard-history browser (clipboard-mode result). */
   enterClipboardMode: () => void;
   config: Config | null;
@@ -14,7 +13,6 @@ export interface LaunchContext {
 export interface PreviewProps {
   result: SearchResult;
   onLaunch: () => void;
-  onStopTimer?: () => void;
   onReveal?: () => void;
   /** Matched content-search terms to highlight in the preview (empty otherwise). */
   terms?: string[];
@@ -28,6 +26,10 @@ export interface ProviderPlugin {
   handleLaunch?: (result: SearchResult, ctx: LaunchContext) => boolean;
   handleKeyDown?: (e: KeyboardEvent, result: SearchResult | null, ctx: LaunchContext) => boolean;
 }
+
+/** The copy chord shared by calc/dict/file providers: Ctrl+C (not Ctrl+Alt+C). */
+export const isCopyKey = (e: KeyboardEvent): boolean =>
+  e.ctrlKey && !e.altKey && e.key === 'c';
 
 const plugins: ProviderPlugin[] = [];
 

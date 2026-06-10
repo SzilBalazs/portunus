@@ -1,7 +1,7 @@
 # Portunus
 
 A keyboard-first application launcher and search tool for Wayland. Type to find
-and launch apps, jump to files, do quick math, look up words, set timers, browse
+and launch apps, jump to files, do quick math, look up words, browse
 clipboard history, and search the text inside your documents, all from one box.
 The window stays hidden until you summon it with a keybind, then disappears the
 moment you launch something or press Escape.
@@ -11,7 +11,6 @@ moment you launch something or press Escape.
 - **Fuzzy app & file search**: `.desktop` entries, indexed directories, and GTK recent files, ranked by how often you use them
 - **Inline calculator**: type `log2(10^8)` straight into the search bar
 - **Dictionary lookup**: `define serendipity` or `dict serendipity` (needs `dictd`)
-- **Countdown timers**: `timer 5m break`, `timer 1h30m`
 - **Clipboard history**: full-text search through `cliphist` entries (Wayland)
 - **Content search**: prefix a query with `!` to search the text inside PDFs, office documents, and images. OCR reads scanned PDFs and screenshots
 - **Preview panel**: images, PDFs, text files, folder listings, and clipboard contents
@@ -77,7 +76,6 @@ bind = SUPER, V, exec, /path/to/portunus --clipboard
 | `firefox` | Fuzzy-match apps and files |
 | `define serendipity` | Dictionary definition |
 | `log2(10^8)` | Calculator |
-| `timer 5m break` | Countdown timer |
 | `clipboard search term` | Browse clipboard history |
 | `!invoice 2024` | Search file contents |
 

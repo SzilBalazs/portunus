@@ -3,8 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
-import { Config, SearchResult, ExpiredTimer, ClipboardCapabilities } from "./types";
-import { playTimerChime, audioCtxWarmup } from "./utils";
+import { Config, SearchResult, ClipboardCapabilities } from "./types";
 import ClipboardMode from "./components/clipboard/ClipboardMode";
 import { applyTheme, injectMatugenTheme } from "./theme";
 import ResultsList from "./components/ResultsList";
@@ -21,7 +20,7 @@ import "./providers";
 import "./App.css";
 import "./themes.css";
 
-const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'timer-hint', 'content-hint', 'content-disabled']);
+const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'content-hint', 'content-disabled']);
 
 // Kinds whose preview is worth enlarging into the full-card Quicklook overlay.
 const QUICKLOOK_KINDS = new Set(['file', 'folder']);
@@ -30,7 +29,6 @@ const QUICKLOOK_KINDS = new Set(['file', 'folder']);
 // Tab accepts it. Returns the suffix to append, or null when nothing completes.
 function ghostFor(q: string): string | null {
   if (q.length < 2 || q.includes(' ')) return null;
-  if ('timer'.startsWith(q) && q.length < 5) return 'timer'.slice(q.length);
   if ('define'.startsWith(q) && q.length < 6) return 'define'.slice(q.length);
   if ('dict'.startsWith(q) && q.length < 4 && !'define'.startsWith(q)) return 'dict'.slice(q.length);
   if ('clipboard'.startsWith(q) && q.length >= 4 && q.length < 9) return 'clipboard'.slice(q.length);
@@ -53,7 +51,6 @@ export default function App() {
   // same file even if background events reorder/extend the results underneath.
   const [quickResult, setQuickResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [expiredTimers, setExpiredTimers] = useState<ExpiredTimer[]>([]);
   const [version, setVersion] = useState("");
   const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
   const [contentEnabled, setContentEnabled] = useState(true);
@@ -175,7 +172,6 @@ export default function App() {
     setQuery("");
     setResults([]);
     inputRef.current?.focus();
-    audioCtxWarmup();
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); configRef.current = cfg; });
   });
 
@@ -191,7 +187,6 @@ export default function App() {
   }, []);
 
   useTauriListener<string>("window-show-query", payload => {
-    audioCtxWarmup();
     // `portunus --clipboard` sends "clipboard " - open the dedicated browser
     // instead of pre-filling the launcher query.
     if (payload.trim() === "clipboard") { enterClipboardMode("", true); return; }
@@ -228,71 +223,45 @@ export default function App() {
   useEffect(() => { setSelectedIndex(0); }, [query]);
 
   const displayResults = useMemo<SearchResult[]>(() => {
-    if (query.trim()) {
-      const isContent = query.trimStart().startsWith('!');
-      if (isContent) {
-        // Strip the '!' prefix; with no term yet ("!", "!  ") there is nothing to
-        // search, so show nothing rather than a stray disabled hint or empty state.
-        const term = query.trimStart().slice(1).trim();
-        if (!term) return [];
-        if (!contentEnabled) {
-          return [{
-            id: "content:disabled",
-            title: "Content search is disabled",
-            subtitle: "Open Settings → Content to enable",
-            kind: "content-disabled",
-            score: 0,
-          }];
-        }
-        return results;
-      }
-      if (results.length === 0) {
-        // Suggest content search only once a search has actually resolved empty
-        // (not on the first-keystroke debounce gap). Kept mounted across
-        // re-searches so it doesn't unmount/remount and re-animate per keystroke.
-        if (!resolvedEmpty) return [];
+    if (!query.trim()) return [];
+    const isContent = query.trimStart().startsWith('!');
+    if (isContent) {
+      // Strip the '!' prefix; with no term yet ("!", "!  ") there is nothing to
+      // search, so show nothing rather than a stray disabled hint or empty state.
+      const term = query.trimStart().slice(1).trim();
+      if (!term) return [];
+      if (!contentEnabled) {
         return [{
-          id: "content:hint",
-          title: "Search file contents",
-          subtitle: `Search for "${query.trim()}" inside files`,
-          kind: "content-hint",
+          id: "content:disabled",
+          title: "Content search is disabled",
+          subtitle: "Open Settings → Content to enable",
+          kind: "content-disabled",
           score: 0,
         }];
       }
       return results;
     }
-    if (expiredTimers.length === 0) return [];
-    return expiredTimers.map(t => ({
-      id: `timer:expired:${t.id}`,
-      title: t.label,
-      subtitle: "Timer finished",
-      kind: "timer-expired",
-      score: 0,
-      exec: `timer:dismiss:${t.id}`,
-    }));
-  }, [query, results, expiredTimers, contentEnabled, resolvedEmpty]);
+    if (results.length === 0) {
+      // Suggest content search only once a search has actually resolved empty
+      // (not on the first-keystroke debounce gap). Kept mounted across
+      // re-searches so it doesn't unmount/remount and re-animate per keystroke.
+      if (!resolvedEmpty) return [];
+      return [{
+        id: "content:hint",
+        title: "Search file contents",
+        subtitle: `Search for "${query.trim()}" inside files`,
+        kind: "content-hint",
+        score: 0,
+      }];
+    }
+    return results;
+  }, [query, results, contentEnabled, resolvedEmpty]);
 
-  // Results can shrink without the query changing (timer requery, search-invalidated).
-  // Snap the selection back in bounds so the highlight/preview and Enter stay live.
+  // Results can shrink without the query changing (search-invalidated). Snap the
+  // selection back in bounds so the highlight/preview and Enter stay live.
   useEffect(() => {
     setSelectedIndex(i => (i >= displayResults.length ? 0 : i));
   }, [displayResults.length]);
-
-  const hasTimerItems = displayResults.some(r => r.kind === "timer-item");
-  useEffect(() => {
-    if (!hasTimerItems) return;
-    const id = setInterval(() => {
-      const q = queryRef.current;
-      if (q.trim()) invoke<SearchResult[]>("search", { query: q }).then(setResults);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [hasTimerItems]);
-
-  useTauriListener<ExpiredTimer>("timer-expired", payload => {
-    playTimerChime();
-    setExpiredTimers(prev => [...prev, payload]);
-    setQuery("");
-  });
 
   const requery = () => {
     const q = queryRef.current;
@@ -310,7 +279,6 @@ export default function App() {
     setQuery,
     setResults,
     requery,
-    removeExpiredTimer: (id: number) => setExpiredTimers(prev => prev.filter(t => t.id !== id)),
     enterClipboardMode: () => enterClipboardMode("", false),
     config: configRef.current,
   });
@@ -374,7 +342,7 @@ export default function App() {
         const target = launchableResults[parseInt(e.key) - 1];
         if (!target) return;
         setSelectedIndex(displayResults.indexOf(target));
-        if (target.kind !== "timer-item") launch(target);
+        launch(target);
       } else if (e.key === "Tab") {
         // Accept the ghost completion if one is showing; otherwise keep focus
         // in the input (no focusable peers to tab to in the launcher).
@@ -459,7 +427,6 @@ export default function App() {
 
   const hintChip = useMemo((): string | null => {
     const q = query;
-    if (q === 'timer' || q === 'timer ') return '<duration> [label]';
     if (q === 'define' || q === 'define ') return '<word>';
     if (q === 'dict' || q === 'dict ') return '<word>';
     if (q === 'clipboard' || q === 'clipboard ') return '<search>';
@@ -467,11 +434,6 @@ export default function App() {
   }, [query]);
 
   const contentSized = ghostSuffix !== null || hintChip !== null || calcResult != null;
-
-  const stopSelectedTimer = () => {
-    const sel = displayResults[selectedIndex];
-    if (sel?.kind === "timer-item" && sel.exec) launch(sel);
-  };
 
   return (
     <div className="launcher">
@@ -579,7 +541,6 @@ export default function App() {
             <PreviewPanel
               result={selected}
               onLaunch={() => launch(selected ?? undefined)}
-              onStopTimer={stopSelectedTimer}
               onReveal={() => { setQuery(""); setResults([]); }}
               terms={previewTerms}
             />

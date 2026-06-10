@@ -1,11 +1,11 @@
-import { registerProvider } from './registry';
+import { registerProvider, isCopyKey } from './registry';
 
 registerProvider({
   kinds: [],
   Preview: null,
 
   handleKeyDown: (e, result) => {
-    if (e.ctrlKey && !e.altKey && e.key === 'c' && result?.kind === 'calc') {
+    if (isCopyKey(e) && result?.kind === 'calc') {
       e.preventDefault();
       navigator.clipboard.writeText(result.title);
       return true;

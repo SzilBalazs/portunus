@@ -730,7 +730,6 @@ pub fn run() {
             );
 
             preview::setup(app.handle(), Arc::clone(&shared_config));
-            providers::timer::setup(app.handle(), &bg_registry);
 
             if providers::clipboard::ClipboardProvider::is_available() {
                 bg_registry
@@ -833,9 +832,6 @@ pub fn run() {
             is_content_index_empty,
             check_dependencies,
             take_config_error,
-            // Timer provider
-            providers::timer::create_timer,
-            providers::timer::stop_timer,
             // File preview
             preview::render_pdf_page,
             preview::read_text_preview,
