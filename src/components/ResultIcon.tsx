@@ -99,8 +99,10 @@ export default function ResultIcon({ icon_path, iconDataUri, title, kind }: Prop
       return <div className="result-icon"><FileGlyphIcon size={16} /></div>;
     }
     const cat = fileCategory(title);
+    // "other" carries no data-cat so it falls back to the generic accent on
+    // select (like apps/calc), instead of the muted currentColor-mix branch.
     return (
-      <div className="result-icon" data-cat={cat}>
+      <div className="result-icon" data-cat={cat === "other" ? undefined : cat}>
         <CategoryGlyph cat={cat} size={16} />
       </div>
     );

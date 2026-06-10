@@ -52,39 +52,25 @@ const EXT_CATEGORY: Record<string, string> = {
 
 // Well-known extensionless filenames get a chip too, so common build/meta
 // files don't fall back to the anonymous glyph.
-const SPECIAL_NAMES: Record<string, { label: string; cat: string }> = {
-  dockerfile: { label: "DOCK", cat: "code" },
-  containerfile: { label: "DOCK", cat: "code" },
-  makefile: { label: "MAKE", cat: "code" },
-  justfile: { label: "JUST", cat: "code" },
-  rakefile: { label: "RAKE", cat: "code" },
-  gemfile: { label: "GEM", cat: "code" },
-  procfile: { label: "PROC", cat: "code" },
-  license: { label: "LIC", cat: "docs" },
-  copying: { label: "LIC", cat: "docs" },
-  readme: { label: "DOC", cat: "docs" },
-  authors: { label: "DOC", cat: "docs" },
-  notice: { label: "DOC", cat: "docs" },
-  changelog: { label: "DOC", cat: "docs" },
+// Well-known extensionless filenames mapped to a category.
+const SPECIAL_NAMES: Record<string, string> = {
+  dockerfile: "code", containerfile: "code", makefile: "code", justfile: "code",
+  rakefile: "code", gemfile: "code", procfile: "code",
+  license: "docs", copying: "docs", readme: "docs",
+  authors: "docs", notice: "docs", changelog: "docs",
 };
-
-// Resolves a filename to its glyph category (+ a short label). Returns null for
-// unknown extensionless names so callers fall back to the neutral glyph.
-export function fileExtBadge(name: string): { label: string; cat: string } | null {
-  const special = SPECIAL_NAMES[name.toLowerCase()];
-  if (special) return special;
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0 || dot === name.length - 1) return null; // no ext, or dotfile w/o ext
-  const ext = name.slice(dot + 1).toLowerCase();
-  if (!/^[a-z0-9]+$/.test(ext) || ext.length > 4) return null;
-  return { label: ext.toUpperCase(), cat: EXT_CATEGORY[ext] ?? "other" };
-}
 
 // Category for a file's glyph + color. Always resolves (unknown / extensionless
 // names -> "other", the neutral glyph). Shared by the result list and the folder
 // preview so both render identical glyphs.
 export function fileCategory(name: string): string {
-  return fileExtBadge(name)?.cat ?? "other";
+  const special = SPECIAL_NAMES[name.toLowerCase()];
+  if (special) return special;
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "other"; // no ext, or dotfile w/o ext
+  const ext = name.slice(dot + 1).toLowerCase();
+  if (!/^[a-z0-9]+$/.test(ext) || ext.length > 4) return "other";
+  return EXT_CATEGORY[ext] ?? "other";
 }
 
 // "N folders · M files" summary for the folder-preview header. When the

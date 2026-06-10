@@ -994,18 +994,20 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], qu
     onReveal?.();
   };
 
-  const icon = (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="22" height="22">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
+  // Header glyph mirrors the result-list icon (ResultIcon): category glyph +
+  // tint when colored icons are on, plain document glyph otherwise. "other"
+  // carries no data-cat so the wrap keeps its default accent.
+  const colored = useContext(ColoredIconsContext);
+  const headCat = colored ? fileCategory(result.title) : "other";
+  const icon = colored
+    ? <CategoryGlyph cat={headCat} size={22} />
+    : <FileGlyphIcon size={22} />;
 
   return (
     <div className={`file-preview${quicklook ? " file-preview-ql" : ""}`}>
       {!quicklook && (
       <div className="file-preview-head">
-        <div className="file-preview-icon-wrap">{icon}</div>
+        <div className="file-preview-icon-wrap" data-cat={headCat === "other" ? undefined : headCat}>{icon}</div>
         <div className="file-preview-head-text">
           <div className="file-preview-title">{result.title}</div>
           <div className="file-preview-tag">{tag}</div>

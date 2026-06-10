@@ -605,16 +605,16 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-/* Category-tinted file/folder glyphs. Colors track the same `--hljs-*` theme
-   tokens as the folder-preview glyphs (App.css `.folder-entry-glyph[data-cat]`),
-   so the list and the preview stay in lockstep across every theme. */
-.result-icon[data-cat="code"]    { color: var(--hljs-function); background: color-mix(in srgb, var(--hljs-function) 14%, transparent); }
-.result-icon[data-cat="web"]     { color: var(--hljs-builtin);  background: color-mix(in srgb, var(--hljs-builtin) 14%, transparent); }
-.result-icon[data-cat="data"]    { color: var(--hljs-number);   background: color-mix(in srgb, var(--hljs-number) 14%, transparent); }
-.result-icon[data-cat="docs"]    { color: var(--hljs-string);   background: color-mix(in srgb, var(--hljs-string) 14%, transparent); }
-.result-icon[data-cat="image"]   { color: var(--hljs-keyword);  background: color-mix(in srgb, var(--hljs-keyword) 14%, transparent); }
-.result-icon[data-cat="media"]   { color: var(--hljs-type);     background: color-mix(in srgb, var(--hljs-type) 14%, transparent); }
-.result-icon[data-cat="archive"] { color: var(--hljs-attr);     background: color-mix(in srgb, var(--hljs-attr) 14%, transparent); }
+/* Category-tinted glyphs. Colors track the same `--hljs-*` theme tokens as the
+   folder-preview glyphs (`.folder-entry-glyph[data-cat]`), so the result list,
+   the preview header, and the folder listing stay in lockstep across themes. */
+.result-icon[data-cat="code"],    .file-preview-icon-wrap[data-cat="code"]    { color: var(--hljs-function); background: color-mix(in srgb, var(--hljs-function) 14%, transparent); }
+.result-icon[data-cat="web"],     .file-preview-icon-wrap[data-cat="web"]     { color: var(--hljs-builtin);  background: color-mix(in srgb, var(--hljs-builtin) 14%, transparent); }
+.result-icon[data-cat="data"],    .file-preview-icon-wrap[data-cat="data"]    { color: var(--hljs-number);   background: color-mix(in srgb, var(--hljs-number) 14%, transparent); }
+.result-icon[data-cat="docs"],    .file-preview-icon-wrap[data-cat="docs"]    { color: var(--hljs-string);   background: color-mix(in srgb, var(--hljs-string) 14%, transparent); }
+.result-icon[data-cat="image"],   .file-preview-icon-wrap[data-cat="image"]   { color: var(--hljs-keyword);  background: color-mix(in srgb, var(--hljs-keyword) 14%, transparent); }
+.result-icon[data-cat="media"],   .file-preview-icon-wrap[data-cat="media"]   { color: var(--hljs-type);     background: color-mix(in srgb, var(--hljs-type) 14%, transparent); }
+.result-icon[data-cat="archive"], .file-preview-icon-wrap[data-cat="archive"] { color: var(--hljs-attr);     background: color-mix(in srgb, var(--hljs-attr) 14%, transparent); }
 .result-icon[data-cat="folder"]  { color: var(--accent);        background: var(--accent-soft); }
 
 /* Keep the category hue on the focused row (the most-looked-at one) — only
