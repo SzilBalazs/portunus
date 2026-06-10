@@ -40,6 +40,8 @@ export interface Config {
   clipboard: {
     paste_mode: "auto" | "copy";
     max_entries: number;
+    ocr_images: boolean;
+    ocr_language: string;
   };
   files: {
     dirs: DirEntry[];
@@ -157,6 +159,8 @@ export interface ClipboardEntry {
   byte_size: number | null;
   dimensions: [number, number] | null;
   format: string | null;
+  /** Image entries: cached OCR'd text, searchable. Null until OCR'd. */
+  ocr_text?: string | null;
 }
 
 export interface ClipboardCapabilities {

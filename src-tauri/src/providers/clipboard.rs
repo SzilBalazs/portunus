@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use super::{Provider, SearchResult, SCORE_CLIPBOARD};
-use crate::ConfigState;
+use crate::{ClipboardOcrState, ConfigState};
 
 /// How long to wait after hiding the launcher before synthesizing Ctrl+V. On a
 /// layer-shell exclusive-keyboard surface the compositor needs a frame or two to
@@ -174,6 +176,9 @@ pub struct ClipboardEntry {
     pub dimensions: Option<(u32, u32)>,
     /// Image entries only: lowercase format token (e.g. "png").
     pub format: Option<String>,
+    /// Image entries only: cached OCR'd text (visible text in the image), used
+    /// for search. `None` until the background OCR pass has indexed the entry.
+    pub ocr_text: Option<String>,
 }
 
 struct ClipEntry {
@@ -314,10 +319,14 @@ fn parse_image_label(label: &str) -> (Option<u64>, Option<String>, Option<(u32, 
 }
 
 #[tauri::command]
-pub fn clipboard_list(limit: usize) -> Result<Vec<ClipboardEntry>, String> {
+pub fn clipboard_list(
+    limit: usize,
+    ocr_store: tauri::State<ClipboardOcrState>,
+) -> Result<Vec<ClipboardEntry>, String> {
     if !crate::util::binary_in_path("cliphist") {
         return Err("cliphist not found".to_string());
     }
+    let store = ocr_store.inner().as_ref();
     let out = list_entries()
         .into_iter()
         .take(limit.max(1))
@@ -335,10 +344,20 @@ pub fn clipboard_list(limit: usize) -> Result<Vec<ClipboardEntry>, String> {
                     byte_size: None,
                     dimensions: None,
                     format: None,
+                    ocr_text: None,
                 }
             }
             ClipKind::Image { label } => {
                 let (byte_size, format, dimensions) = parse_image_label(&label);
+                // Cheap cache lookup - no decode/OCR here. Only surface text on a
+                // byte-size match so a reused id (post-deletion) can't mislabel.
+                let ocr_text = store.and_then(|s| s.get(&e.id)).and_then(|(bs, text)| {
+                    if byte_size.map_or(true, |b| b == bs) && !text.trim().is_empty() {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                });
                 ClipboardEntry {
                     id: e.id,
                     kind: "image".to_string(),
@@ -348,11 +367,102 @@ pub fn clipboard_list(limit: usize) -> Result<Vec<ClipboardEntry>, String> {
                     byte_size,
                     dimensions,
                     format,
+                    ocr_text,
                 }
             }
         })
         .collect();
     Ok(out)
+}
+
+/// Set while the background clipboard-OCR pass runs, to coalesce overlapping
+/// triggers (the frontend fires one each time clipboard mode opens).
+static OCR_INDEXING: AtomicBool = AtomicBool::new(false);
+
+#[derive(serde::Serialize, Clone)]
+struct ClipboardOcrProgress {
+    indexed: usize,
+    total: usize,
+}
+
+/// Background pass: decode + OCR every image entry whose cache is missing or
+/// stale, store the text, then emit `clipboard-ocr-done` so the frontend can
+/// reload and pick up `ocr_text`. Cheap to call repeatedly - cached entries are
+/// skipped and a second concurrent run is a no-op.
+#[tauri::command]
+pub fn index_clipboard_ocr(
+    app: tauri::AppHandle,
+    config: tauri::State<ConfigState>,
+    ocr_store: tauri::State<ClipboardOcrState>,
+) {
+    let (enabled, lang) = config
+        .lock()
+        .map(|c| (c.clipboard.ocr_images, c.clipboard.ocr_language.clone()))
+        .unwrap_or((false, "eng".to_string()));
+    if !enabled || !crate::util::binary_in_path("cliphist") {
+        return;
+    }
+    let store = match ocr_store.inner().clone() {
+        Some(s) => s,
+        None => return,
+    };
+    // Coalesce: bail if a pass is already running. Cleared at the end of the thread.
+    if OCR_INDEXING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let entries = list_entries();
+        // Live ids for pruning rows of deleted clipboard entries.
+        let live_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
+
+        // Image entries whose cache is missing or whose byte_size changed.
+        let pending: Vec<(String, Option<u64>)> = entries
+            .into_iter()
+            .filter_map(|e| match e.kind {
+                ClipKind::Image { label } => {
+                    let (byte_size, _, _) = parse_image_label(&label);
+                    let cached = store.get(&e.id);
+                    let fresh = matches!((&cached, byte_size), (Some((bs, _)), Some(b)) if *bs == b)
+                        || cached.as_ref().is_some_and(|(bs, _)| byte_size.is_none() && *bs == 0);
+                    if fresh {
+                        None
+                    } else {
+                        Some((e.id, byte_size))
+                    }
+                }
+                ClipKind::Text(_) => None,
+            })
+            .collect();
+
+        let total = pending.len();
+        for (i, (id, byte_size)) in pending.into_iter().enumerate() {
+            let bytes = match std::process::Command::new("cliphist")
+                .args(["decode", &id])
+                .output()
+            {
+                Ok(o) if o.status.success() => o.stdout,
+                _ => continue,
+            };
+            match crate::content_index::ocr_bytes(&bytes, &lang) {
+                // Store even empty text as a negative-cache tombstone so a
+                // text-free image isn't re-OCR'd on every pass.
+                Ok(text) => store.upsert(&id, byte_size.unwrap_or(0), text.trim()),
+                Err(e) => eprintln!("[clipboard] ocr failed for {id}: {e}"),
+            }
+            let _ = app.emit(
+                "clipboard-ocr-progress",
+                ClipboardOcrProgress { indexed: i + 1, total },
+            );
+        }
+
+        store.prune(&live_ids);
+        OCR_INDEXING.store(false, Ordering::Release);
+        let _ = app.emit("clipboard-ocr-done", ());
+    });
 }
 
 // ── provider ────────────────────────────────────────────────────────────────

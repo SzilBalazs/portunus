@@ -32,6 +32,8 @@ fill_max             = 5        # max dictionary rows added when filling
 [clipboard]
 paste_mode  = "auto"   # "auto" = paste into the focused window (needs wtype); "copy" = copy only
 max_entries = 250      # max entries loaded into the clipboard browser (clip / portunus --clipboard)
+ocr_images   = true    # OCR copied images so their visible text is searchable (cached per image)
+ocr_language = "eng"   # Tesseract language for clipboard image OCR
 
 [search]
 min_quality    = 0.06  # minimum fuzzy match quality (0.0-1.0); scales with query length

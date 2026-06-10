@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ClipboardEntry, ClipboardCapabilities } from "../../types";
 import ClipboardList from "./ClipboardList";
 import ClipboardEntryPreview from "./ClipboardEntryPreview";
@@ -57,6 +58,16 @@ export default function ClipboardMode({ query, capabilities, onExit, onClearQuer
 
   useEffect(() => { load(); }, []);
 
+  // Kick off the background OCR pass for copied images (cheap + coalesced on the
+  // backend; cached entries are skipped). Reload when it finishes so freshly
+  // OCR'd `ocr_text` becomes searchable.
+  useEffect(() => {
+    invoke("index_clipboard_ocr").catch(() => {});
+    let unlisten: (() => void) | undefined;
+    listen("clipboard-ocr-done", () => load()).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
+
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: 0, text: 0, image: 0, url: 0, color: 0 };
     for (const e of entries ?? []) {
@@ -76,7 +87,7 @@ export default function ClipboardMode({ query, capabilities, onExit, onClearQuer
       if (filter === "text" && e.kind === "image") return false;
       if (filter === "url" && e.content_type !== "url") return false;
       if (filter === "color" && e.content_type !== "color") return false;
-      if (q && !e.preview.toLowerCase().includes(q)) return false;
+      if (q && !`${e.preview} ${e.ocr_text ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [entries, filter, query]);
@@ -300,6 +311,6 @@ function filterMatch(e: ClipboardEntry, filter: Filter, query: string): boolean 
   if (filter === "url" && e.content_type !== "url") return false;
   if (filter === "color" && e.content_type !== "color") return false;
   const q = query.trim().toLowerCase();
-  if (q && !e.preview.toLowerCase().includes(q)) return false;
+  if (q && !`${e.preview} ${e.ocr_text ?? ""}`.toLowerCase().includes(q)) return false;
   return true;
 }

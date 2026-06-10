@@ -1,4 +1,5 @@
 mod cli;
+mod clipboard_ocr;
 mod config;
 mod content_index;
 mod extensions;
@@ -28,6 +29,7 @@ pub(crate) type FileWatcherTx =
 pub(crate) type SharedFileEntries = Arc<RwLock<Vec<providers::files::FileEntry>>>;
 pub(crate) type ConfigState = Arc<Mutex<config::Config>>;
 pub(crate) type ContentState = Arc<Mutex<Option<Arc<content_index::ContentIndex>>>>;
+pub(crate) type ClipboardOcrState = Option<Arc<clipboard_ocr::ClipboardOcrStore>>;
 
 /// The `bool` is `full`: `true` clears the index before rebuilding (needed only
 /// when OCR settings change, which invalidates already-cached text); `false`
@@ -519,6 +521,17 @@ pub fn run() {
         }));
     let extensions_enabled = cfg.extensions.enabled.clone();
 
+    // Clipboard OCR cache: opened unconditionally (cheap SQLite file). The
+    // background OCR pass and clipboard_list read/write it; gated per-pass by
+    // config.clipboard.ocr_images.
+    let clipboard_ocr_state: ClipboardOcrState = match clipboard_ocr::ClipboardOcrStore::open() {
+        Ok(store) => Some(Arc::new(store)),
+        Err(e) => {
+            eprintln!("[clipboard] failed to open OCR cache: {e} - image OCR search disabled");
+            None
+        }
+    };
+
     let registry: Registry = Arc::new(RwLock::new(providers::PluginRegistry::new(max_results)));
     if dict_cfg.enabled {
         registry
@@ -553,6 +566,7 @@ pub fn run() {
         .manage(frecency_state.clone())
         .manage(config_state)
         .manage(Arc::clone(&content_state))
+        .manage(clipboard_ocr_state)
         .manage(extensions::ExtensionKvState(Arc::clone(&ext_kv)))
         .setup(move |app| {
             // Resolve bundled native assets (pdfium, poppler, tessdata) before
@@ -833,6 +847,7 @@ pub fn run() {
             providers::clipboard::paste_clipboard,
             providers::clipboard::decode_clipboard_entry,
             providers::clipboard::clipboard_list,
+            providers::clipboard::index_clipboard_ocr,
             providers::clipboard::clipboard_delete,
             providers::clipboard::clipboard_capabilities,
             // Dict provider

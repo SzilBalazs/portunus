@@ -363,6 +363,22 @@ fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
     })
 }
 
+/// OCR raw image bytes (e.g. a clipboard image). `leptess`/leptonica only reads
+/// from a file path, so we spill the bytes to a unique temp file first; the
+/// format is sniffed from content, so the extension is irrelevant. The temp file
+/// is always removed, including on error.
+pub(crate) fn ocr_bytes(bytes: &[u8], lang: &str) -> Result<String, String> {
+    let tmp_path = std::env::temp_dir().join(format!(
+        "portunus_clipocr_{}_{}",
+        std::process::id(),
+        TMP_COUNTER.fetch_add(1, Ordering::Relaxed),
+    ));
+    std::fs::write(&tmp_path, bytes).map_err(|e| e.to_string())?;
+    let result = ocr_file(&tmp_path.to_string_lossy(), lang);
+    std::fs::remove_file(&tmp_path).ok();
+    result
+}
+
 fn extract_pdf(path: &str, ocr_fallback: bool, lang: &str) -> Result<String, String> {
     let text = pdftotext(path)?;
     {

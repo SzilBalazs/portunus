@@ -51,11 +51,22 @@ pub struct ClipboardConfig {
     pub paste_mode: String,
     /// Maximum number of entries loaded into the clipboard browser.
     pub max_entries: usize,
+    /// OCR copied images so their visible text is searchable in the browser.
+    /// Each image is OCR'd once and cached (see `clipboard_ocr.rs`).
+    pub ocr_images: bool,
+    /// Tesseract language code for clipboard image OCR (e.g. "eng"). Independent
+    /// of the Content provider's `ocr_language`.
+    pub ocr_language: String,
 }
 
 impl Default for ClipboardConfig {
     fn default() -> Self {
-        Self { paste_mode: "auto".to_string(), max_entries: 250 }
+        Self {
+            paste_mode: "auto".to_string(),
+            max_entries: 250,
+            ocr_images: true,
+            ocr_language: "eng".to_string(),
+        }
     }
 }
 
