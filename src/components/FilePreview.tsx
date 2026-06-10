@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -666,6 +666,7 @@ function OfficeTextPreview({ path, terms }: { path: string; terms: string[] }) {
   const mdComponents: Components = {
     code: mdCodeComponent,
     img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} baseDir={baseDir} />,
+    a: makeMdAnchor(baseDir),
   };
 
   return (
@@ -788,6 +789,25 @@ function MarkdownImage({ src, alt, baseDir }: { src?: string; alt?: string; base
   return <img src={resolved} alt={alt ?? ""} />;
 }
 
+// Intercept markdown link clicks. A bare <a href> would navigate the launcher
+// webview itself to the target, destroying the React app (transparent dead
+// window, keybinds gone). Route through the backend launch_app command (same
+// xdg-open path used to open results), which also hides the launcher.
+function makeMdAnchor(baseDir: string): Components["a"] {
+  return ({ href, children }) => {
+    const onClick = (e: ReactMouseEvent) => {
+      e.preventDefault();
+      if (!href || href.startsWith("#")) return;
+      const target = /^[a-z][a-z0-9+.-]*:/i.test(href) // already a URL/URI scheme
+        ? href
+        : href.startsWith("/") ? href
+        : `${baseDir}/${href}`;
+      invoke("launch_app", { exec: `xdg-open "${target}"` });
+    };
+    return <a href={href} onClick={onClick}>{children}</a>;
+  };
+}
+
 function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
   const [source, setSource] = useState<string | null>(null);
   const ref = useTermHighlight<HTMLDivElement>(terms, source);
@@ -812,6 +832,7 @@ function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
   const mdComponents: Components = {
     code: mdCodeComponent,
     img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} baseDir={baseDir} />,
+    a: makeMdAnchor(baseDir),
   };
 
   return (

@@ -11,6 +11,10 @@ const isSettings = getCurrentWindow().label === "settings";
 // doesn't leak into the transparent launcher window, which shares this bundle.
 if (isSettings) document.documentElement.classList.add("settings-win");
 
+// Kill the native WebKit context menu (open link / open in new window / inspect).
+// Opening a link there navigates the webview away and destroys the app.
+window.addEventListener("contextmenu", e => e.preventDefault());
+
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
     {isSettings ? <Settings /> : <App />}
