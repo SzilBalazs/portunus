@@ -92,9 +92,11 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
   const [preset, setPreset] = useState<PresetId | null>(null);
   const [screenshotDir, setScreenshotDir] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   // True once the user intentionally finishes, so unmount cleanup keeps their theme.
   const committedRef = useRef(false);
   const primaryRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getVersion().then(setVersion); }, []);
 
@@ -164,43 +166,84 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
     setStep(next);
   };
 
-  const finish = async (skipped: boolean) => {
+  // Commit the wizard: persist the draft (theme, providers, content) and keep it
+  // applied. Used by both "Finish" and "Skip setup" - skipping early still keeps
+  // whatever the user already chose rather than throwing it away.
+  const commit = async () => {
     if (finishing) return;
     setFinishing(true);
-    // Skip = leave everything at its saved defaults; only mark onboarding done.
-    // Finish = persist the draft (theme, providers, content) and keep it applied.
-    if (!skipped) committedRef.current = true;
-    const base = skipped ? config : draft;
-    const final: Config = { ...base, general: { ...base.general, onboarding_completed: true } };
+    setSaveError(false);
+    committedRef.current = true; // keep the previewed theme on unmount
+    const final: Config = { ...draft, general: { ...draft.general, onboarding_completed: true } };
     try {
       await invoke("save_config", { config: final });
-      // Kick off the first content index only when there's something to index.
-      if (!skipped && final.content.enabled && final.content.dirs.length > 0) {
-        invoke("trigger_full_reindex").catch(() => {});
-      }
-    } catch {
-      /* even if saving fails, don't trap the user behind the wizard */
+    } catch (e) {
+      // Don't mark onboarding done or close - let the user retry. Esc still
+      // dismisses as an escape hatch if saving keeps failing.
+      console.error("[onboarding] save_config failed:", e);
+      committedRef.current = false;
+      setSaveError(true);
+      setFinishing(false);
+      return;
+    }
+    // Kick off the first content index only when there's something to index.
+    if (final.content.enabled && final.content.dirs.length > 0) {
+      invoke("trigger_full_reindex").catch(() => {});
     }
     onComplete();
   };
-  const finishRef = useRef(finish);
-  finishRef.current = finish;
+
+  // Esc / dismiss: close without marking onboarding done, so it returns on the
+  // next launch. committedRef stays false, so unmount restores the saved theme.
+  const dismiss = () => {
+    if (finishing) return;
+    onComplete();
+  };
+
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
 
   const isLast = step === STEPS.length - 1;
 
-  // Keyboard-drive the wizard: Enter advances/finishes, Esc skips. Matches the
-  // keyboard-first launcher and the keys advertised on the Welcome screen.
+  // Keyboard-drive the wizard: Enter advances/commits, Esc dismisses, Tab is
+  // trapped inside the modal. Matches the keyboard-first launcher.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        const card = cardRef.current;
+        if (!card) return;
+        const list = Array.from(
+          card.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter(el => el.offsetParent !== null);
+        if (list.length === 0) return;
+        const first = list[0];
+        const last = list[list.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (active && !card.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        } else if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       if (finishing) return;
       if (e.key === "Enter") {
         const t = e.target as HTMLElement | null;
         if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA") return; // input owns Enter
         e.preventDefault();
-        if (isLast) finishRef.current(false); else go(step + 1);
+        if (isLast) commitRef.current(); else go(step + 1);
       } else if (e.key === "Escape") {
         e.preventDefault();
-        finishRef.current(true);
+        dismissRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -212,7 +255,7 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
 
   return (
     <div className="onb-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Portunus">
-      <div className="onb-card">
+      <div className="onb-card" ref={cardRef}>
         <div className="onb-rail">
           {STEPS.map((label, i) => (
             <button
@@ -256,8 +299,18 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
           </div>
         </div>
 
+        {saveError && (
+          <div className="onb-warn" role="alert" style={{ marginTop: 12 }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span>Couldn’t save your settings. Check permissions on <code className="onb-inline">~/.config/portunus</code> and try again, or press <kbd>Esc</kbd> to continue for now.</span>
+          </div>
+        )}
+
         <div className="onb-nav">
-          <button type="button" className="onb-btn onb-btn--ghost" onClick={() => finish(true)} disabled={finishing}>
+          <button type="button" className="onb-btn onb-btn--ghost" onClick={() => commit()} disabled={finishing}>
             Skip setup
           </button>
           <div className="onb-nav-right">
@@ -267,7 +320,7 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
               </button>
             )}
             {isLast ? (
-              <button ref={primaryRef} type="button" className="onb-btn onb-btn--primary" onClick={() => finish(false)} disabled={finishing}>
+              <button ref={primaryRef} type="button" className="onb-btn onb-btn--primary" onClick={() => commit()} disabled={finishing}>
                 {finishing ? "Finishing…" : "Finish"}
               </button>
             ) : (
