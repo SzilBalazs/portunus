@@ -1785,6 +1785,39 @@ mark.preview-hl {
   color: var(--fg-mute);
 }
 
+/* ---------- unpreviewable file placeholder ---------- */
+
+.file-preview-none {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: var(--bg-deep);
+  color: var(--fg-dim);
+}
+.file-preview-none-glyph {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--fg-mute);
+}
+.file-preview-none-label {
+  font: 400 12px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-dim);
+}
+.file-preview-none-kind {
+  font: 400 11px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+}
+
 /* ---------- text preview ---------- */
 
 .text-preview-wrap {

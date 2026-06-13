@@ -171,6 +171,31 @@ export function textPreviewLang(filename: string): string | null {
   return TEXT_PREVIEW_LANGS[ext] ?? null;
 }
 
+// Whether a file's name maps to a renderer that produces real preview content.
+// Mirrors the dispatch branches in FilePreview - keep in sync. Used to gate
+// Quicklook and the side-panel placeholder so unpreviewable files (archives,
+// video, audio, unknown binaries) don't open a blank card.
+export function isFilePreviewable(filename: string): boolean {
+  return (
+    filename.toLowerCase().endsWith(".pdf") ||
+    isImagePreviewable(filename) ||
+    isSvg(filename) ||
+    isCsv(filename) ||
+    isOfficeText(filename) ||
+    isSpreadsheet(filename) ||
+    textPreviewLang(filename) !== null
+  );
+}
+
+// Whether a result is worth enlarging into the full-card Quicklook overlay.
+// Folders always render something (a listing, or a meaningful "Empty folder"
+// state); files must resolve to an actual preview renderer.
+export function isPreviewable(result: { kind: string; title: string }): boolean {
+  if (result.kind === "folder") return true;
+  if (result.kind === "file") return isFilePreviewable(result.title);
+  return false;
+}
+
 export function fileKind(title: string, isFolder: boolean): string {
   if (isFolder) return "Folder";
   const ext = title.split(".").pop()?.toLowerCase() ?? "";

@@ -12,6 +12,7 @@ import QuickLook from "./components/QuickLook";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
+import { isPreviewable } from "./utils";
 import { ColoredIconsContext } from "./coloredIcons";
 import { dispatchLaunch, dispatchKeyDown, type LaunchContext } from "./providers/registry";
 import { useTauriListener } from "./hooks/useTauriListener";
@@ -22,9 +23,6 @@ import "./App.css";
 import "./themes.css";
 
 const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'content-hint', 'content-disabled', 'search-error']);
-
-// Kinds whose preview is worth enlarging into the full-card Quicklook overlay.
-const QUICKLOOK_KINDS = new Set(['file', 'folder']);
 
 // Greyed-out completion shown after a partial command word (e.g. "def" -> "ine").
 // Tab accepts it. Returns the suffix to append, or null when nothing completes.
@@ -389,7 +387,7 @@ export default function App() {
         e.preventDefault();
         if (quickResult) { setQuickResult(null); return; }
         const sel = displayResults[selectedIndex];
-        if (sel && QUICKLOOK_KINDS.has(sel.kind)) setQuickResult(sel);
+        if (sel && isPreviewable(sel)) setQuickResult(sel);
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const target = launchableResults[parseInt(e.key) - 1];

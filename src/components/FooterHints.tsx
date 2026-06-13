@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { SearchResult } from "../types";
 import { EnterIcon, DeleteIcon } from "../icons";
+import { isPreviewable } from "../utils";
 
 interface Props {
   selected: SearchResult | null;
@@ -47,7 +48,7 @@ function hints(
     return <>
       <Nav /><Open />
       {isPdf && <PdfPageNav />}
-      <Peek />
+      {selected && isPreviewable(selected) && <Peek />}
       <span className="hint"><kbd>Tab</kbd> names</span>
       <span className="hint"><kbd>Esc</kbd> back</span>
     </>;
@@ -90,7 +91,7 @@ function hints(
         {!isPdf && <CopyPath />}
         {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
         {isPdf && <PdfPageNav />}
-        <Peek />
+        {selected && isPreviewable(selected) && <Peek />}
         {canComplete && <Complete />}<Esc />
       </>
     );

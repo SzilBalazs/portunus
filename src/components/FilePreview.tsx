@@ -980,6 +980,10 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], qu
   const textLang = !isImage && !isSvgFile && !isCsvFile && !isOfficeTextFile && !isSpreadsheetFile
     ? textPreviewLang(result.title)
     : null;
+  // No renderer matched (archive, video, audio, unknown binary). Show an explicit
+  // placeholder instead of a blank body. Quicklook is gated off these upstream, so
+  // this only ever appears in the side panel.
+  const hasPreview = isPdf || isImage || isSvgFile || isCsvFile || isOfficeTextFile || isSpreadsheetFile || !!textLang;
 
   const [copied, setCopied] = useState(false);
 
@@ -1035,6 +1039,13 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], qu
       {isSpreadsheetFile && <SpreadsheetPreview path={filePath} terms={terms} />}
       {textLang === "markdown" && <MarkdownPreview path={filePath} terms={terms} />}
       {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} terms={terms} />}
+      {!hasPreview && (
+        <div className="file-preview-none">
+          <span className="file-preview-none-glyph"><FileGlyphIcon size={28} /></span>
+          <span className="file-preview-none-label">No preview</span>
+          <span className="file-preview-none-kind">{kind}</span>
+        </div>
+      )}
 
       {!quicklook && (result.modified || result.created) && (
       <div className="file-preview-meta">
