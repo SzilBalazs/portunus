@@ -16,7 +16,7 @@ export default function GeneralSection({ config, onChange }: Props) {
 
   return (
     <div className="settings-section">
-      <SectionHeader title="General" desc="Top-level launcher behaviour." />
+      <SectionHeader title="General" desc="How the launcher window behaves." />
 
       <SettingsGroup>
         <SettingsField name="Max results" desc="Total results shown in the launcher per query.">
@@ -31,7 +31,7 @@ export default function GeneralSection({ config, onChange }: Props) {
 
         <SettingsField
           name="Layer-shell overlay"
-          desc="Wayland only: float above everything via wlr-layer-shell (like wofi). Restart to apply."
+          desc="Wayland only. Draw the launcher as a true overlay above all windows. Restart to apply."
         >
           <Toggle label="Layer-shell overlay" checked={config.general.layer_shell} onChange={layer_shell => setGeneral({ layer_shell })} />
         </SettingsField>

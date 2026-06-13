@@ -46,7 +46,7 @@ export default function FilesSection({ config, onChange }: Props) {
     <div className="settings-section">
       <SectionHeader
         title="Files"
-        desc="Directories indexed by the file provider."
+        desc="Which directories are searched by name."
         master={{ checked: enabled, onChange: v => onChange({ ...config, providers: { ...config.providers, files: v } }), label: "Enable file search" }}
       />
 

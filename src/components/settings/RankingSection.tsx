@@ -51,7 +51,7 @@ export default function RankingSection({ config, onChange }: Props) {
 
       <SettingsGroup
         title="Launch history"
-        desc="Tracks how often you launch items so they surface faster over time. Stored in SQLite at $XDG_DATA_HOME/portunus/frecency.db."
+        desc="Tracks how often you launch items so they surface faster over time."
       >
         <SettingsField
           name="Track launch history"

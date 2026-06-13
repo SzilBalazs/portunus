@@ -23,7 +23,7 @@ export default function DictSection({ config, onChange }: Props) {
     <div className="settings-section">
       <SectionHeader
         title="Dictionary"
-        desc={<>Word definitions via dict. Explicit <code>define</code> and <code>dict</code> lookups, plus optional sparse-result fill for plain words.</>}
+        desc={<>Look up word definitions with <code>define</code> or <code>dict</code>, and optionally show them automatically when few other results match.</>}
         master={{ checked: config.dict.enabled, onChange: v => set({ enabled: v }), label: "Enable dictionary" }}
         warn={missing && (
           <div className="settings-dep-inline-warn">
@@ -33,30 +33,30 @@ export default function DictSection({ config, onChange }: Props) {
       />
 
       <div className={disabled ? "settings-disabled" : undefined} aria-hidden={disabled}>
-        <SettingsGroup title="Sparse-result fill">
+        <SettingsGroup title="Automatic definitions">
           <SettingsField
-            name="Fill sparse results"
-            desc="When few other results match a plain word, add dictionary entries for it."
+            name="Show definitions when little else matches"
+            desc="When few other results match a plain word, add its dictionary definition."
           >
-            <Toggle label="Fill sparse results" checked={config.dict.fill_sparse} onChange={v => set({ fill_sparse: v })} />
+            <Toggle label="Show definitions when little else matches" checked={config.dict.fill_sparse} onChange={v => set({ fill_sparse: v })} />
           </SettingsField>
 
           <SettingsField
             name="Correct misspellings"
-            desc="Allow edit-distance (typo) matches when filling. Off = exact word only."
+            desc="Match words even with small typos. Off = exact spelling only."
           >
             <Toggle label="Correct misspellings" checked={config.dict.correct_misspellings} onChange={v => set({ correct_misspellings: v })} />
           </SettingsField>
 
           <SettingsField
-            name="Fill threshold"
-            desc="Only fill when fewer than this many non-dictionary results exist."
+            name="Result threshold"
+            desc="Only add definitions when fewer than this many other results match."
           >
-            <NumberStepper label="Fill threshold" value={config.dict.fill_threshold} min={0} max={20} onChange={v => set({ fill_threshold: v })} />
+            <NumberStepper label="Result threshold" value={config.dict.fill_threshold} min={0} max={20} onChange={v => set({ fill_threshold: v })} />
           </SettingsField>
 
-          <SettingsField name="Fill max" desc="Maximum dictionary rows added when filling.">
-            <NumberStepper label="Fill max" value={config.dict.fill_max} min={0} max={20} onChange={v => set({ fill_max: v })} />
+          <SettingsField name="Max definitions" desc="Most definition rows to add at once.">
+            <NumberStepper label="Max definitions" value={config.dict.fill_max} min={0} max={20} onChange={v => set({ fill_max: v })} />
           </SettingsField>
         </SettingsGroup>
 

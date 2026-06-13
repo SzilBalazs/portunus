@@ -28,7 +28,7 @@ export default function ClipboardSection({ config, onChange }: Props) {
     <div className="settings-section">
       <SectionHeader
         title="Clipboard history"
-        desc={<>The clipboard browser (<code>clip</code> or <code>portunus --clipboard</code>).</>}
+        desc="Browse and reuse your clipboard history."
       />
 
       <SettingsGroup>

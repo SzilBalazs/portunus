@@ -171,7 +171,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
   return (
     <div className="settings-section">
       <SectionHeader
-        title="Content search"
+        title="Content"
         desc={<>Full-text search inside files. Press <kbd className="settings-kbd">Tab</kbd> in the launcher to activate.</>}
         master={{ checked: cc.enabled, onChange: v => set({ enabled: v }), label: "Enable content search" }}
       />
@@ -243,7 +243,7 @@ export default function ContentSection({ config, onChange, pendingReindex, reind
           />
         </SettingsField>
 
-        <SettingsField name="Indexer threads" desc="Rayon worker threads for parallel indexing. Set to 0 to use all CPU cores.">
+        <SettingsField name="Indexer threads" desc="How many CPU threads index in parallel. 0 = use all cores.">
           <NumberStepper label="Indexer threads" value={cc.threads} min={0} max={64} step={1} onChange={v => set({ threads: Math.round(v) })} />
         </SettingsField>
       </SettingsGroup>

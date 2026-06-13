@@ -28,11 +28,11 @@ interface ProviderDef {
 }
 
 const PROVIDERS: ProviderDef[] = [
-  { id: "apps",  label: "Applications", desc: "Search .desktop application entries.",
+  { id: "apps",  label: "Applications", desc: "Find installed applications.",
     get: c => c.providers.apps,  set: (c, v) => ({ ...c, providers: { ...c.providers, apps: v } }) },
-  { id: "files", label: "Files", desc: "Indexed file-name search across your directories.",
+  { id: "files", label: "Files", desc: "Search file and folder names in your chosen directories.",
     get: c => c.providers.files, set: (c, v) => ({ ...c, providers: { ...c.providers, files: v } }) },
-  { id: "calc",  label: "Calculator", desc: "Inline math expression evaluator.",
+  { id: "calc",  label: "Calculator", desc: "Type a math expression to get the answer inline.",
     get: c => c.providers.calc,  set: (c, v) => ({ ...c, providers: { ...c.providers, calc: v } }) },
   { id: "dict",  label: "Dictionary", desc: "Word definitions via dict.", dep: "dict",
     get: c => c.dict.enabled,     set: (c, v) => ({ ...c, dict: { ...c.dict, enabled: v } }) },
@@ -62,7 +62,7 @@ export default function ProvidersSection({ config, onChange }: Props) {
 
   return (
     <div className="settings-section">
-      <SectionHeader title="Search providers" desc="Enable or disable individual search sources." />
+      <SectionHeader title="Providers" desc="Enable or disable individual search sources." />
 
       <SettingsGroup>
         {PROVIDERS.map(p => {

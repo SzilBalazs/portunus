@@ -32,7 +32,7 @@ export default function AppearanceSection({ config, onChange }: Props) {
 
   return (
     <div className="settings-section">
-      <SectionHeader title="Appearance" desc="Theme and display settings." />
+      <SectionHeader title="Appearance" desc="Theme, scale, and launcher visuals." />
 
       <div className="settings-group-block">
         <div className="settings-group-title">Theme</div>
