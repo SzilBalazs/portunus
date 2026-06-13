@@ -1,10 +1,11 @@
 use crate::config::SharedConfig;
 use tauri::Manager;
 
-/// Reply for a render job: (jpeg bytes, total page count).
-type RenderReply = std::sync::mpsc::Sender<Result<(Vec<u8>, u32), String>>;
+/// Reply for a render job: (jpeg bytes, total page count). A oneshot the command
+/// `await`s directly, so no blocking-pool thread is parked for the render's duration.
+type RenderReply = tokio::sync::oneshot::Sender<Result<(Vec<u8>, u32), String>>;
 /// Reply for a rects job: normalized [x, y, w, h] boxes (top-left origin, 0..1).
-type RectsReply = std::sync::mpsc::Sender<Result<Vec<[f32; 4]>, String>>;
+type RectsReply = tokio::sync::oneshot::Sender<Result<Vec<[f32; 4]>, String>>;
 
 /// Work for the single pdfium-bound worker thread. pdfium is not `Send` and is
 /// bound once per thread, so both rasterizing and text-layer queries share this
@@ -186,20 +187,21 @@ pub async fn render_pdf_page(
     let width = width
         .unwrap_or(PDF_RENDER_WIDTH)
         .clamp(PDF_RENDER_WIDTH, PDF_MAX_RENDER_WIDTH);
-    let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<(Vec<u8>, u32), String>>();
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Result<(Vec<u8>, u32), String>>();
     let tx = worker.tx.clone();
-    // Blocking `send` (on a blocking thread), not `try_send`: when the single pdfium
-    // worker is busy - e.g. a slow high-zoom render, plus the adjacent-page prefetches -
-    // the bounded queue fills, and `try_send` would drop the job. A dropped render leaves
-    // the stale page on screen while the page counter has already advanced. Waiting for a
-    // slot instead keeps the displayed page and the counter in sync.
-    let (bytes, count) = tauri::async_runtime::spawn_blocking(move || {
+    // Enqueue on a blocking thread, then `await` the oneshot reply below. Blocking `send`
+    // (not `try_send`): when the single pdfium worker is busy - a slow high-zoom render
+    // plus the adjacent-page prefetches - the bounded queue fills, and `try_send` would
+    // drop the job, leaving a stale page on screen after the counter advanced. Waiting for
+    // a slot keeps them in sync. The enqueue is brief; the slow render is awaited via the
+    // oneshot, so no blocking-pool thread is held for its duration (unlike `recv`).
+    tauri::async_runtime::spawn_blocking(move || {
         tx.send(PdfJob::Render(path, page.unwrap_or(0), width, reply_tx))
-            .map_err(|e| e.to_string())?;
-        reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())??;
+    let (bytes, count) = reply_rx.await.map_err(|e| e.to_string())??;
     // Raw bytes across IPC: a JSON number[] would ~5x the JPEG payload and dominate
     // render time at high zoom. Prepend the page count as a u32 LE header that the
     // frontend slices back off (see getPdfUrl).
@@ -220,17 +222,17 @@ pub async fn pdf_match_rects(
     terms: Vec<String>,
     worker: tauri::State<'_, PdfWorkerHandle>,
 ) -> Result<Vec<[f32; 4]>, String> {
-    let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<Vec<[f32; 4]>, String>>();
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Result<Vec<[f32; 4]>, String>>();
     let tx = worker.tx.clone();
     // Blocking `send` for the same reason as render_pdf_page: don't drop the job when the
-    // worker queue is momentarily full; wait for a slot.
+    // worker queue is momentarily full; wait for a slot. Reply awaited via the oneshot.
     tauri::async_runtime::spawn_blocking(move || {
         tx.send(PdfJob::Rects(path, page, terms, reply_tx))
-            .map_err(|e| e.to_string())?;
-        reply_rx.recv().unwrap_or_else(|e| Err(e.to_string()))
+            .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    reply_rx.await.map_err(|e| e.to_string())?
 }
 
 /// Lowercases search terms and drops 1-char noise, mirroring the frontend's

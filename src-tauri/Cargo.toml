@@ -39,6 +39,7 @@ notify-debouncer-full = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 extism = "1.30.0"
 portunus-ext-sdk = { path = "../extension-sdk", default-features = false }
+tokio = { version = "1", features = ["sync"] }   # oneshot reply for the pdfium worker (already in tree via tauri)
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"            # must match tao's gtk version (see Cargo.lock)
