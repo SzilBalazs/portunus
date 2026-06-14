@@ -29,7 +29,11 @@ export interface Token {
 /** Splits text into `[\p{L}\p{N}]+` runs (apostrophe/punctuation separate), mirroring
  * unicode61's token boundaries. Offsets are into `text`. */
 export function tokenize(text: string): Token[] {
-  const re = /[\p{L}\p{N}]+/gu;
+  // Keep accented words whole regardless of how the extractor split them: \p{M}
+  // for NFD combining marks, plus the non-ASCII spacing accents pdfium emits
+  // (U+00A8/AF/B4/B8 and the Spacing Modifier Letters block). The backend strips
+  // these when keying. Mirrors content_match::tokenize / is_diacritic.
+  const re = /[\p{L}\p{N}\p{M}¨¯´¸ʰ-˿]+/gu;
   const out: Token[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {

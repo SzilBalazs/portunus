@@ -26,6 +26,14 @@ use std::ops::Range;
 pub fn normalize(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
+        // Drop diacritic marks - this is unicode61's `remove_diacritics`. PDF text
+        // layers split an accented letter into a base + a separate accent char, and
+        // the form depends on the extractor: poppler emits NFD combining marks
+        // (`a` + U+0301), pdfium emits a spacing accent (`caf´e` = ... U+00B4, e).
+        // Dropping both keeps the word keying to its folded form like the index.
+        if is_diacritic(c) {
+            continue;
+        }
         if c.is_ascii() {
             out.push(c.to_ascii_lowercase());
             continue;
@@ -36,6 +44,18 @@ pub fn normalize(s: &str) -> String {
         }
     }
     out
+}
+
+/// True for diacritic marks unicode61 strips: combining marks (NFD, as poppler
+/// emits) AND non-ASCII spacing accents (as pdfium emits for LaTeX-encoded PDFs,
+/// e.g. U+00B4 ´, U+00A8 ¨, U+02C6 ̂ in the Spacing Modifier Letters block).
+/// ASCII `^`/`` ` ``/`~` are deliberately excluded - they're legitimate text/code.
+pub fn is_diacritic(c: char) -> bool {
+    matches!(c as u32,
+        // combining marks
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F
+        // spacing diacritics (Latin-1 + Spacing Modifier Letters)
+        | 0x00A8 | 0x00AF | 0x00B4 | 0x00B8 | 0x02B0..=0x02FF)
 }
 
 /// Folds a precomposed Latin-1 / Latin Extended accented letter to its ASCII base.
@@ -64,7 +84,10 @@ pub fn tokenize(text: &str) -> Vec<(Range<usize>, &str)> {
     let mut out = Vec::new();
     let mut start: Option<usize> = None;
     for (i, c) in text.char_indices() {
-        if c.is_alphanumeric() {
+        // Diacritic marks continue the word - a PDF accent char (combining or
+        // spacing) sits between base letters; normalize strips them later. Without
+        // this an accented word would split at every accent.
+        if c.is_alphanumeric() || is_diacritic(c) {
             start.get_or_insert(i);
         } else if let Some(s) = start.take() {
             out.push((s..i, &text[s..i]));
@@ -446,6 +469,33 @@ mod tests {
         // them, so we must NOT fold them or highlighting would disagree with the index.
         assert_eq!(normalize("søk"), "søk");
         assert_ne!(match_key("søk"), match_key("sok"));
+    }
+
+    #[test]
+    fn nfd_decomposed_text_keys_like_precomposed() {
+        // PDF/LaTeX text layers are often NFD: an accent is a separate combining mark.
+        let nfd = "cafe\u{0301}"; // e + combining acute
+        let nfc = "café"; // precomposed
+        assert_eq!(normalize(nfd), normalize(nfc));
+        assert_eq!(match_key(nfd), match_key(nfc));
+        // And the whole NFD word must tokenize as ONE token, not split at the accent.
+        let line = format!("{nfd} nai\u{0308}ve"); // "café naïve", both NFD
+        let toks: Vec<&str> = tokenize(&line).iter().map(|(_, t)| *t).collect();
+        assert_eq!(toks.len(), 2);
+        assert_eq!(match_key(toks[0]), match_key("cafe"));
+        assert_eq!(match_key(toks[1]), match_key("naive"));
+    }
+
+    #[test]
+    fn pdfium_spacing_accent_keys_like_plain() {
+        // pdfium extracts LaTeX-encoded accents as a SPACING accent char (U+00B4 ´)
+        // beside the base letter, e.g. "café" -> "caf´e" (... f, U+00B4, e).
+        let spaced = "caf\u{00B4}e";
+        assert_eq!(normalize(spaced), "cafe");
+        assert_eq!(match_key(spaced), match_key("cafe"));
+        // Must stay ONE token, not split at the accent.
+        let toks = tokenize(spaced);
+        assert_eq!(toks.len(), 1);
     }
 
     #[test]

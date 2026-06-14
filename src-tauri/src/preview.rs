@@ -449,7 +449,9 @@ fn page_match_rects(
     // Walk whole words; a word is highlighted when its content key matches a query
     // key - the same `porter unicode61` keying the index used. `chars`/`bounds` are
     // index-aligned, so a word's char span [start, end) maps straight to its bounds.
-    let is_word = |c: char| c.is_alphanumeric();
+    // Diacritic chars continue the word so pdfium's split accents (`caf´e` =
+    // ...U+00B4, e) aren't broken at the accent; match_key strips them when keying.
+    let is_word = |c: char| c.is_alphanumeric() || crate::content_match::is_diacritic(c);
     // Membership set so each word is one hash lookup, not an O(needles) scan.
     let key_set: std::collections::HashSet<&str> = needles.iter().map(String::as_str).collect();
     let mut rects: Vec<[f32; 4]> = Vec::new();
