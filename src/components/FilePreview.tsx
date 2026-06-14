@@ -321,14 +321,18 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
   // transform scales it. Zoom never re-renders, so the cache key is zoom-free.
   const renderWidth = PDF_RENDER_WIDTH;
 
-  // Clamp a view to its bounds: center an axis when the page fits it, else keep the
-  // offset within [viewport - scaled, 0] so panning can't reveal dead space past the
-  // page edges.
-  const clampView = (z: number, tx: number, ty: number, g: { baseW: number; baseH: number; vpW: number; vpH: number }) => {
-    const sw = g.baseW * z, sh = g.baseH * z;
-    const nx = sw <= g.vpW ? (g.vpW - sw) / 2 : Math.min(0, Math.max(g.vpW - sw, tx));
-    const ny = sh <= g.vpH ? (g.vpH - sh) / 2 : Math.min(0, Math.max(g.vpH - sh, ty));
-    return { z, tx: nx, ty: ny };
+  // Clamp a view to its bounds: keep the page on-screen by holding each offset within
+  // its valid range (which collapses to centering only once an axis overflows). With
+  // recenterFit the axis snaps to centered whenever the page fits - used for the default
+  // / flip / resize states. Interactive zoom & pan leave it off so the cursor pivot is
+  // honored even at low zoom (otherwise a fitting page would just center-zoom).
+  const clampView = (z: number, tx: number, ty: number, g: { baseW: number; baseH: number; vpW: number; vpH: number }, recenterFit = false) => {
+    const axis = (val: number, vpLen: number, scaled: number) => {
+      if (recenterFit && scaled <= vpLen) return (vpLen - scaled) / 2;
+      const lo = Math.min(0, vpLen - scaled), hi = Math.max(0, vpLen - scaled);
+      return Math.min(hi, Math.max(lo, val));
+    };
+    return { z, tx: axis(tx, g.vpW, g.baseW * z), ty: axis(ty, g.vpH, g.baseH * z) };
   };
 
   // Zoom toward a fixed point (cursor for wheel, viewport center for keys): keep the
@@ -368,7 +372,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
   useLayoutEffect(() => {
     if (!quicklook) return;
     setView((prev) => {
-      const c = clampView(prev.z, prev.tx, prev.ty, { baseW, baseH, vpW: vp.w, vpH: vp.h });
+      const c = clampView(prev.z, prev.tx, prev.ty, { baseW, baseH, vpW: vp.w, vpH: vp.h }, true);
       return c.z === prev.z && c.tx === prev.tx && c.ty === prev.ty ? prev : c;
     });
   }, [quicklook, baseW, baseH, vp.w, vp.h]);
@@ -395,7 +399,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
     flipPendingRef.current = false;
     // Clamp to fit-width and reset the pan to the page's top (h-centered). clampView
     // turns a fit-width page into tx=0, and ty=0 keeps the top in view.
-    setView((prev) => clampView(Math.min(prev.z, PDF_FIT_WIDTH_ZOOM), 0, 0, geomRef.current));
+    setView((prev) => clampView(Math.min(prev.z, PDF_FIT_WIDTH_ZOOM), 0, 0, geomRef.current, true));
   };
   // Mark the flip during render (not in an effect) so it's set before the render effect
   // runs - the cached-swap path calls consumeFlip synchronously inside that effect.
@@ -528,7 +532,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
       if (!quicklook) return;
       if (e.key === "=" || e.key === "+") zoomAt((z) => z * ZOOM_STEP);
       else if (e.key === "-" || e.key === "_") zoomAt((z) => z / ZOOM_STEP);
-      else if (e.key === "0") zoomAt(() => 1);
+      else if (e.key === "0") setView(() => clampView(1, 0, 0, geomRef.current, true));
       else return;
       e.preventDefault();
       e.stopPropagation();
