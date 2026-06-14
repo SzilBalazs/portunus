@@ -193,46 +193,38 @@ html, body, #root {
 .pdf-ql {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  /* Reserve the scrollbar gutter so clientWidth stays constant whether or not the
-     vertical scrollbar is showing - otherwise a page sized near the viewport
-     height makes the scrollbar flicker on/off and the measured width oscillates. */
-  scrollbar-gutter: stable;
-  /* Extra bottom room so the floating HUD clears the page. */
-  padding: 22px 24px 48px;
-  display: flex;
-  overscroll-behavior: contain;
+  position: relative;
+  /* Zoom/pan is a CSS transform on the page (pdf-ql-host), not native scroll - so the
+     bitmap never re-rasters mid-zoom. The viewport just clips. */
+  overflow: hidden;
 }
-/* Center every child (page, spinner, error) via auto margins - NOT align/justify
-   center, which would collapse to start-clipping when the page overflows and make
-   the top/left unreachable by scroll. */
-.pdf-ql > * { margin: auto; }
 /* Grab cursor only when there's something to pan. */
 .pdf-ql.is-scrollable { cursor: grab; }
 .pdf-ql.is-scrollable.is-grabbing { cursor: grabbing; }
 .pdf-ql.is-grabbing { user-select: none; }
 .pdf-ql.is-grabbing .pdf-ql-page { pointer-events: none; }
 
-/* Same styled scrollbars as the text preview, instead of the OS default. */
-.pdf-ql::-webkit-scrollbar { width: 10px; height: 10px; }
-.pdf-ql::-webkit-scrollbar-thumb {
-  background: var(--bg-input);
-  border-radius: 5px;
-  border: 2px solid var(--bg-deep);
-  background-clip: padding-box;
-  min-height: 32px;
-  min-width: 32px;
+/* The transformed page layer: positioned and scaled via translate()+scale() from JS.
+   Compositor-only, so zoom is instant and never shifts the anchored point. */
+.pdf-ql-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
 }
-.pdf-ql::-webkit-scrollbar-thumb:hover { background: var(--fg-mute); background-clip: padding-box; }
-.pdf-ql::-webkit-scrollbar-track { background: transparent; }
-.pdf-ql::-webkit-scrollbar-corner { background: var(--bg-deep); }
+
+/* Spinner / error sit centered in the viewport (no flex centering on .pdf-ql now). */
+.pdf-ql > .pdf-ql-spinner,
+.pdf-ql > .pdf-preview-msg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
 
 .pdf-ql-page {
-  /* margin:auto on a flex item centers both axes AND, unlike justify/align
-     center, still lets you scroll to the very top/left when the page overflows. */
-  margin: auto;
-  height: auto;
-  max-width: none;            /* allow horizontal scroll when zoomed past the surface */
+  display: block;
   border-radius: 2px;
   background: #fff;
   box-shadow:

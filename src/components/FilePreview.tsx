@@ -239,13 +239,14 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
   // the current page - falling back to the content-match page for a fresh file.
   const startPage = () => (pdfView.path === path ? pdfView.page : page);
   const [cur, setCur] = useState(startPage);
-  // Quicklook zoom factor (1.0 = PDF_QL_FIXED_ZOOM of reader width). Persists across
-  // page flips; resets on remount (a fresh Quicklook open). Side preview ignores it.
-  const [zoom, setZoom] = useState(1);
+  // Quicklook view transform: zoom factor z (1.0 = PDF_QL_FIXED_ZOOM of reader width)
+  // plus the page's top-left offset (tx, ty) within the viewport. Zoom and pan are a
+  // pure CSS transform on the page - no box resize, so the bitmap never re-rasters
+  // mid-zoom (the cause of the old "text jumps a few frames" glitch) and the point
+  // under the cursor stays put by construction. Persists across page flips; resets on
+  // remount. Side preview ignores it.
+  const [view, setView] = useState({ z: 1, tx: 0, ty: 0 });
   const [grabbing, setGrabbing] = useState(false);
-  // Content-fraction under the cursor at the moment of a zoom, applied once the page
-  // has resized so the point under the pointer stays put. Null when no zoom is pending.
-  const zoomAnchor = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const [count, setCount] = useState<number | null>(() => pdfPageCount.get(path) ?? null);
   const [aspect, setAspect] = useState(() => pdfAspect.get(path) ?? 0);
   // On switching files, adopt the new path's cached aspect if known; otherwise
@@ -277,36 +278,21 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown.path, shown.page, termsKey, highlight]);
 
-  // Quicklook measures its reader surface to size renders; side preview uses the
-  // fixed 800px default (downscaled to fit, so resolution is plenty).
-  // outerRef is the non-scrolling parent: measuring IT (not the scroll container)
-  // means the scrollbar appearing/disappearing can't change the measured width -
-  // otherwise width↔scrollbar feedback makes the page jump every frame.
+  // outerRef is the non-scrolling parent; vp is its inner box - the Quicklook viewport
+  // the page is scaled/clamped against, and the fit box for the side preview.
   const outerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [vp, setVp] = useState({ w: 0, h: 0 });
-  // Fixed gutter reserved for the scrollbar, so a vertical scrollbar never pushes
-  // the page into horizontal overflow.
-  const SCROLLBAR_RESERVE = 14;
   useLayoutEffect(() => {
     const outer = outerRef.current;
     if (!outer) return;
     const measure = () => {
-      let w: number, h: number;
-      if (quicklook) {
-        const inner = wrapRef.current;
-        if (!inner) return;
-        const cs = getComputedStyle(inner);
-        const px = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-        const py = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-        w = Math.max(0, outer.clientWidth - px - SCROLLBAR_RESERVE);
-        h = Math.max(0, outer.clientHeight - py);
-      } else {
-        // Side preview: the wrap is the fit box; the page is contained within it.
-        w = outer.clientWidth;
-        h = outer.clientHeight;
-      }
+      // Both modes measure the non-scrolling parent: Quicklook zooms via a CSS
+      // transform (no scrollbar to feed back into the width), the side preview
+      // contain-fits the page into the box.
+      const w = outer.clientWidth;
+      const h = outer.clientHeight;
       // Skip no-op updates so a stable size can't churn renders / re-measures.
       setVp(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
@@ -316,56 +302,76 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
     return () => ro.disconnect();
   }, [quicklook]);
 
-  // Explicit display size for the page <img>, so the highlight host shrink-wraps
-  // it exactly. Quicklook uses a fixed zoom of the reader width; the side preview
-  // contain-fits the page into the wrap (was pure CSS, but the highlight host
-  // wrapper needs a definite box to align the overlay against).
-  const displayW = quicklook
-    ? (vp.w > 0 ? Math.round(vp.w * PDF_QL_FIXED_ZOOM * zoom) : 0)
-    : (vp.w > 0 && vp.h > 0 && aspect > 0 ? Math.floor(Math.min(vp.w, vp.h * aspect)) : 0);
+  // Side preview: contain-fit the page into the wrap (a definite box so the highlight
+  // overlay has something to align against).
+  const displayW = !quicklook && vp.w > 0 && vp.h > 0 && aspect > 0
+    ? Math.floor(Math.min(vp.w, vp.h * aspect)) : 0;
   const displayH = aspect > 0 && displayW > 0 ? Math.round(displayW / aspect) : undefined;
-  // Fixed render width: the bitmap is rasterized once at PDF_RENDER_WIDTH and CSS-scaled
-  // to displayW. Zoom never re-renders, so it's instant and the cache key is zoom-free.
+  // Quicklook: the page's unscaled (z=1) box - 0.75 of the reader width. Zoom is the CSS
+  // scale applied on top, so this stays fixed and the bitmap renders once.
+  const baseW = quicklook && vp.w > 0 ? Math.round(vp.w * PDF_QL_FIXED_ZOOM) : 0;
+  const baseH = aspect > 0 && baseW > 0 ? Math.round(baseW / aspect) : 0;
+  // Mirror geometry + view into refs so the wheel/key/pan handlers read the latest
+  // values without re-subscribing their listeners on every zoom.
+  const geomRef = useRef({ baseW, baseH, vpW: vp.w, vpH: vp.h });
+  geomRef.current = { baseW, baseH, vpW: vp.w, vpH: vp.h };
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // Fixed render width: the bitmap is rasterized once at PDF_RENDER_WIDTH and the
+  // transform scales it. Zoom never re-renders, so the cache key is zoom-free.
   const renderWidth = PDF_RENDER_WIDTH;
 
-  // Change zoom while keeping a chosen point fixed: record the content-fraction under
-  // the anchor (cursor for wheel, viewport center for keys) from the current DOM, then
-  // clamp the factor. The [displayW, displayH] layout effect below re-applies the scroll
-  // once the page has resized. Stable identity (refs + setters), so listeners don't churn.
-  const zoomAnchored = useCallback(
+  // Clamp a view to its bounds: center an axis when the page fits it, else keep the
+  // offset within [viewport - scaled, 0] so panning can't reveal dead space past the
+  // page edges.
+  const clampView = (z: number, tx: number, ty: number, g: { baseW: number; baseH: number; vpW: number; vpH: number }) => {
+    const sw = g.baseW * z, sh = g.baseH * z;
+    const nx = sw <= g.vpW ? (g.vpW - sw) / 2 : Math.min(0, Math.max(g.vpW - sw, tx));
+    const ny = sh <= g.vpH ? (g.vpH - sh) / 2 : Math.min(0, Math.max(g.vpH - sh, ty));
+    return { z, tx: nx, ty: ny };
+  };
+
+  // Zoom toward a fixed point (cursor for wheel, viewport center for keys): keep the
+  // page coordinate under the anchor invariant by adjusting the translate along with the
+  // scale, then clamp. Pure transform math - no DOM resize, no scroll - so the anchored
+  // point is exact on every frame. Stable identity (refs only), so listeners don't churn.
+  const zoomAt = useCallback(
     (compute: (z: number) => number, clientX?: number, clientY?: number) => {
+      const g = geomRef.current;
       const el = wrapRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        const px = clientX != null ? clientX - rect.left : el.clientWidth / 2;
-        const py = clientY != null ? clientY - rect.top : el.clientHeight / 2;
-        zoomAnchor.current = {
-          x: (el.scrollLeft + px) / (el.scrollWidth || 1),
-          y: (el.scrollTop + py) / (el.scrollHeight || 1),
-          px,
-          py,
-        };
+      let cx = g.vpW / 2, cy = g.vpH / 2;
+      if (el && clientX != null) {
+        const r = el.getBoundingClientRect();
+        cx = clientX - r.left;
+        cy = (clientY ?? r.top + cy) - r.top;
       }
-      setZoom((prev) => {
-        const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, compute(prev)));
-        // No size change → the layout effect won't fire; drop the stale anchor so it
-        // can't snap scroll on some later, unrelated relayout.
-        if (next === prev) zoomAnchor.current = null;
-        return next;
+      setView((prev) => {
+        const nz = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, compute(prev.z)));
+        if (nz === prev.z) return prev;
+        // Page coord under the anchor: (cursor - translate) / scale. Hold it fixed:
+        // newTranslate = cursor - pageCoord * newScale.
+        const hx = (cx - prev.tx) / prev.z;
+        const hy = (cy - prev.ty) / prev.z;
+        return clampView(nz, cx - hx * nz, cy - hy * nz, g);
       });
     },
     [],
   );
 
-  // After a zoom resizes the page, restore scroll so the anchored point stays put.
+  // Pan by a pixel delta (wheel scroll / drag), clamped to the page bounds.
+  const panBy = useCallback((dx: number, dy: number) => {
+    setView((prev) => clampView(prev.z, prev.tx + dx, prev.ty + dy, geomRef.current));
+  }, []);
+
+  // Re-clamp the view whenever the geometry changes (viewport resize, aspect arriving
+  // after load): re-centers a fitting page and keeps an overflowing one in bounds.
   useLayoutEffect(() => {
-    const el = wrapRef.current;
-    const a = zoomAnchor.current;
-    if (!el || !a) return;
-    el.scrollLeft = a.x * el.scrollWidth - a.px;
-    el.scrollTop = a.y * el.scrollHeight - a.py;
-    zoomAnchor.current = null;
-  }, [displayW, displayH]);
+    if (!quicklook) return;
+    setView((prev) => {
+      const c = clampView(prev.z, prev.tx, prev.ty, { baseW, baseH, vpW: vp.w, vpH: vp.h });
+      return c.z === prev.z && c.tx === prev.tx && c.ty === prev.ty ? prev : c;
+    });
+  }, [quicklook, baseW, baseH, vp.w, vp.h]);
 
   const key = pdfKey(path, cur, renderWidth);
   const [src, setSrc] = useState<string | null>(() => pdfUrlCache.get(key) ?? null);
@@ -380,21 +386,16 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
   const [error, setError] = useState(false);
 
   // A flip stays "pending" from the keypress until the new page's bitmap is actually
-  // shown. Only then do we clamp zoom to fit-width and reset scroll - applied in the
-  // same commit as the src swap so the old page never jumps before the new one renders
-  // (the render is debounced). resetScrollRef hands the scroll snap to a layout effect
-  // so it lands before paint.
+  // shown. Only then do we clamp zoom to fit-width and snap the view to top-centered -
+  // applied in the same commit as the src swap so the old page never jumps before the
+  // new one renders (the render is debounced).
   const flipPendingRef = useRef(false);
-  const resetScrollRef = useRef(false);
   const consumeFlip = () => {
     if (!flipPendingRef.current) return;
     flipPendingRef.current = false;
-    resetScrollRef.current = true;
-    // The flip owns scroll on this commit (reset to top-left). Drop any pending zoom
-    // anchor so the [displayW,displayH] zoom effect can't fight the reset when a flip
-    // and a zoom-clamp land in the same commit.
-    zoomAnchor.current = null;
-    setZoom((z) => Math.min(z, PDF_FIT_WIDTH_ZOOM));
+    // Clamp to fit-width and reset the pan to the page's top (h-centered). clampView
+    // turns a fit-width page into tx=0, and ty=0 keeps the top in view.
+    setView((prev) => clampView(Math.min(prev.z, PDF_FIT_WIDTH_ZOOM), 0, 0, geomRef.current));
   };
   // Mark the flip during render (not in an effect) so it's set before the render effect
   // runs - the cached-swap path calls consumeFlip synchronously inside that effect.
@@ -403,16 +404,6 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
     prevCurRef.current = cur;
     flipPendingRef.current = true;
   }
-
-  // Snap a flipped-in page to its top-left before paint (no visible scroll jump). Keyed
-  // on src/displayW so it runs on the swap commit; guarded so zoom re-renders (where the
-  // anchor effect owns scroll) are untouched.
-  useLayoutEffect(() => {
-    if (!resetScrollRef.current) return;
-    resetScrollRef.current = false;
-    const el = wrapRef.current;
-    if (el) { el.scrollTop = 0; el.scrollLeft = 0; }
-  }, [src, displayW]);
 
   useEffect(() => { setCur(startPage()); }, [path, page]);
 
@@ -535,54 +526,55 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
       }
       // Zoom keys: Quicklook only (the side preview is fit-to-panel). Anchored to center.
       if (!quicklook) return;
-      if (e.key === "=" || e.key === "+") zoomAnchored((z) => z * ZOOM_STEP);
-      else if (e.key === "-" || e.key === "_") zoomAnchored((z) => z / ZOOM_STEP);
-      else if (e.key === "0") zoomAnchored(() => 1);
+      if (e.key === "=" || e.key === "+") zoomAt((z) => z * ZOOM_STEP);
+      else if (e.key === "-" || e.key === "_") zoomAt((z) => z / ZOOM_STEP);
+      else if (e.key === "0") zoomAt(() => 1);
       else return;
       e.preventDefault();
       e.stopPropagation();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [count, quicklook, zoomAnchored]);
+  }, [count, quicklook, zoomAt]);
 
-  // Ctrl+wheel zooms toward the cursor. Native non-passive listener because React's
+  // Ctrl+wheel zooms toward the cursor; plain wheel pans (there's no native scrollbar -
+  // the page is positioned by transform). Native non-passive listener because React's
   // onWheel is passive and can't preventDefault (which the WebView needs to not zoom).
   useEffect(() => {
     if (!quicklook) return;
     const el = wrapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return; // plain wheel = normal vertical scroll
       e.preventDefault();
-      const factor = e.deltaY < 0 ? ZOOM_WHEEL_STEP : 1 / ZOOM_WHEEL_STEP;
-      zoomAnchored((z) => z * factor, e.clientX, e.clientY);
+      if (e.ctrlKey) {
+        const factor = e.deltaY < 0 ? ZOOM_WHEEL_STEP : 1 / ZOOM_WHEEL_STEP;
+        zoomAt((z) => z * factor, e.clientX, e.clientY);
+      } else {
+        panBy(-e.deltaX, -e.deltaY);
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [quicklook, zoomAnchored]);
+  }, [quicklook, zoomAt, panBy]);
 
   // The page overflows the reader (zoomed past fit) → grab-to-pan is meaningful.
-  const isScrollable = quicklook && (displayW > vp.w + 1 || (displayH ?? 0) > vp.h + 1);
+  const isScrollable = quicklook && (baseW * view.z > vp.w + 1 || baseH * view.z > vp.h + 1);
 
   // Teardown for an in-progress pan drag, so an unmount mid-drag (file switch, Esc)
   // can't leak the window mousemove/mouseup listeners. Cleared when the drag ends.
   const panCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => panCleanupRef.current?.(), []);
 
-  // Drag-to-pan the scroll container. Left button only, and only when scrollable so a
-  // plain click still falls through. Listeners live on window for the drag's duration.
+  // Drag-to-pan the page. Left button only, and only when scrollable so a plain click
+  // still falls through. Listeners live on window for the drag's duration.
   const onPanStart = (e: ReactMouseEvent) => {
     if (e.button !== 0 || !isScrollable) return;
-    const el = wrapRef.current;
-    if (!el) return;
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
-    const sl = el.scrollLeft, st = el.scrollTop;
+    const start = viewRef.current;
     setGrabbing(true);
     const onMove = (ev: MouseEvent) => {
-      el.scrollLeft = sl - (ev.clientX - startX);
-      el.scrollTop = st - (ev.clientY - startY);
+      setView(() => clampView(start.z, start.tx + (ev.clientX - startX), start.ty + (ev.clientY - startY), geomRef.current));
     };
     const cleanup = () => {
       window.removeEventListener("mousemove", onMove);
@@ -604,14 +596,21 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
           onMouseDown={onPanStart}
         >
           {src && (
-            <span className="pdf-hl-host">
+            <span
+              className="pdf-hl-host pdf-ql-host"
+              style={{
+                width: baseW || undefined,
+                height: baseH || undefined,
+                transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`,
+              }}
+            >
               <img
                 ref={imgRef}
                 src={src}
                 alt="PDF preview"
                 className="pdf-ql-page"
                 draggable={false}
-                style={displayW ? { width: displayW, height: displayH } : undefined}
+                style={{ width: "100%", height: "100%" }}
                 onLoad={e => {
                   setLoaded(true);
                   setShown({ path, page: cur });
@@ -633,7 +632,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
         <div className="pdf-ql-hud">
           <span>{count != null ? `Page ${cur + 1} / ${count}` : `Page ${cur + 1}`}</span>
           <span className="pdf-ql-hud-dot" />
-          <span>{Math.round(zoom * 100)}%</span>
+          <span>{Math.round(view.z * 100)}%</span>
           <span className="pdf-ql-hud-keys"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>
           <span className="pdf-ql-hud-keys"><kbd>ctrl</kbd><kbd>±/0</kbd> zoom</span>
           {terms.length > 0 && (
