@@ -1145,12 +1145,50 @@ kbd {
   z-index: 2;
 }
 
+/* The box positions to the exact glyph rect; the fill (::before) and ring
+   (::after) are inset by a negative pad so the highlight breathes a few px
+   past the text on every side instead of hugging it tight. */
 .pdf-hl-box {
+  --hl-pad: 3px;
   position: absolute;
-  background: color-mix(in srgb, var(--accent) 38%, transparent);
-  /* multiply keeps the dark glyphs legible through the tint on a white page. */
+  animation: pdf-hl-pop 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* Filled core: multiply keeps the dark glyphs legible through the tint on a
+   white page, while a stronger mix makes the match read at a glance. */
+.pdf-hl-box::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--hl-pad));
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
   mix-blend-mode: multiply;
-  border-radius: 1px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* Crisp accent ring drawn over the multiply fill (normal blend, so it does not
+   wash out against white) plus a soft halo so boxes catch the eye on dense pages. */
+.pdf-hl-box::after {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--hl-pad));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 85%, #000);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 1px 6px color-mix(in srgb, var(--accent) 45%, transparent);
+  mix-blend-mode: normal;
+  pointer-events: none;
+}
+
+@keyframes pdf-hl-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .pdf-preview-msg {
