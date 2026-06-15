@@ -16,7 +16,7 @@ static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// One OCR'd word and its normalized bounding box `[x, y, w, h]` (0..1, top-left
 /// origin) within the source image. `word` is lowercased for case-insensitive
-/// prefix matching at preview time. Produced by `parse_tsv_word_boxes`, stored in
+/// prefix matching at preview time. Produced by `parse_tsv`, stored in
 /// `ocr_word_box` when `ocr_highlight_cache` is on, and read back by the preview's
 /// `image_match_rects`.
 pub(crate) type WordBox = (String, [f32; 4]);
@@ -529,25 +529,21 @@ fn with_leptess<R>(
 fn ocr_file(path: &str, lang: &str) -> Result<String, String> {
     with_leptess(lang, |api| {
         api.set_image(path).map_err(|e| format!("{e:?}"))?;
-        api.get_utf8_text().map_err(|e| format!("{e:?}"))
+        let tsv = api.get_tsv_text(0).map_err(|e| format!("{e:?}"))?;
+        let (w, h) = api.get_image_dimensions().unwrap_or((0, 0));
+        Ok(parse_tsv(&tsv, w, h).0)
     })
 }
 
-/// OCR an image, returning both its text and its word boxes in one pass (text via
-/// `get_utf8_text`, boxes via the TSV layout). Used during indexing when
+/// OCR an image, returning both its confidence-filtered text and its word boxes
+/// in one pass (both from the TSV layout). Used during indexing when
 /// `ocr_highlight_cache` is on, so the boxes land in `ocr_word_box`.
 fn ocr_file_text_and_boxes(path: &str, lang: &str) -> Result<(String, Vec<WordBox>), String> {
     with_leptess(lang, |api| {
         api.set_image(path).map_err(|e| format!("{e:?}"))?;
-        let text = api.get_utf8_text().map_err(|e| format!("{e:?}"))?;
-        let boxes = match api.get_image_dimensions() {
-            Some((w, h)) => {
-                let tsv = api.get_tsv_text(0).map_err(|e| format!("{e:?}"))?;
-                parse_tsv_word_boxes(&tsv, w, h)
-            }
-            None => Vec::new(),
-        };
-        Ok((text, boxes))
+        let tsv = api.get_tsv_text(0).map_err(|e| format!("{e:?}"))?;
+        let (w, h) = api.get_image_dimensions().unwrap_or((0, 0));
+        Ok(parse_tsv(&tsv, w, h))
     })
 }
 
@@ -561,59 +557,74 @@ pub(crate) fn ocr_image_boxes(path: &str, lang: &str) -> Result<Vec<WordBox>, St
             .get_image_dimensions()
             .ok_or_else(|| "no image dimensions".to_string())?;
         let tsv = api.get_tsv_text(0).map_err(|e| format!("{e:?}"))?;
-        Ok(parse_tsv_word_boxes(&tsv, w, h))
+        Ok(parse_tsv(&tsv, w, h).1)
     })
 }
 
-/// Parses Tesseract TSV output into normalized word boxes. Keeps only word-level
-/// rows (`level`==5) with non-negative confidence and non-empty text, mapping the
-/// pixel `left/top/width/height` (top-left origin) into 0..1 of the source image.
-pub(crate) fn parse_tsv_word_boxes(tsv: &str, img_w: u32, img_h: u32) -> Vec<WordBox> {
+// Tesseract word confidence is 0..100. Below this, OCR output is mostly noise
+// (texture/edges read as short junk like "iy"); drop it from both the search
+// index and the highlight boxes.
+const MIN_WORD_CONFIDENCE: f32 = 50.0;
+
+/// Single pass over Tesseract TSV → (reconstructed text, normalized word boxes),
+/// both filtered to word-level rows (`level`==5) at or above `MIN_WORD_CONFIDENCE`
+/// with non-empty text. Text joins kept words with a space, breaking to a newline
+/// when the block/paragraph/line index changes. Boxes map the pixel
+/// `left/top/width/height` (top-left origin) into 0..1 of the source image; they
+/// need valid image dims, the text does not.
+fn parse_tsv(tsv: &str, img_w: u32, img_h: u32) -> (String, Vec<WordBox>) {
     // Defensive cap: a pathological image can't blow up memory / the DB row count.
     const MAX_BOXES: usize = 2000;
-    if img_w == 0 || img_h == 0 {
-        return Vec::new();
-    }
+    let dims_ok = img_w != 0 && img_h != 0;
     let (fw, fh) = (img_w as f32, img_h as f32);
-    let mut out = Vec::new();
+    let mut text = String::new();
+    let mut boxes = Vec::new();
+    let mut cur_line: Option<(&str, &str, &str)> = None;
     for line in tsv.lines() {
         let cols: Vec<&str> = line.split('\t').collect();
         // Columns: level page block par line word left top width height conf text.
         if cols.len() < 12 || cols[0] != "5" {
             continue;
         }
-        if cols[10].parse::<f32>().unwrap_or(-1.0) < 0.0 {
+        if cols[10].parse::<f32>().unwrap_or(-1.0) < MIN_WORD_CONFIDENCE {
             continue;
         }
         let word = cols[11].trim();
         if word.is_empty() {
             continue;
         }
-        let (Ok(left), Ok(top), Ok(w), Ok(h)) = (
-            cols[6].parse::<f32>(),
-            cols[7].parse::<f32>(),
-            cols[8].parse::<f32>(),
-            cols[9].parse::<f32>(),
-        ) else {
-            continue;
-        };
-        if w <= 0.0 || h <= 0.0 {
-            continue;
+
+        // Text: newline when block/paragraph/line changes, else a space.
+        let key = (cols[2], cols[3], cols[4]);
+        if !text.is_empty() {
+            text.push(if cur_line == Some(key) { ' ' } else { '\n' });
         }
-        out.push((
-            word.to_lowercase(),
-            [
-                (left / fw).clamp(0.0, 1.0),
-                (top / fh).clamp(0.0, 1.0),
-                (w / fw).clamp(0.0, 1.0),
-                (h / fh).clamp(0.0, 1.0),
-            ],
-        ));
-        if out.len() >= MAX_BOXES {
-            break;
+        cur_line = Some(key);
+        text.push_str(word);
+
+        // Boxes: only with known dims and below the cap; text keeps accumulating.
+        if dims_ok && boxes.len() < MAX_BOXES {
+            if let (Ok(left), Ok(top), Ok(w), Ok(h)) = (
+                cols[6].parse::<f32>(),
+                cols[7].parse::<f32>(),
+                cols[8].parse::<f32>(),
+                cols[9].parse::<f32>(),
+            ) {
+                if w > 0.0 && h > 0.0 {
+                    boxes.push((
+                        word.to_lowercase(),
+                        [
+                            (left / fw).clamp(0.0, 1.0),
+                            (top / fh).clamp(0.0, 1.0),
+                            (w / fw).clamp(0.0, 1.0),
+                            (h / fh).clamp(0.0, 1.0),
+                        ],
+                    ));
+                }
+            }
         }
     }
-    out
+    (text, boxes)
 }
 
 /// OCR raw image bytes (e.g. a clipboard image). `leptess`/leptonica only reads
