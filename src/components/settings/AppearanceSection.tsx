@@ -28,7 +28,7 @@ export default function AppearanceSection({ config, onChange }: Props) {
   const set = (patch: Partial<Config["appearance"]>) =>
     onChange({ ...config, appearance: { ...config.appearance, ...patch } });
 
-  const { theme, font_size, animate_results, show_metadata, accent_bleed, slide_selection } = config.appearance;
+  const { theme, font_size, animate_results, show_metadata, accent_bleed, slide_selection, grain } = config.appearance;
 
   return (
     <div className="settings-section">
@@ -75,6 +75,18 @@ export default function AppearanceSection({ config, onChange }: Props) {
 
         <SettingsField name="Sliding selection" desc="Glide the highlight between rows as you navigate.">
           <Toggle label="Sliding selection" checked={slide_selection ?? true} onChange={v => set({ slide_selection: v })} />
+        </SettingsField>
+
+        <SettingsField name="Film grain" desc="Faint noise texture over the launcher. 0 turns it off.">
+          <Slider
+            label="Film grain"
+            value={grain ?? 0.07}
+            min={0}
+            max={0.25}
+            step={0.005}
+            onChange={v => set({ grain: v })}
+            format={v => v === 0 ? "Off" : v.toFixed(3)}
+          />
         </SettingsField>
       </SettingsGroup>
     </div>

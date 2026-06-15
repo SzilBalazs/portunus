@@ -27,5 +27,6 @@ export function applyTheme(appearance: Config["appearance"]) {
   root.dataset.showMetadata = String(appearance.show_metadata ?? true);
   root.dataset.accentBleed = String(appearance.accent_bleed ?? true);
   root.dataset.slideSelection = String(appearance.slide_selection ?? true);
+  root.style.setProperty("--grain-opacity", String(appearance.grain ?? 0.07));
   if (appearance.theme === MATUGEN_THEME) void injectMatugenTheme();
 }

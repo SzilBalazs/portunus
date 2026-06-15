@@ -79,6 +79,7 @@ export interface Config {
     show_metadata: boolean;
     accent_bleed: boolean;
     slide_selection: boolean;
+    grain: number;
   };
   extensions: {
     /** Per-extension enable map keyed by name. Absent = disabled. */

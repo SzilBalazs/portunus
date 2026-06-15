@@ -349,6 +349,8 @@ pub struct AppearanceConfig {
     pub accent_bleed: bool,
     /// Slide a single highlight layer between rows instead of a static per-row one.
     pub slide_selection: bool,
+    /// Film-grain noise overlay opacity (0.0 = off .. 0.25 = strong).
+    pub grain: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -360,6 +362,7 @@ impl Default for AppearanceConfig {
             show_metadata: true,
             accent_bleed: true,
             slide_selection: true,
+            grain: 0.07,
         }
     }
 }
