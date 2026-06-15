@@ -18,13 +18,18 @@ pkgdesc="Application launcher and power-user search for Wayland"
 arch=('x86_64')
 url="https://github.com/SzilBalazs/portunus"
 license=('Apache-2.0')
-provides=('portunus')
+provides=("portunus=$pkgver")
 conflicts=('portunus')
-options=('!strip' '!debug')   # prebuilt binaries; nothing to strip, skip -debug split
+options=('!debug')   # strip vendored ELFs; no separate -debug split for prebuilts
 depends=(
   'webkit2gtk-4.1'
   'gtk3'
   'gtk-layer-shell'   # binary links it; needed even though layer_shell is opt-in
+  'libarchive'        # bundled libtesseract.so.5 links libarchive.so.13 (not bundled)
+  'nss'               # bundled libpoppler.so.134 links libnss3/libsmime3 (PDF sig verify)
+  'nspr'              # transitive of nss (libnspr4/libplc4/libplds4)
+  'libssh'            # bundled libcurl-gnutls.so.4 links libssh.so.4 (sftp backend)
+  'rtmpdump'          # bundled libcurl-gnutls.so.4 links librtmp.so.1 (rtmp backend)
 )
 optdepends=(
   'dictd: dictionary lookups (dict provider)'
@@ -35,6 +40,6 @@ source=("$_pkgname-$pkgver.deb::$url/releases/download/v$pkgver/${_pkgname}_${pk
 sha256sums=('@SHA256@')
 
 package() {
-  ar x "$srcdir/$_pkgname-$pkgver.deb" data.tar.gz
-  tar -xf data.tar.gz -C "$pkgdir/"
+  ar x "$srcdir/$_pkgname-$pkgver.deb"
+  bsdtar -xf data.tar.* -C "$pkgdir/"
 }
