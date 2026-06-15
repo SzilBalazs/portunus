@@ -4136,7 +4136,7 @@ dependencies = [
 
 [[package]]
 name = "portunus"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "exp-rs",
  "extism",

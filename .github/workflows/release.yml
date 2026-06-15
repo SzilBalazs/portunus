@@ -137,6 +137,23 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
 
+      - name: Render AUR PKGBUILD with release checksum
+        # Tag-only. Fills the @PKGVER@/@SHA256@ placeholders in the template
+        # packaging/aur/PKGBUILD with the tag version and the sha256 of the built
+        # .deb (the AUR portunus-bin package downloads that .deb from the release),
+        # writing the result to dist/PKGBUILD for upload below.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          pkgver="${GITHUB_REF_NAME#v}"
+          deb=$(ls src-tauri/target/release/bundle/deb/*.deb)
+          sha=$(sha256sum "$deb" | awk '{print $1}')
+          mkdir -p dist
+          sed -e "/>>> TEMPLATE NOTE/,/<<< TEMPLATE NOTE/d" \
+              -e "s/@PKGVER@/$pkgver/" -e "s/@SHA256@/$sha/" \
+            packaging/aur/PKGBUILD > dist/PKGBUILD
+          echo "Rendered PKGBUILD:" && cat dist/PKGBUILD
+
       - name: Upload packages to release
         # Tag pushes publish a release; master/PR runs build only (to warm the
         # rust cache and act as CI), so skip the upload off-tag.
@@ -150,3 +167,4 @@ jobs:
           files: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
+            dist/PKGBUILD
