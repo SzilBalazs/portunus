@@ -501,23 +501,27 @@ fn pdftotext(path: &str) -> Result<String, String> {
 }
 
 thread_local! {
-    static LEPTESS: RefCell<Option<leptess::LepTess>> = RefCell::new(None);
+    // Caches the instance together with the language it was built for, so a
+    // changed `ocr_language` rebinds the worker instead of being ignored.
+    static LEPTESS: RefCell<Option<(String, leptess::LepTess)>> = RefCell::new(None);
 }
 
 /// Runs `f` with the thread-local Tesseract instance, lazily initialising it on
-/// first use (preferring the bundled tessdata dir, else the system install). The
-/// instance is bound to the `lang` of its first init for the life of the thread.
+/// first use (preferring the bundled tessdata dir, else the system install).
+/// Rebuilds the instance whenever `lang` differs from the cached one.
 fn with_leptess<R>(
     lang: &str,
     f: impl FnOnce(&mut leptess::LepTess) -> Result<R, String>,
 ) -> Result<R, String> {
     LEPTESS.with(|cell| {
-        let mut api_opt = cell.borrow_mut();
-        if api_opt.is_none() {
-            let datapath = crate::runtime_assets::tessdata_path();
-            *api_opt = leptess::LepTess::new(datapath.as_deref(), lang).ok();
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|(l, _)| l.as_str()) != Some(lang) {
+            let datapath = crate::runtime_assets::tessdata_path(lang);
+            *slot = leptess::LepTess::new(datapath.as_deref(), lang)
+                .ok()
+                .map(|api| (lang.to_string(), api));
         }
-        let api = api_opt.as_mut().ok_or_else(|| "tesseract unavailable".to_string())?;
+        let (_, api) = slot.as_mut().ok_or_else(|| "tesseract unavailable".to_string())?;
         f(api)
     })
 }

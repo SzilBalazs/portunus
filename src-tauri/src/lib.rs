@@ -185,7 +185,7 @@ fn check_dependencies() -> Vec<DepStatus> {
             feature: "OCR (images & scanned PDFs)",
             // OCR is linked in via leptess; it needs language data, which is
             // bundled in packaged builds or provided by a system tesseract.
-            available: runtime_assets::tessdata_path().is_some() || binary_in_path("tesseract"),
+            available: runtime_assets::tessdata_path("eng").is_some() || binary_in_path("tesseract"),
             install_hint: "tesseract + tesseract-data-eng",
         },
         DepStatus {

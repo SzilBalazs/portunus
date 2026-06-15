@@ -30,10 +30,18 @@ fn bundled(rel: &str) -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-/// Directory holding `<lang>.traineddata` for leptess, if bundled. `None` tells
-/// leptess to use the system tessdata (via `TESSDATA_PREFIX` / default paths).
-pub fn tessdata_path() -> Option<String> {
-    bundled("tessdata").map(|p| p.to_string_lossy().into_owned())
+/// Directory holding `<lang>.traineddata` for leptess. Returns the bundled
+/// tessdata dir only when it contains every requested language (`+`-separated,
+/// e.g. `eng+hun`); otherwise `None`, so leptess falls back to the system
+/// tessdata (via `TESSDATA_PREFIX` / default paths) where user-installed
+/// languages live. The bundled dir ships English only, so any extra language
+/// resolves against the system install.
+pub fn tessdata_path(lang: &str) -> Option<String> {
+    let dir = bundled("tessdata")?;
+    let has_all = lang
+        .split('+')
+        .all(|l| dir.join(format!("{l}.traineddata")).exists());
+    has_all.then(|| dir.to_string_lossy().into_owned())
 }
 
 /// Bundled `libpdfium.so` path for `Pdfium::bind_to_library`, if present.
