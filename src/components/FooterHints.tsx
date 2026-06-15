@@ -48,16 +48,15 @@ function hints(
     <span className="hint"><kbd>ctrl</kbd><kbd>H</kbd> highlight {pdfHighlight ? "off" : "on"}</span>
   );
 
-  // Full-text "Contents" mode: reuses the file row, but Tab flips back to name
-  // search and Esc backs out of the mode (not the window).
+  // Full-text "Contents" mode: reuses the file row. Tab flips back to name
+  // search and Esc backs out of the mode (not the window) - both kept off the
+  // bar to stop the footer overflowing the brand on the right.
   if (contentMode) {
     return <>
       <Nav /><Open />
       {isPdf && <PdfPageNav />}
       {isPdf && <Highlight />}
       {selected && isPreviewable(selected) && <Peek />}
-      <span className="hint"><kbd>Tab</kbd> names</span>
-      <span className="hint"><kbd>Esc</kbd> back</span>
     </>;
   }
 

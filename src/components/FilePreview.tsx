@@ -243,10 +243,12 @@ function PdfHighlightLayer({ rects, style }: { rects: HlRect[]; style?: CSSPrope
 }
 
 function PdfPreview({ path, page, terms = [], highlight = true, quicklook = false }: { path: string; page: number; terms?: string[]; highlight?: boolean; quicklook?: boolean }) {
-  // `cur` is the displayed page; moves with Ctrl+←/→. Seed from the live page the
-  // side preview last showed for this file (via pdfView) so opening Quicklook keeps
-  // the current page - falling back to the content-match page for a fresh file.
-  const startPage = () => (pdfView.path === path ? pdfView.page : page);
+  // `cur` is the displayed page; moves with Ctrl+←/→. Only Quicklook seeds from the
+  // live page the side preview last showed (via pdfView), so opening Quicklook keeps
+  // the current page. The side preview itself always honors the resolved content-match
+  // `page` - reading pdfView back there let a previously-shown page (pdfView is a
+  // never-search-scoped global) override a new search's match page on remount.
+  const startPage = () => (quicklook && pdfView.path === path ? pdfView.page : page);
   const [cur, setCur] = useState(startPage);
   // Quicklook view transform: zoom factor z (1.0 = PDF_QL_FIXED_ZOOM of reader width)
   // plus the page's top-left offset (tx, ty) within the viewport. Zoom and pan are a
