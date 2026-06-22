@@ -82,32 +82,15 @@ import langScss       from "highlight.js/lib/languages/scss";
 import langLess       from "highlight.js/lib/languages/less";
 import langPlain      from "highlight.js/lib/languages/plaintext";
 
-hljs.registerLanguage("rust",       langRust);
-hljs.registerLanguage("typescript", langTS);
-hljs.registerLanguage("javascript", langJS);
-hljs.registerLanguage("python",     langPy);
-hljs.registerLanguage("go",         langGo);
-hljs.registerLanguage("bash",       langBash);
-hljs.registerLanguage("json",       langJson);
-hljs.registerLanguage("ini",        langIni);
-hljs.registerLanguage("yaml",       langYaml);
-hljs.registerLanguage("markdown",   langMd);
-hljs.registerLanguage("css",        langCss);
-hljs.registerLanguage("xml",        langXml);
-hljs.registerLanguage("c",          langC);
-hljs.registerLanguage("cpp",        langCpp);
-hljs.registerLanguage("sql",        langSql);
-hljs.registerLanguage("php",        langPhp);
-hljs.registerLanguage("lua",        langLua);
-hljs.registerLanguage("swift",      langSwift);
-hljs.registerLanguage("ruby",       langRuby);
-hljs.registerLanguage("java",       langJava);
-hljs.registerLanguage("kotlin",     langKotlin);
-hljs.registerLanguage("dockerfile", langDocker);
-hljs.registerLanguage("makefile",   langMake);
-hljs.registerLanguage("scss",       langScss);
-hljs.registerLanguage("less",       langLess);
-hljs.registerLanguage("plaintext",  langPlain);
+const HLJS_LANGS: [string, Parameters<typeof hljs.registerLanguage>[1]][] = [
+  ["rust", langRust], ["typescript", langTS], ["javascript", langJS], ["python", langPy],
+  ["go", langGo], ["bash", langBash], ["json", langJson], ["ini", langIni], ["yaml", langYaml],
+  ["markdown", langMd], ["css", langCss], ["xml", langXml], ["c", langC], ["cpp", langCpp],
+  ["sql", langSql], ["php", langPhp], ["lua", langLua], ["swift", langSwift], ["ruby", langRuby],
+  ["java", langJava], ["kotlin", langKotlin], ["dockerfile", langDocker], ["makefile", langMake],
+  ["scss", langScss], ["less", langLess], ["plaintext", langPlain],
+];
+for (const [name, def] of HLJS_LANGS) hljs.registerLanguage(name, def);
 
 // ── pdf ───────────────────────────────────────────────────────────────────────
 

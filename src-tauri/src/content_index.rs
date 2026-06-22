@@ -205,6 +205,23 @@ impl ContentIndex {
         Ok(map)
     }
 
+    fn delete_path(conn: &rusqlite::Connection, path: &str) -> rusqlite::Result<usize> {
+        let mut n = 0;
+        for tbl in ["content_fts", "pdf_page_fts", "ocr_word_box", "file_meta"] {
+            n += conn.execute(&format!("DELETE FROM {tbl} WHERE path = ?"), [path])?;
+        }
+        Ok(n)
+    }
+
+    fn delete_prefix(conn: &rusqlite::Connection, pattern: &str) -> rusqlite::Result<usize> {
+        // content_fts deletions are the reported count (the others mirror it).
+        let removed = conn.execute("DELETE FROM content_fts WHERE path LIKE ?", [pattern])?;
+        for tbl in ["pdf_page_fts", "ocr_word_box", "file_meta"] {
+            conn.execute(&format!("DELETE FROM {tbl} WHERE path LIKE ?"), [pattern])?;
+        }
+        Ok(removed)
+    }
+
     fn upsert_batch(&self, updates: &[FileUpdate]) -> rusqlite::Result<()> {
         if updates.is_empty() {
             return Ok(());
@@ -216,9 +233,7 @@ impl ContentIndex {
         let mut db = util::lock(&self.db);
         let tx = db.transaction()?;
         for u in updates {
-            tx.execute("DELETE FROM content_fts WHERE path = ?", [u.path.as_str()])?;
-            tx.execute("DELETE FROM pdf_page_fts WHERE path = ?", [u.path.as_str()])?;
-            tx.execute("DELETE FROM ocr_word_box WHERE path = ?", [u.path.as_str()])?;
+            Self::delete_path(&tx, &u.path)?;
             // Empty `text` is a negative-cache tombstone: a file that extracted to
             // nothing (e.g. an OCR'd screenshot with no detectable text) or errored.
             // We still write its file_meta below so the mtime+size skip catches it
@@ -272,10 +287,7 @@ impl ContentIndex {
         let count = stale.len();
         let tx = db.transaction()?;
         for path in &stale {
-            tx.execute("DELETE FROM content_fts WHERE path = ?", [path.as_str()])?;
-            tx.execute("DELETE FROM pdf_page_fts WHERE path = ?", [path.as_str()])?;
-            tx.execute("DELETE FROM ocr_word_box WHERE path = ?", [path.as_str()])?;
-            tx.execute("DELETE FROM file_meta WHERE path = ?", [path.as_str()])?;
+            Self::delete_path(&tx, path)?;
         }
         tx.commit()?;
         Ok(count)
@@ -337,10 +349,7 @@ impl ContentIndex {
 
     pub fn remove_path(&self, path: &str) -> rusqlite::Result<()> {
         let db = util::lock(&self.db);
-        db.execute("DELETE FROM content_fts WHERE path = ?", [path])?;
-        db.execute("DELETE FROM pdf_page_fts WHERE path = ?", [path])?;
-        db.execute("DELETE FROM ocr_word_box WHERE path = ?", [path])?;
-        db.execute("DELETE FROM file_meta WHERE path = ?", [path])?;
+        Self::delete_path(&db, path)?;
         Ok(())
     }
 
@@ -418,10 +427,7 @@ impl ContentIndex {
         let pattern = format!("{dir_path}/%");
         let mut db = util::lock(&self.db);
         let tx = db.transaction()?;
-        let removed = tx.execute("DELETE FROM content_fts WHERE path LIKE ?", [&pattern])?;
-        tx.execute("DELETE FROM pdf_page_fts WHERE path LIKE ?", [&pattern])?;
-        tx.execute("DELETE FROM ocr_word_box WHERE path LIKE ?", [&pattern])?;
-        tx.execute("DELETE FROM file_meta WHERE path LIKE ?", [&pattern])?;
+        let removed = Self::delete_prefix(&tx, &pattern)?;
         tx.commit()?;
         Ok(removed)
     }
