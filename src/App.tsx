@@ -517,14 +517,7 @@ export default function App() {
 
   return (
     <ColoredIconsContext.Provider value={coloredIcons}>
-    <div
-      className="launcher"
-      onMouseDown={e => {
-        // The launcher surface fills the whole output under layer-shell; a click
-        // on the empty backdrop (not the card) dismisses, like rofi/anyrun.
-        if (e.target === e.currentTarget) invoke("hide_window");
-      }}
-    >
+    <div className="launcher">
       {showOnboarding && onboardConfig && (
         <OnboardingWizard
           config={onboardConfig}

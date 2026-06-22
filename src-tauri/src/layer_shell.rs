@@ -13,7 +13,7 @@
 #[cfg(target_os = "linux")]
 pub fn apply(window: &tauri::WebviewWindow) {
     use gtk::prelude::WidgetExt;
-    use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+    use gtk_layer_shell::{KeyboardMode, Layer, LayerShell};
 
     // gtk-layer-shell only works under Wayland; skip on X11.
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
@@ -32,16 +32,9 @@ pub fn apply(window: &tauri::WebviewWindow) {
 
     gtk_win.init_layer_shell();
     gtk_win.set_layer(Layer::Overlay);
-    // Exclusive so the surface holds keyboard focus while visible (typing works
-    // on show, and focus-follows-mouse compositors like Hyprland can't steal it
-    // on hover). Click-outside dismiss is handled in the frontend instead: we
-    // anchor to all edges so the surface fills the output, and a click on the
-    // transparent backdrop hides the launcher (the anyrun/walker approach).
     gtk_win.set_keyboard_mode(KeyboardMode::Exclusive);
-    for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-        gtk_win.set_anchor(edge, true);
-    }
     gtk_win.set_namespace("portunus");
+    // No anchors set -> the compositor centers the surface, matching `center: true`.
 }
 
 #[cfg(not(target_os = "linux"))]

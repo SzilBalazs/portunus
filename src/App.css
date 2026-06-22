@@ -89,19 +89,13 @@ html, body, #root {
 
 .launcher {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  padding: 8px;
   height: 100vh;
-  width: 100vw;
 }
 
 .card {
-  /* Capped + centered: in windowed mode (900x576) this matches the old
-     full-window-minus-8px layout; under the full-screen layer-shell surface it
-     stays this size, centered, with the rest of the output as a click-to-dismiss
-     backdrop. */
-  width: min(900px, calc(100vw - 16px));
-  height: min(576px, calc(100vh - 16px));
+  flex: 1;
   min-height: 0;
   position: relative;
   display: flex;
