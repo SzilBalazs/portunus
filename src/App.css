@@ -1496,7 +1496,7 @@ mark.preview-hl {
 }
 
 /* preview pane */
-.clip-preview-col { position: relative; display: flex; min-height: 0; }
+.clip-preview-col { position: relative; display: flex; min-height: 0; min-width: 0; }
 
 .clip-preview {
   padding: 16px 18px;
@@ -1505,11 +1505,13 @@ mark.preview-hl {
   gap: 12px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 .clip-text-wrap {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   border-radius: 4px;
   background: var(--bg-deep);
