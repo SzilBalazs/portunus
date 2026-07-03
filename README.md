@@ -1,20 +1,50 @@
+<div align="center">
+
+<img src="portunus-icon.svg" alt="Portunus" width="120" />
+
 # Portunus
 
-A keyboard-first application launcher and search tool for Wayland. Type to find
-and launch apps, jump to files, do quick math, look up words, browse
-clipboard history, and search the text inside your documents, all from one box.
-The window stays hidden until you summon it with a keybind, then disappears the
-moment you launch something or press Escape.
+**A keyboard-first application launcher and search tool for Wayland.**
+
+Find and launch apps, jump to files, do quick math, look up a word, dig through
+your clipboard history, or search the text inside your documents. One box, no mouse.
+
+[![Release](https://img.shields.io/github/v/release/SzilBalazs/portunus?style=flat-square)](https://github.com/SzilBalazs/portunus/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Wayland](https://img.shields.io/badge/Wayland-native-1793D1?style=flat-square)](#compositor-setup)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-FFC131?style=flat-square)](https://tauri.app)
+
+[Install](#install) · [Usage](#usage) · [Configuration](#configuration) · [Themes](#themes) · [Building](#building-from-source)
+
+<video src="https://github.com/SzilBalazs/portunus/raw/master/.github/assets/hero.mp4" poster=".github/assets/hero.png" width="720" controls muted></video>
+
+<img src=".github/assets/hero.png" alt="Portunus launcher" width="720" />
+
+</div>
+
+It stays out of your way. The window is hidden until you hit your keybind, and it
+vanishes again the second you launch something or press Escape.
 
 ## Features
 
-- **Fuzzy app & file search**: `.desktop` entries, indexed directories, and GTK recent files, ranked by how often you use them
-- **Inline calculator**: type `log2(10^8)` straight into the search bar
-- **Dictionary lookup**: `define serendipity` or `dict serendipity` (needs `dictd`)
-- **Clipboard history**: full-text search through `cliphist` entries (Wayland)
-- **Content search**: press `Tab` to search the text inside PDFs, office documents, and images. OCR reads scanned PDFs and screenshots
-- **Preview panel**: images, PDFs, text files, folder listings, and clipboard contents
-- **Fast by default**: a non-blocking Rust backend indexes in the background, so results appear as you type
+- 🔍 **Fuzzy app & file search** — apps (`.desktop` entries) plus the files and folders you index, ranked by how often you actually open them
+- 🧮 **Inline calculator** — type `log2(10^8)` right in the search bar
+- 📖 **Dictionary lookup** — `define serendipity` or `dict serendipity` (needs `dictd`)
+- 📋 **Clipboard history** — full-text search back through your `cliphist` entries (Wayland)
+- 📄 **Content search** — hit `Tab` to search the text inside PDFs, office docs, and images. OCR handles scanned PDFs and screenshots too
+- 👁 **Preview panel** — images, PDFs, text files, folder listings, clipboard contents
+- ⚡ **No spinners** — the Rust backend indexes on a background thread, so results show up as you type
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/assets/dict.png" alt="Dictionary lookup" /><br/><sub><b>Dictionary lookup</b></sub></td>
+    <td width="50%"><img src=".github/assets/content.png" alt="Content search" /><br/><sub><b>Content search (Tab)</b></sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src=".github/assets/preview.png" alt="Preview panel" /><br/><sub><b>Preview panel</b></sub></td>
+    <td width="50%"><img src=".github/assets/clipboard.png" alt="Clipboard history" /><br/><sub><b>Clipboard history</b></sub></td>
+  </tr>
+</table>
 
 ## Install
 
@@ -27,7 +57,10 @@ chmod +x Portunus-x86_64.AppImage
 ./Portunus-x86_64.AppImage
 ```
 
-### Optional runtime dependencies
+<details>
+<summary><b>Optional runtime dependencies</b></summary>
+
+<br/>
 
 The AppImage already bundles everything needed for PDF preview, content search,
 and OCR (libpdfium, the poppler tools, and the English tesseract data), so those
@@ -43,20 +76,14 @@ OCR tools installed on your system: `poppler` (or `poppler-utils`), a `pdfium`
 build such as `pdfium-bin`, and tesseract with the language data you want
 (`tesseract` + `tesseract-data-eng`).
 
+</details>
+
 ## Compositor setup
 
-Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it. On launch or Escape it hides again.
+Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it; it hides again on launch or Escape.
 
-| Compositor | Status | Notes |
-|---|---|---|
-| **Hyprland** | Works wonderfully | See below |
-| **Sway** | Should work, not yet tested | `for_window [app_id="portunus"] floating enable, sticky enable` |
-| **GNOME Wayland** | Should work, not yet tested | Bind via Settings → Keyboard |
-| **KDE Plasma (Wayland)** | Should work, not yet tested | Bind via System Settings → Shortcuts |
-| **river / niri / labwc** | Should work, not yet tested | Generic Wayland; configure keybind per compositor |
-| **X11** | Partial, not yet tested | Clipboard features require Wayland |
-
-Reports for the untested compositors are welcome, whether it worked or not, so I can update this table. Open a GitHub issue either way.
+> [!WARNING]
+> Clipboard features need Wayland.
 
 ### Hyprland
 
@@ -64,7 +91,6 @@ Reports for the untested compositors are welcome, whether it worked or not, so I
 # ~/.config/hypr/hyprland.conf
 exec-once = /path/to/portunus
 
-windowrule = pin on, float on, stay_focused 1, no_blur 1, opacity 1 1, border_size 0, match:class portunus
 bind = CTRL, SPACE, exec, /path/to/portunus --show
 bind = SUPER, V, exec, /path/to/portunus --clipboard
 ```
@@ -103,7 +129,10 @@ Run `matugen image <wallpaper>` (add `--mode light` for a light scheme), then se
 
 ## Building from source
 
-### Dependencies
+<details>
+<summary><b>Dependencies</b></summary>
+
+<br/>
 
 | Dependency | Notes |
 |---|---|
@@ -112,6 +141,8 @@ Run `matugen image <wallpaper>` (add `--mode light` for a light scheme), then se
 | `libwebkit2gtk-4.1-dev` | Tauri WebView |
 | `libssl-dev` | |
 | `libtesseract-dev` + `libleptonica-dev` | OCR is always built in, so these are required |
+
+</details>
 
 ```bash
 # Build
