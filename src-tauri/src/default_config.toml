@@ -93,7 +93,11 @@ depth = 3
 
 # ── WASM extensions ───────────────────────────────────────────────────────────
 # Third-party extensions live in ~/.local/share/portunus/extensions/<name>/.
-# A newly installed extension is DISABLED until enabled here or in Settings →
-# Extensions (review its permissions first).
-# [extensions.enabled]
-# emoji = true
+# Install from Settings → Extensions (a .portext file or URL), or drop a folder
+# in manually. A newly discovered extension is DISABLED until enabled here or
+# in Settings (review its permissions first). Extension-declared settings live
+# in a per-extension `settings` table.
+# [extensions.emoji]
+# enabled = true
+# [extensions.emoji.settings]
+# tone = "medium"

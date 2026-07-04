@@ -2,7 +2,7 @@
 //!
 //! Everything crossing the extension boundary is defined here and versioned by
 //! [`API_VERSION`]. Extensions declare the API major they target in their
-//! `manifest.toml` (`api = 1`); the host refuses to load unknown majors.
+//! `manifest.toml` (`api = 2`); the host refuses to load unknown majors.
 //!
 //! Extension authors: enable the default `guest` feature and see the `guest`
 //! module for host-function wrappers. The Portunus host depends on this crate
@@ -11,12 +11,21 @@
 use serde::{Deserialize, Serialize};
 
 /// Wire-contract major version. Bumped only on breaking changes.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 
 /// Input to the extension's exported `search` function.
+///
+/// With a `[trigger]` section in the manifest, `query` arrives with the
+/// matched prefix already stripped (`"emoji smi"` → `"smi"`); the raw text and
+/// the prefix that matched ride alongside. In always-mode `query == raw_query`
+/// and `trigger` is `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchInput {
     pub query: String,
+    #[serde(default)]
+    pub raw_query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
 }
 
 /// Output of the extension's exported `search` function.
@@ -41,12 +50,30 @@ pub struct ExtensionResult {
     /// its internal score space; out-of-range values are clamped.
     #[serde(default)]
     pub relevance: f32,
-    /// Optional action ids; the first is the default on Enter.
+    /// Available actions; the first is the default on Enter, the rest are
+    /// reachable via the launcher's action picker (Alt+Enter). Empty means
+    /// `activate` is called with `action: None` on Enter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub actions: Vec<String>,
+    pub actions: Vec<Action>,
     /// Optional small icon shown next to the result in the launcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<ResultIcon>,
+    /// Optional small text chip shown right-aligned on the result row
+    /// (e.g. "beta", "cached", a category). Clamped by the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<String>,
+}
+
+/// One user-facing action on a result.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Action {
+    /// Opaque id passed back to `activate` when the user picks this action.
+    pub id: String,
+    /// Short imperative label shown in the launcher ("Copy emoji", "Open docs").
+    pub label: String,
+    /// Optional muted secondary text shown next to the label in the picker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// Small inline icon for a search result. Same mime allowlist as image
@@ -70,9 +97,27 @@ pub struct ActivateInput {
 }
 
 /// Output of the extension's exported `activate` function.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Effects are executed by the host after the call returns, in order. They
+/// run only on explicit user activation - the keypress is the consent - so
+/// none of them require a manifest permission. An empty list is fine (the
+/// extension did its work via host functions or has nothing to do).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActivateOutput {
-    pub ok: bool,
+    #[serde(default)]
+    pub effects: Vec<ActivateEffect>,
+}
+
+/// Declarative side effect requested by `activate`, executed host-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ActivateEffect {
+    /// Put text on the system clipboard. No permission needed.
+    CopyText { text: String },
+    /// Open a http(s) URL in the default browser. No permission needed.
+    OpenUrl { url: String },
+    /// Show a brief toast in the launcher ("Copied!", "Added to list").
+    ShowToast { message: String },
 }
 
 /// Input to the extension's optional exported `preview` function.
@@ -93,11 +138,11 @@ pub struct RefreshInput {
     pub reason: String,
 }
 
-/// Output of the extension's optional exported `refresh` function.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RefreshOutput {
-    pub ok: bool,
-}
+/// Output of the extension's optional exported `refresh` function. Errors
+/// travel as traps/`Err`, so there is nothing to report on success; after a
+/// successful refresh the host re-runs any open launcher query automatically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RefreshOutput {}
 
 /// Declarative preview content rendered by the host. Extensions never ship UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +221,7 @@ pub mod guest {
         fn now_ms() -> u64;
         fn open_url(url: String);
         fn log_message(message: String);
+        fn settings_get(key: String) -> Json<Option<serde_json::Value>>;
     }
 
     /// Read a value from this extension's key-value store.
@@ -226,5 +272,29 @@ pub mod guest {
     /// extension name. Capped at 4 KB per message. No permission required.
     pub fn debug(message: &str) -> Result<(), extism_pdk::Error> {
         unsafe { log_message(message.to_string()) }
+    }
+
+    /// Read one of this extension's user-configured settings (declared via
+    /// `[[settings]]` in the manifest, edited in the Portunus Settings UI).
+    /// Returns the user's value or the manifest default; `None` only for keys
+    /// absent from the schema. No permission required.
+    pub fn setting(key: &str) -> Result<Option<serde_json::Value>, extism_pdk::Error> {
+        let Json(v) = unsafe { settings_get(key.to_string())? };
+        Ok(v)
+    }
+
+    /// Convenience: string setting, or `None` if unset/not a string.
+    pub fn setting_str(key: &str) -> Result<Option<String>, extism_pdk::Error> {
+        Ok(setting(key)?.and_then(|v| v.as_str().map(str::to_string)))
+    }
+
+    /// Convenience: bool setting, or `None` if unset/not a bool.
+    pub fn setting_bool(key: &str) -> Result<Option<bool>, extism_pdk::Error> {
+        Ok(setting(key)?.and_then(|v| v.as_bool()))
+    }
+
+    /// Convenience: numeric setting, or `None` if unset/not a number.
+    pub fn setting_num(key: &str) -> Result<Option<f64>, extism_pdk::Error> {
+        Ok(setting(key)?.and_then(|v| v.as_f64()))
     }
 }

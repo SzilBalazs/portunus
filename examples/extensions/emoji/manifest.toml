@@ -1,12 +1,22 @@
-api = 1
+api = 2
 name = "emoji"
-version = "0.1.0"
+version = "0.2.0"
 description = "Search emoji by name and copy them to the clipboard"
 author = "Portunus examples"
 kinds = ["ext-emoji"]
 
-[permissions]
-clipboard = true
+# Only runs when the query starts with "emoji " (or ":" would be invalid -
+# prefixes are word-like). Bare "emoji" shows the browse list.
+[trigger]
+prefixes = ["emoji", "em"]
 
 [limits]
 search_timeout_ms = 100
+
+[[settings]]
+key = "tone"
+type = "select"
+label = "Skin tone modifier"
+description = "Applied to hand emoji like thumbs up"
+default = "none"
+options = ["none", "light", "medium", "dark"]

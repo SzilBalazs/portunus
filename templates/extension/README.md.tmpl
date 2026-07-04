@@ -1,0 +1,23 @@
+# {{name}}
+
+A Portunus extension scaffolded with `portunus ext new`.
+
+## Develop
+
+```bash
+rustup target add wasm32-unknown-unknown   # once
+cargo build --release
+cp target/wasm32-unknown-unknown/release/{{crate_name}}.wasm extension.wasm
+portunus ext dev .                          # link into Portunus + auto-reload
+```
+
+Enable the extension once in Portunus Settings → Extensions, then type
+`{{name}} ` in the launcher.
+
+## Ship
+
+```bash
+portunus ext pack .    # builds {{name}}.portext + prints its sha256
+```
+
+Users install the `.portext` from Settings → Extensions → Install.

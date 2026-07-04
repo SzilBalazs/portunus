@@ -41,7 +41,9 @@ Portunus is a Tauri 2 app: a Rust backend exposed via Tauri IPC to a React 19 / 
 
 **Config** (`config.rs`) - TOML at `~/.config/portunus/config.toml`. Hot-reloaded via `watcher.rs`. Config changes propagate through `provider_reload.rs` which rebuilds affected providers and emits `search-invalidated` to the frontend.
 
-**IPC** (`ipc.rs`) - Unix socket at `$XDG_RUNTIME_DIR/portunus.sock` handles `--show`, `--clipboard`, `--reindex`, `--reload-config`, `--reload-extensions` CLI flags from a second instance.
+**IPC** (`ipc.rs`) - Unix socket at `$XDG_RUNTIME_DIR/portunus.sock` handles `--show`, `--clipboard`, `--reindex`, `--reload-config`, `--reload-extensions`, `--reload-extension <name>` CLI flags from a second instance.
+
+**Extensions** (`extensions/`, wire contract in `extension-sdk/`, api=2, docs in `EXTENSIONS.md`) - sandboxed Extism/wasm search providers. Key pieces: `manifest.rs` (manifest v2: `[trigger]` prefixes gate execution per keystroke, `[[settings]]` schema), `trigger.rs` (pure gate fn), `install.rs` (`.portext` two-phase install, consents.toml permission snapshots, update check, uninstall), `logs.rs` (per-extension ring buffer feeding the Settings log viewer), `hostfns.rs` (kv/clipboard/open_url/settings_get). `activate` returns declarative effects (CopyText/OpenUrl/ShowToast) executed by the command layer - no permission needed on the activation path. Developer CLI: `portunus ext new/dev/validate/pack` (`cli_ext.rs`, scaffold templates in `templates/extension/`). User-facing terminology is "extensions", never "plugins".
 
 **Startup sequence** - `CalcProvider` registers synchronously. `FileProvider` and `AppProvider` load in a background thread. Tauri emits `apps-ready` when done; frontend shows a loading state until then.
 

@@ -26,17 +26,80 @@ pub struct ExtensionManifest {
     pub description: String,
     #[serde(default)]
     pub author: String,
+    /// Informational project URL, shown in Settings.
+    #[serde(default)]
+    pub homepage: String,
     /// `SearchResult.kind` values this extension emits; defaults to `ext-<name>`.
     #[serde(default)]
     pub kinds: Vec<String>,
     #[serde(default = "default_entry")]
     pub entry: String,
+    /// Absent = always-mode: the extension runs on every keystroke.
+    /// With prefixes declared, the host only calls `search` when the query
+    /// starts with one - dramatically cheaper and strongly recommended.
+    pub trigger: Option<TriggerConfig>,
     #[serde(default)]
     pub permissions: Permissions,
     #[serde(default)]
     pub limits: Limits,
     /// Present = the host schedules the extension's `refresh` export.
     pub background: Option<BackgroundConfig>,
+    /// User-configurable settings, rendered by the host Settings UI and read
+    /// by the extension via the `settings_get` host function.
+    #[serde(default, rename = "settings")]
+    pub settings_schema: Vec<SettingSpec>,
+}
+
+/// `[trigger]` - gates when the extension's `search` runs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct TriggerConfig {
+    /// Prefix keywords; the extension runs when the query's first token
+    /// case-insensitively equals one. The prefix is stripped before the query
+    /// reaches the extension.
+    pub prefixes: Vec<String>,
+    /// Minimum (post-strip) query length before `search` is called.
+    pub min_query_len: usize,
+    /// Run on every keystroke like a built-in provider (discouraged).
+    pub always: bool,
+}
+
+impl TriggerConfig {
+    pub fn min_len(&self) -> usize {
+        self.min_query_len.min(32)
+    }
+}
+
+/// One `[[settings]]` entry - a typed, user-editable option.
+/// Serialized to the Settings UI as-is (part of `list_extensions`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct SettingSpec {
+    /// Identifier the extension reads via `settings_get`; `[a-z0-9_]+`.
+    pub key: String,
+    /// Type tag: "string" | "bool" | "number" | "select".
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Label shown in the Settings UI.
+    pub label: String,
+    /// Optional helper text under the label.
+    #[serde(default)]
+    pub description: String,
+    /// Default value; must match the declared type.
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+    /// select: allowed values.
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// number: optional bounds/step for the UI stepper.
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub step: Option<f64>,
+    /// string: optional input placeholder.
+    #[serde(default)]
+    pub placeholder: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +117,13 @@ impl BackgroundConfig {
 fn default_entry() -> String {
     "extension.wasm".to_string()
 }
+
+/// Query keywords owned by built-in providers - extensions may not claim them
+/// as trigger prefixes. Kept in one place so new built-in keywords get added
+/// here (dict's live in `providers/dict.rs::is_explicit_dict_query`).
+pub const RESERVED_PREFIXES: [&str; 2] = ["define", "dict"];
+
+const VALID_SETTING_TYPES: [&str; 4] = ["string", "bool", "number", "select"];
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -105,6 +175,17 @@ impl ExtensionManifest {
 /// Loads and validates `<dir>/manifest.toml`, returning the manifest plus the
 /// canonicalized, escape-checked path of the wasm entry file.
 pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
+    load_impl(dir, true)
+}
+
+/// Same validation as [`load`] minus the name-matches-directory check - for
+/// staged installs, whose directory is a random `.staging-*` name. The
+/// install path renames the dir to the manifest name before it goes live.
+pub fn load_for_install(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
+    load_impl(dir, false)
+}
+
+fn load_impl(dir: &Path, check_dir_name: bool) -> Result<(ExtensionManifest, PathBuf), String> {
     let dir_name = dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -121,7 +202,7 @@ pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
             manifest.api
         ));
     }
-    if manifest.name != dir_name {
+    if check_dir_name && manifest.name != dir_name {
         return Err(format!(
             "manifest name \"{}\" must match directory name \"{dir_name}\"",
             manifest.name
@@ -155,6 +236,31 @@ pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
             return Err(format!("kind \"{kind}\" must start with \"ext-\""));
         }
     }
+    if let Some(trigger) = &manifest.trigger {
+        if trigger.prefixes.is_empty() && !trigger.always {
+            return Err(
+                "[trigger] must declare prefixes (or set always = true)".to_string(),
+            );
+        }
+        for p in &trigger.prefixes {
+            if p.is_empty()
+                || p.len() > 32
+                || !p.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+                })
+            {
+                return Err(format!(
+                    "trigger prefix \"{p}\": lowercase ASCII letters, digits, '-', '_' only (max 32 chars)"
+                ));
+            }
+            if RESERVED_PREFIXES.contains(&p.as_str()) {
+                return Err(format!(
+                    "trigger prefix \"{p}\" is reserved by a built-in provider"
+                ));
+            }
+        }
+    }
+    validate_settings_schema(&manifest.settings_schema)?;
 
     let wasm_path = dir.join(&manifest.entry);
     let canon_dir = dir
@@ -177,4 +283,120 @@ pub fn load(dir: &Path) -> Result<(ExtensionManifest, PathBuf), String> {
     }
 
     Ok((manifest, canon_wasm))
+}
+
+fn validate_settings_schema(schema: &[SettingSpec]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for s in schema {
+        if s.key.is_empty()
+            || s.key.len() > 64
+            || !s
+                .key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(format!(
+                "setting key \"{}\": lowercase ASCII letters, digits and '_' only (max 64 chars)",
+                s.key
+            ));
+        }
+        if !seen.insert(s.key.as_str()) {
+            return Err(format!("duplicate setting key \"{}\"", s.key));
+        }
+        if !VALID_SETTING_TYPES.contains(&s.kind.as_str()) {
+            return Err(format!(
+                "setting \"{}\": type \"{}\" is not one of string/bool/number/select",
+                s.key, s.kind
+            ));
+        }
+        if s.label.is_empty() {
+            return Err(format!("setting \"{}\": label is required", s.key));
+        }
+        if s.kind == "select" {
+            if s.options.is_empty() {
+                return Err(format!("setting \"{}\": select needs options", s.key));
+            }
+        } else if !s.options.is_empty() {
+            return Err(format!("setting \"{}\": options only apply to select", s.key));
+        }
+        if let Some(default) = &s.default {
+            coerce_setting_value(s, &toml_to_json(default)).map_err(|e| {
+                format!("setting \"{}\": default {e}", s.key)
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn toml_to_json(v: &toml::Value) -> serde_json::Value {
+    serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
+}
+
+/// Validates/coerces one JSON value against a setting spec. Returns the
+/// canonical value to store, or an error naming the mismatch.
+pub fn coerce_setting_value(
+    spec: &SettingSpec,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match spec.kind.as_str() {
+        "string" => value
+            .as_str()
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .ok_or_else(|| "must be a string".to_string()),
+        "bool" => value
+            .as_bool()
+            .map(serde_json::Value::Bool)
+            .ok_or_else(|| "must be a bool".to_string()),
+        "number" => {
+            let n = value.as_f64().ok_or_else(|| "must be a number".to_string())?;
+            if !n.is_finite() {
+                return Err("must be finite".to_string());
+            }
+            if let Some(min) = spec.min {
+                if n < min {
+                    return Err(format!("must be >= {min}"));
+                }
+            }
+            if let Some(max) = spec.max {
+                if n > max {
+                    return Err(format!("must be <= {max}"));
+                }
+            }
+            serde_json::Number::from_f64(n)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| "must be a number".to_string())
+        }
+        "select" => {
+            let s = value.as_str().ok_or_else(|| "must be a string".to_string())?;
+            if !spec.options.iter().any(|o| o == s) {
+                return Err(format!("\"{s}\" is not one of the declared options"));
+            }
+            Ok(serde_json::Value::String(s.to_string()))
+        }
+        _ => Err("unknown setting type".to_string()),
+    }
+}
+
+/// Resolves the effective settings map for an extension: schema defaults
+/// overlaid with (schema-valid) user values. Unknown keys and type-mismatched
+/// values are dropped - the wasm side always sees schema-shaped data.
+pub fn resolve_settings(
+    schema: &[SettingSpec],
+    user: &serde_json::Map<String, serde_json::Value>,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    let mut out = std::collections::HashMap::new();
+    for spec in schema {
+        let user_val = user
+            .get(&spec.key)
+            .and_then(|v| coerce_setting_value(spec, v).ok());
+        let val = user_val.or_else(|| {
+            spec.default
+                .as_ref()
+                .and_then(|d| coerce_setting_value(spec, &toml_to_json(d)).ok())
+        });
+        if let Some(v) = val {
+            out.insert(spec.key.clone(), v);
+        }
+    }
+    out
 }

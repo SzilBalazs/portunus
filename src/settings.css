@@ -1288,3 +1288,219 @@ a:focus-visible,
 }
 
 .settings-btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- primary / danger buttons ---------- */
+
+.settings-btn-primary {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-border, var(--accent));
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+.settings-btn-primary:hover { filter: brightness(1.15); }
+.settings-btn-primary:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.settings-btn-danger {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-mute);
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.settings-btn-danger:hover { color: #e5534b; border-color: #e5534b55; }
+
+/* ---------- text input primitive ---------- */
+
+.settings-text-input {
+  height: 28px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-raised);
+  background: var(--kbd-bg);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+}
+.settings-text-input:focus { border-color: var(--accent); }
+.settings-text-input.mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 11px; }
+
+/* ---------- badge primitive ---------- */
+
+.settings-badge {
+  font: 600 9px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.settings-badge--neutral { background: var(--kbd-bg); color: var(--fg-mute); }
+.settings-badge--new { background: var(--accent-soft); color: var(--accent); }
+.settings-badge--dev { background: var(--kbd-bg); color: var(--fg-mute); border: 1px dashed var(--border-raised); }
+.settings-badge--update { background: #d2992222; color: #d29922; }
+.settings-badge--error { background: #e5534b22; color: #e5534b; }
+
+/* ---------- modal ---------- */
+
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.settings-modal {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border-raised);
+  border-radius: 10px;
+  box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.8);
+}
+
+.settings-modal-title {
+  padding: 14px 16px 10px;
+  font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--fg);
+  border-bottom: 1px solid var(--border-raised);
+}
+
+.settings-modal-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--fg-mute);
+  line-height: 1.5;
+}
+
+.settings-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px 14px;
+}
+
+/* ---------- extension cards ---------- */
+
+.settings-ext-cards { display: flex; flex-direction: column; gap: 8px; }
+
+.settings-ext-card {
+  /* Same surface tokens as .settings-group - these cards stand alone in the
+     section (not nested in a group), so they must read as sibling cards. */
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+
+.settings-ext-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-ext-chevron { color: var(--fg-mute); transition: transform 0.12s; flex-shrink: 0; }
+.settings-ext-card.expanded .settings-ext-chevron { transform: rotate(90deg); }
+
+.settings-ext-card-name { font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); }
+.settings-ext-card-spacer { flex: 1; }
+
+.settings-ext-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 12px 12px 30px;
+}
+
+.settings-ext-origin { font-size: 10px; color: var(--fg-dim); }
+.settings-ext-origin code, .settings-ext-origin-url { font-size: 10px; word-break: break-all; }
+.settings-ext-origin a { color: var(--fg-mute); }
+
+.settings-ext-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+
+.settings-ext-form { display: flex; flex-direction: column; }
+.settings-ext-form .settings-field { padding: 8px 0; }
+
+.settings-ext-perm-new { outline: 1px solid var(--accent); color: var(--accent) !important; }
+
+.settings-ext-reconsent { margin-top: 2px; }
+
+/* ---------- extension logs ---------- */
+
+.settings-ext-logs { display: flex; flex-direction: column; gap: 6px; }
+
+.settings-ext-logs-bar { display: flex; align-items: center; justify-content: space-between; }
+.settings-ext-logs-title {
+  font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-mute);
+}
+
+.settings-ext-logs-list {
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border-raised);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  background: var(--bg);
+}
+
+.settings-ext-log-row { display: flex; gap: 8px; }
+.settings-ext-log-time { color: var(--fg-dim); flex-shrink: 0; }
+.settings-ext-log-msg { white-space: pre-wrap; word-break: break-word; color: var(--fg-mute); }
+.settings-ext-log--error .settings-ext-log-msg { color: #e5534b; }
+.settings-ext-logs-empty { color: var(--fg-dim); }
+
+/* ---------- install dialog ---------- */
+
+.settings-ext-install-input { display: flex; flex-direction: column; gap: 10px; }
+.settings-ext-install-busy { padding: 18px 0; text-align: center; color: var(--fg-mute); }
+.settings-ext-install-error { color: #e5534b; word-break: break-word; }
+
+.settings-ext-consent { display: flex; flex-direction: column; gap: 8px; }
+.settings-ext-consent-head { display: flex; align-items: baseline; gap: 8px; }
+.settings-ext-consent-name { font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); }
+.settings-ext-consent-author { font-size: 11px; color: var(--fg-dim); }
+
+.settings-ext-hash { font-size: 10px; color: var(--fg-dim); }
+.settings-ext-hash code {
+  font-size: 10px;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* Card header title block: name row + one-line status/description subline. */
+.settings-ext-card-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.settings-ext-card-titlerow { display: flex; align-items: center; gap: 8px; }
+.settings-ext-card-sub {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 480px;
+}
+.settings-ext-card-sub.is-error { color: #e5534b; }

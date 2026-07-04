@@ -1,5 +1,9 @@
 //! Example Portunus extension: search emoji by name, copy on Enter.
 //!
+//! Demonstrates the v2 API: trigger prefixes (see manifest.toml), structured
+//! actions, declarative activate effects (no clipboard permission needed),
+//! user settings, and a browse state for the bare prefix.
+//!
 //! Build:  cargo build --release --target wasm32-unknown-unknown
 //! Install: copy target/.../emoji.wasm to
 //!          ~/.local/share/portunus/extensions/emoji/extension.wasm
@@ -8,10 +12,10 @@
 // The pdk macros expand to `extism_pdk::…` paths - this alias satisfies them
 // without adding extism-pdk as a direct dependency.
 use portunus_ext_sdk::guest::extism_pdk;
-use portunus_ext_sdk::guest::{clipboard, plugin_fn, FnResult, Json};
+use portunus_ext_sdk::guest::{plugin_fn, setting_str, FnResult, Json};
 use portunus_ext_sdk::{
-    ActivateInput, ActivateOutput, ExtensionResult, MetadataItem, PreviewContent, PreviewInput,
-    ResultIcon, SearchInput, SearchOutput,
+    Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, MetadataItem,
+    PreviewContent, PreviewInput, ResultIcon, SearchInput, SearchOutput,
 };
 
 /// Pre-encoded result icon (icon.png as base64) - guests embed the encoded
@@ -38,12 +42,50 @@ const EMOJI: &[(&str, &str, &str)] = &[
     ("🦀", "crab", "rust rustlang"),
 ];
 
+/// Emoji that take a skin-tone modifier (the `tone` setting).
+const TONED: &[&str] = &["thumbs up", "folded hands"];
+
+fn actions() -> Vec<Action> {
+    vec![
+        Action { id: "copy".into(), label: "Copy emoji".into(), hint: None },
+        Action {
+            id: "copy-name".into(),
+            label: "Copy name".into(),
+            hint: Some("as :shortcode: text".into()),
+        },
+    ]
+}
+
+fn to_result(emoji: &str, name: &str, keywords: &str, relevance: f32) -> ExtensionResult {
+    ExtensionResult {
+        id: name.to_string(),
+        title: format!("{emoji} {name}"),
+        subtitle: Some(keywords.to_string()),
+        relevance,
+        actions: actions(),
+        icon: Some(ResultIcon {
+            mime: "image/png".to_string(),
+            data_base64: ICON_B64.trim().to_string(),
+        }),
+        badge: None,
+    }
+}
+
 #[plugin_fn]
 pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
+    // The host has already stripped the trigger prefix ("emoji smi" → "smi").
     let query = input.0.query.trim().to_lowercase();
+
+    // Bare prefix = browse state: show the whole set, dataset order.
     if query.is_empty() {
-        return Ok(Json(SearchOutput::default()));
+        let results = EMOJI
+            .iter()
+            .enumerate()
+            .map(|(i, (e, n, k))| to_result(e, n, k, 80.0 - i as f32))
+            .collect();
+        return Ok(Json(SearchOutput { results }));
     }
+
     let results = EMOJI
         .iter()
         .filter_map(|(emoji, name, keywords)| {
@@ -55,17 +97,7 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
             } else {
                 return None;
             };
-            Some(ExtensionResult {
-                id: name.to_string(),
-                title: format!("{emoji} {name}"),
-                subtitle: Some(keywords.to_string()),
-                relevance,
-                actions: vec!["copy".to_string()],
-                icon: Some(ResultIcon {
-                    mime: "image/png".to_string(),
-                    data_base64: ICON_B64.trim().to_string(),
-                }),
-            })
+            Some(to_result(emoji, name, keywords, relevance))
         })
         .collect();
     Ok(Json(SearchOutput { results }))
@@ -73,10 +105,34 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
 
 #[plugin_fn]
 pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
-    let result = input.0.result;
-    let emoji = lookup(&result.id).unwrap_or_default();
-    clipboard(emoji)?;
-    Ok(Json(ActivateOutput { ok: true }))
+    let ActivateInput { result, action } = input.0;
+    let effects = match action.as_deref() {
+        Some("copy-name") => vec![
+            ActivateEffect::CopyText { text: format!(":{}:", result.id.replace(' ', "_")) },
+            ActivateEffect::ShowToast { message: format!("Copied :{}:", result.id) },
+        ],
+        // Default (Enter / "copy"): the emoji itself, tone-modified if set.
+        _ => {
+            let emoji = toned_emoji(&result.id);
+            vec![ActivateEffect::CopyText { text: emoji }]
+        }
+    };
+    Ok(Json(ActivateOutput { effects }))
+}
+
+/// Applies the user's `tone` setting to emoji that support it.
+fn toned_emoji(id: &str) -> String {
+    let base = lookup(id).unwrap_or_default().to_string();
+    if !TONED.contains(&id) {
+        return base;
+    }
+    let modifier = match setting_str("tone").ok().flatten().as_deref() {
+        Some("light") => "\u{1F3FB}",
+        Some("medium") => "\u{1F3FD}",
+        Some("dark") => "\u{1F3FF}",
+        _ => return base,
+    };
+    format!("{base}{modifier}")
 }
 
 #[plugin_fn]

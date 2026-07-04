@@ -1,0 +1,34 @@
+api = 2
+name = "{{name}}"
+version = "0.1.0"
+description = "Describe what {{name}} does"
+author = ""
+
+# The extension only runs when the query starts with this prefix
+# ("{{name}} <query>"). Bare "{{name}}" shows your browse/default results.
+# Delete this section to run on every keystroke (discouraged - slower).
+[trigger]
+prefixes = ["{{name}}"]
+
+[limits]
+search_timeout_ms = 100
+
+# Permissions are all opt-in and shown to the user before enabling:
+# [permissions]
+# network = ["api.example.com"]   # exact hosts for extism HTTP
+# kv = true                       # persistent key-value store (10 MB)
+# clipboard = true                # clipboard_write host fn (activate effects
+#                                 # can copy text WITHOUT this permission)
+# open_url = true                 # open_url host fn (effects can open urls
+#                                 # WITHOUT this permission)
+
+# Schedule a background `refresh` export (cache warming, off keystroke path):
+# [background]
+# refresh_interval_secs = 3600
+
+# User-editable settings, rendered in Portunus Settings, read via setting_str():
+# [[settings]]
+# key = "greeting"
+# type = "string"
+# label = "Greeting text"
+# default = "hello"

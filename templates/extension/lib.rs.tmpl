@@ -1,0 +1,63 @@
+//! {{name}} - a Portunus extension.
+//!
+//! Iterate with:
+//!   cargo build --release --target wasm32-unknown-unknown
+//!   portunus ext dev .        # symlink + auto-reload on rebuild
+//!
+//! The host calls `search` on each (trigger-gated) keystroke, `activate` when
+//! the user picks a result/action, and optionally `preview`/`refresh`.
+
+// The pdk macros expand to `extism_pdk::…` paths - this alias satisfies them
+// without adding extism-pdk as a direct dependency.
+use portunus_ext_sdk::guest::extism_pdk;
+use portunus_ext_sdk::guest::{plugin_fn, FnResult, Json};
+use portunus_ext_sdk::{
+    Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, MetadataItem,
+    PreviewContent, PreviewInput, SearchInput, SearchOutput,
+};
+
+#[plugin_fn]
+pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
+    // The trigger prefix is already stripped: "{{name}} foo" arrives as "foo".
+    // An empty query means the user typed just the prefix - return browse
+    // results (or nothing).
+    let query = input.0.query.trim().to_lowercase();
+
+    let results = vec![ExtensionResult {
+        id: "hello".into(),
+        title: if query.is_empty() {
+            "Hello from {{name}}".into()
+        } else {
+            format!("{{name}}: {query}")
+        },
+        subtitle: Some("Enter copies this text".into()),
+        relevance: 80.0,
+        actions: vec![Action { id: "copy".into(), label: "Copy text".into(), hint: None }],
+        ..Default::default()
+    }];
+    Ok(Json(SearchOutput { results }))
+}
+
+#[plugin_fn]
+pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
+    let result = input.0.result;
+    // Effects run host-side after this returns; copying text and opening
+    // http(s) urls need no permissions on the explicit activation path.
+    Ok(Json(ActivateOutput {
+        effects: vec![
+            ActivateEffect::CopyText { text: result.title.clone() },
+            ActivateEffect::ShowToast { message: "Copied!".into() },
+        ],
+    }))
+}
+
+#[plugin_fn]
+pub fn preview(input: Json<PreviewInput>) -> FnResult<Json<PreviewContent>> {
+    let result = input.0.result;
+    Ok(Json(PreviewContent::Metadata {
+        items: vec![
+            MetadataItem { label: "Id".into(), value: result.id },
+            MetadataItem { label: "Title".into(), value: result.title },
+        ],
+    }))
+}

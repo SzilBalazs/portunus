@@ -4,6 +4,26 @@ use crate::{config, content_index, ipc};
 
 /// Handle CLI flags. Returns true if a flag was handled and the process should exit.
 pub fn handle_cli_args() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+
+    // `portunus ext …` - extension developer subcommands.
+    if args.get(1).map(String::as_str) == Some("ext") {
+        std::process::exit(crate::cli_ext::run(&args[2..]));
+    }
+
+    // --reload-extension <name>: targeted hot-reload of one extension.
+    if let Some(pos) = args.iter().position(|a| a == "--reload-extension") {
+        let Some(name) = args.get(pos + 1) else {
+            eprintln!("usage: portunus --reload-extension <name>");
+            std::process::exit(2);
+        };
+        if !ipc::try_signal_running(&format!("reload-extension:{name}")) {
+            eprintln!("portunus: no running instance found");
+            std::process::exit(1);
+        }
+        return true;
+    }
+
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("portunus {}", env!("CARGO_PKG_VERSION"));
         return true;
@@ -21,9 +41,17 @@ FLAGS:
   --reindex           Rebuild the content search index
   --reload-config     Reload config from file without restarting
   --reload-extensions Re-discover and reload WASM extensions (picks up rebuilt wasm)
+  --reload-extension <name>
+                      Reload a single extension (used by `portunus ext dev`)
   --reload-theme      Re-read the external matugen.css theme (matugen post_hook)
   --version, -V       Print version and exit
-  --help, -h          Show this help message", env!("CARGO_PKG_VERSION"));
+  --help, -h          Show this help message
+
+SUBCOMMANDS:
+  ext new <name>      Scaffold a new extension project
+  ext dev <dir>       Link a working dir into Portunus + auto-reload on rebuild
+  ext validate <dir>  Check an extension's manifest and wasm exports
+  ext pack <dir>      Build a distributable .portext archive", env!("CARGO_PKG_VERSION"));
         return true;
     }
 

@@ -6,35 +6,60 @@ activation (Enter) and an optional preview panel, all through a small, versioned
 JSON wire contract. Extensions never ship UI; the host renders everything.
 
 - **Runtime:** [Extism](https://extism.org/) (wasmtime). No WASI.
-- **Wire API version:** `1` (see `extension-sdk/`, the single source of truth).
-- **Distribution:** a directory dropped into `~/.local/share/portunus/extensions/`.
+- **Wire API version:** `2` (see `extension-sdk/`, the single source of truth).
+- **Distribution:** a `.portext` archive installed from Settings → Extensions
+  (URL or file), or a directory in `~/.local/share/portunus/extensions/`.
+
+## Quick start
+
+```bash
+portunus ext new my-ext         # scaffold a working extension project
+cd my-ext
+cargo build --release           # targets wasm32-unknown-unknown via .cargo/config.toml
+cp target/wasm32-unknown-unknown/release/my_ext.wasm extension.wasm
+portunus ext dev .              # link into Portunus + auto-reload on rebuild
+```
+
+Enable it once in Settings → Extensions, then type `my-ext ` in the launcher.
+When it's ready to ship: `portunus ext pack .` produces `my-ext.portext` and
+prints its sha256.
 
 ## Anatomy
 
 ```
 ~/.local/share/portunus/extensions/<name>/
-├── manifest.toml      # identity, permissions, limits
+├── manifest.toml      # identity, trigger, permissions, limits, settings
 └── extension.wasm     # your compiled module
 ```
 
-A newly installed extension is **disabled**. The user reviews its permissions in
-Settings → Extensions and enables it explicitly. Dropping a folder never runs code.
+A hand-dropped extension is **disabled** until the user reviews its permissions
+in Settings → Extensions and enables it. Installing through the Settings dialog
+shows the same permission review before anything lands, so dialog installs
+arrive enabled. Dropping a folder never runs code.
 
 ## manifest.toml
 
 ```toml
-api = 1                        # REQUIRED: wire API major; unknown majors are rejected
+api = 2                        # REQUIRED: wire API major; unknown majors are rejected
 name = "emoji"                 # must match the directory name; [a-zA-Z0-9_-] only
-version = "0.1.0"
+version = "0.2.0"
 description = "Search and copy emoji"
 author = "you"
+homepage = "https://github.com/you/emoji"  # optional, shown in Settings
 kinds = ["ext-emoji"]          # result kind; must start with "ext-"; defaults to "ext-<name>"
 entry = "extension.wasm"       # default; no path separators
+
+# Strongly recommended. Without [trigger] the extension runs on EVERY keystroke.
+[trigger]
+prefixes = ["emoji", "em"]     # lowercase ascii/digits/-/_ only; "define"/"dict" are reserved
+min_query_len = 1              # applies to the post-strip query; clamped to [0, 32]
+always = false                 # true = also run on non-prefixed queries (discouraged)
 
 [permissions]
 network = ["api.github.com"]   # exact hosts only; wildcards are rejected; omit for none
 kv = true                      # per-extension key-value storage
-clipboard = true               # clipboard_write host function
+clipboard = true               # clipboard_write host fn (NOT needed for CopyText effects)
+open_url = true                # open_url host fn (NOT needed for OpenUrl effects)
 
 [limits]
 search_timeout_ms = 100        # clamped to [10, 500]
@@ -42,15 +67,43 @@ activate_timeout_ms = 2000     # clamped to [10, 10000]
 
 [background]                   # optional: schedules your `refresh` export
 refresh_interval_secs = 600    # clamped to [60, 86400]
+
+[[settings]]                   # optional, repeated: user-editable options
+key = "tone"                   # [a-z0-9_]+; read via settings_get / setting_str
+type = "select"                # string | bool | number | select
+label = "Skin tone modifier"
+description = "Applied to hand emoji"   # optional helper text
+default = "none"
+options = ["none", "light", "medium", "dark"]  # select only
+# number also accepts: min / max / step;  string accepts: placeholder
 ```
 
-**Permissions are self-declared.** They bound what your extension *can* do, and
-they are shown to the user before enabling. The user's consent at enable time is
-the trust gate; declare the minimum you need.
+**Permissions are self-declared and snapshotted at consent time.** They are
+shown to the user before enabling/installing, and an update whose permissions
+*grow* past that snapshot refuses to load until the user re-approves in
+Settings. Declare the minimum you need.
+
+## Triggers
+
+With `[trigger]` declared, the host only calls your `search` when the query's
+first token equals one of your prefixes (case-insensitive), and it strips the
+prefix before you see it:
+
+| User types | Your `search` gets |
+|---|---|
+| `emoji smi` | `{ "query": "smi", "raw_query": "emoji smi", "trigger": "emoji" }` |
+| `emoji` / `emoji ` | `{ "query": "", … }` — the *browse state*: return default/popular results (or nothing) |
+| `firefox` | *(not called at all)* |
+
+This is the main performance lever: a gated-out extension costs the keystroke
+path literally nothing. Trigger-matched results also rank in the launcher's
+intent band (above apps, calc and dict) because the user explicitly asked for
+you. Without `[trigger]` (always-mode) your results compete just above apps and
+you pay a wasm call per keystroke.
 
 ## Exports
 
-Your module exports up to three functions. Each takes one JSON string and
+Your module exports up to four functions. Each takes one JSON string and
 returns one JSON string. With the Rust SDK the (de)serialization is handled
 for you.
 
@@ -58,14 +111,18 @@ for you.
 
 ```jsonc
 // in
-{ "query": "smile" }
+{ "query": "smile", "raw_query": "emoji smile", "trigger": "emoji" }
 // out
 { "results": [ {
     "id": "grinning-face",       // opaque local id; host namespaces it
     "title": "😄 grinning face",
     "subtitle": "smile happy",    // optional
     "relevance": 87.5,            // 0-100, higher = better
-    "actions": ["copy"],          // optional; first = default on Enter
+    "actions": [                  // optional; first = default on Enter,
+      { "id": "copy", "label": "Copy emoji" },              // rest via Alt+Enter picker
+      { "id": "copy-name", "label": "Copy name", "hint": "as :shortcode:" }
+    ],
+    "badge": "beta",              // optional small chip on the result row
     "icon": {                     // optional; shown instead of the default glyph
       "mime": "image/png",        // png/jpeg/gif/webp only
       "data_base64": "iVBOR..."   // ≤ 32 KB base64
@@ -73,26 +130,42 @@ for you.
 } ] }
 ```
 
-- Relevance is your only ranking input. The host maps 0-100 into its internal
-  score space. Out-of-range values are clamped.
-- At most 200 results are taken per query; titles/subtitles are clamped to 2 KB.
+- Relevance is your only ranking input. The host maps 0-100 into a band whose
+  base depends on whether the query was trigger-matched. Out-of-range values
+  are clamped.
+- At most 200 results are taken per query; titles/subtitles/badges are clamped to 2 KB.
 - Icons are validated host-side: png/jpeg/gif/webp, at most 32 KB base64. An
   invalid icon is dropped (the result keeps the default glyph) and the error
-  shows in Settings; a bad icon never fails the search.
-- **`search` runs on the keystroke path with a hard ~150 ms budget. Never do
-  network I/O in `search`.** Overruns are cancelled and count as failures.
+  surfaces in Settings.
 
 ### `activate` (required for actionable results)
 
 ```jsonc
-// in: the result EXACTLY as you returned it, plus the chosen action (or null)
+// in: the result EXACTLY as you returned it, plus the chosen action id (or null)
 { "result": { ...ExtensionResult }, "action": "copy" }
-// out
-{ "ok": true }
+// out: declarative effects the host executes for you
+{ "effects": [
+  { "type": "copy_text", "text": "😄" },
+  { "type": "show_toast", "message": "Copied!" }
+] }
 ```
 
 The full result round-trips back to you, so you never need to persist search
-state. Side effects (clipboard, HTTP, kv) happen here. Budget: 2 s by default.
+state. Budget: 2 s by default.
+
+**Effects** run host-side after your call returns, in order. Because they only
+ever run on an explicit keypress, they need **no permissions**:
+
+| Effect | Fields | Notes |
+|---|---|---|
+| `copy_text` | `text` | system clipboard |
+| `open_url` | `url` | http(s) only, default browser |
+| `show_toast` | `message` | desktop notification + in-launcher toast; ≤ 512 bytes |
+
+Most extensions can drop their `clipboard`/`open_url` permissions entirely and
+just return effects. The host functions remain for side effects *outside*
+activation (e.g. during `refresh`). Returning `{ "effects": [] }` (or `{}`) is
+fine when you did your work via host functions.
 
 ### `preview` (optional)
 
@@ -243,12 +316,14 @@ The host injects a small design-system sheet. Use these classes directly; no
 Declared via `[background]` in the manifest. The host calls it once when the
 extension loads and then on the interval, on a **dedicated instance**, so a
 slow refresh never blocks search. This is where network work belongs: fetch,
-write kv, return. 30 s budget. Failures show in Settings but never bench the
-extension; five consecutive failures pause the schedule until reload.
+write kv, return. 30 s budget. After a successful refresh the host re-runs any
+open launcher query, so fresh data appears without a keystroke. Failures show
+in Settings but never bench the extension; five consecutive failures pause the
+schedule until reload.
 
 ```jsonc
 // in:  { "reason": "load" | "scheduled" }
-// out: { "ok": true }
+// out: {}
 ```
 
 ### The kv-as-cache pattern
@@ -260,6 +335,22 @@ The canonical recipe for network extensions:
 3. `activate` may also fetch (user-triggered, 2-10 s budget) for manual refresh.
 
 Never do network in `search`; the 150 ms keystroke budget will cancel it.
+
+## Settings
+
+Declare `[[settings]]` entries in the manifest and Portunus renders them in
+Settings → Extensions → your card, with type-appropriate controls. Read them
+at call time:
+
+```rust
+use portunus_ext_sdk::guest::{setting_str, setting_bool, setting_num};
+
+let tone = setting_str("tone")?;   // user's value, or your manifest default
+```
+
+Values are validated against your schema on both save and load; you always see
+schema-shaped data. A settings change hot-reloads your extension (a fresh
+instance with the new snapshot), so treat them as constants per instance.
 
 ## Host functions
 
@@ -274,67 +365,56 @@ Importable from the `extism:host/user` namespace; the Rust SDK wraps them:
 | `clipboard_write(text)` | `clipboard` | wl-copy under the hood |
 | `now_ms() -> u64` | none | wall clock (std::time doesn't work in wasm32-unknown-unknown) |
 | `open_url(url)` | `open_url` | http(s) only, opens default browser |
-| `log_message(text)` | none | `[ext:<name>] …` to stderr, 4 KB cap |
+| `log_message(text)` | none | stderr + the Settings log viewer, 4 KB cap |
+| `settings_get(key) -> Option<Value>` | none | your `[[settings]]` values, defaults applied |
 
 SDK wrapper names: `kv_read`, `kv_write`, `kv_keys`, `kv_remove`, `clipboard`,
-`now`, `open`, `debug`.
-
-**Compatibility:** importing a host function the running Portunus doesn't have
-fails at load with a visible Settings error. Extensions using `kv_list`,
-`kv_delete`, `now_ms`, `open_url`, `log_message`, or `refresh` scheduling
-require a Portunus build that ships them.
+`now`, `open`, `debug`, `setting` / `setting_str` / `setting_bool` / `setting_num`.
 
 **HTTP** has no custom host function; use Extism's built-in HTTP
 (`extism_pdk::http::request` in Rust). The host derives the allowlist from
 `[permissions].network`; requests to other hosts fail.
 
-## Writing an extension in Rust
+## Developer workflow
 
 ```bash
-cargo new --lib my-ext && cd my-ext
-rustup target add wasm32-unknown-unknown
+portunus ext new <name>       # scaffold: Cargo.toml, manifest, src/lib.rs, README
+portunus ext dev <dir>        # symlink into the extensions dir + watch: every
+                              # rebuild of extension.wasm (or manifest edit)
+                              # hot-reloads just your extension
+portunus ext validate <dir>   # manifest lint + wasm export check (no code runs)
+portunus ext pack <dir>       # build <name>.portext + print its sha256
 ```
 
-```toml
-# Cargo.toml
-[lib]
-crate-type = ["cdylib"]
+Debugging signals, in order of usefulness:
+1. **Settings → Extensions → your card → Logs** - `debug(...)` output and every
+   runtime error, live.
+2. The error line on your card (manifest/load/last runtime error).
+3. stderr of the running Portunus.
 
-[dependencies]
-portunus-ext-sdk = { path = "../portunus/extension-sdk" }  # or git
-```
-
-```rust
-use portunus_ext_sdk::guest::extism_pdk; // satisfies pdk macro paths
-use portunus_ext_sdk::guest::{plugin_fn, FnResult, Json};
-use portunus_ext_sdk::*;
-
-#[plugin_fn]
-pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
-    let q = input.0.query;
-    // ...
-    Ok(Json(SearchOutput { results: vec![] }))
-}
-```
-
-Build + install + reload:
-
-```bash
-cargo build --release --target wasm32-unknown-unknown
-DEST=~/.local/share/portunus/extensions/my-ext
-mkdir -p "$DEST"
-cp target/wasm32-unknown-unknown/release/my_ext.wasm "$DEST/extension.wasm"
-cp manifest.toml "$DEST/"
-portunus --reload-extensions
-```
-
-`portunus --reload-extensions` force-reloads the wasm bytes of every extension;
-that command is your hot-reload loop. The Rescan button in Settings → Extensions
-does the same.
+`portunus --reload-extensions` force-reloads every extension;
+`portunus --reload-extension <name>` reloads one (what `ext dev` sends on
+rebuild). The Rescan button in Settings does the former.
 
 Any language with an [Extism PDK](https://extism.org/docs/concepts/pdk)
 (Go/TinyGo, Zig, C, JS via the JS PDK, and more) works too: implement the same JSON
 exports and import the host functions above.
+
+## Distribution
+
+A `.portext` is a plain zip of your extension directory with `manifest.toml`
+at the root (`portunus ext pack` builds one). Users install it from Settings →
+Extensions → Install, from either a local file or an https URL, optionally
+verifying a sha256 you publish.
+
+Install is two-phase: the archive is downloaded/staged/validated first
+(hardened extraction - no symlinks, no path escapes, size caps), the user
+reviews name/version/permissions/hash, and only then do the *exact staged
+bytes* land. The install origin is recorded: URL installs get a "Check for
+update" button that re-fetches from the same URL and compares versions - an
+update requesting **new permissions** requires explicit re-approval before it
+loads. Uninstalling from Settings removes the directory, kv data, frecency
+history and logs.
 
 ## Sandbox, limits, failure behavior
 
@@ -345,23 +425,24 @@ exports and import the host functions above.
   crashes or stalls the launcher.
 - After a failed call the instance is rebuilt from disk before the next one.
   **Three consecutive failures bench the extension for the session**; the error
-  shows in Settings → Extensions (your primary debugging signal, check there
-  first when "my extension returns nothing").
+  shows in your card's log viewer (check there first when "my extension
+  returns nothing").
 - Result ids are namespaced `ext:<name>:<your-id>` by the host. Your local id is
   opaque and may contain anything, including colons.
 - Frecency: results the user activates rank higher in later searches
   automatically, keyed by your stable result id.
-- Uninstalling (deleting the directory) removes the extension's kv data and
-  frecency history on the next rescan/startup.
 
 ## Versioning
 
 `api` in the manifest is the wire-contract major. The host refuses to load
 extensions targeting a different major and shows why. Additive changes (new
-optional fields, new preview types) do not bump the major; field removals or
-semantic changes do.
+optional fields, new preview types, new effects) do not bump the major; field
+removals or semantic changes do. v2 broke from v1: `actions` became structured
+objects, `activate` returns effects, `search` input gained `raw_query`/`trigger`.
 
-## Example
+## Examples
 
-`examples/extensions/emoji/` is a complete, buildable extension demonstrating
-search, activate (clipboard), preview (metadata), and the dev loop.
+- `examples/extensions/emoji/` - offline: triggers, structured actions,
+  activate effects (no permissions), settings, browse state, preview.
+- `examples/extensions/cheatsh/` - network: kv-as-cache with background
+  refresh, trigger prefixes, open-url/copy effects, HTML preview.

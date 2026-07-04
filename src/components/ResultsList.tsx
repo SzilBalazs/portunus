@@ -161,9 +161,11 @@ export default function ResultsList({ results, selectedIndex, active, searching,
                 {result.subtitle && <div className="result-subtitle">{shortenPath(result.subtitle)}</div>}
               </div>
               <div className="result-meta">
-                {result.kind === "file" && result.file_size != null
-                  ? formatBytes(result.file_size)
-                  : ""}
+                {result.ext?.badge
+                  ? <span className="result-badge">{result.ext.badge}</span>
+                  : result.kind === "file" && result.file_size != null
+                    ? formatBytes(result.file_size)
+                    : ""}
               </div>
               <div className="result-shortcut" style={!showShortcut ? { visibility: 'hidden' } : undefined}>
                 {showShortcut ? shortcutIdx + 1 : ""}

@@ -1,29 +1,14 @@
+//! Example Portunus extension: cheat.sh lookups. Demonstrates the v2 API with
+//! host-side trigger prefixes (no query parsing in the extension), a
+//! `[background]` refresh that warms the kv cache, structured actions, and
+//! declarative activate effects (no clipboard/open_url permissions needed).
+
 use portunus_ext_sdk::guest::extism_pdk::{self, http, HttpRequest};
-use portunus_ext_sdk::guest::{clipboard, kv_read, kv_write, open, plugin_fn, FnResult, Json};
+use portunus_ext_sdk::guest::{kv_read, kv_write, plugin_fn, FnResult, Json};
 use portunus_ext_sdk::{
-    ActivateInput, ActivateOutput, ExtensionResult, PreviewContent, PreviewInput, SearchInput,
-    SearchOutput,
+    Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, PreviewContent,
+    PreviewInput, RefreshInput, RefreshOutput, SearchInput, SearchOutput,
 };
-
-// Valid trigger prefixes: ≥2-char prefixes of "cheat.sh" or "ch.sh",
-// followed by a space or "/" then the term.
-const PREFIXES: &[&str] = &[
-    "cheat.sh", "cheat.s", "cheat.", "cheat", "ch.sh", "ch.s", "ch.", "chea", "che", "ch",
-];
-
-fn parse_term(query: &str) -> Option<&str> {
-    for prefix in PREFIXES {
-        if let Some(rest) = query.strip_prefix(prefix) {
-            if let Some(term) = rest.strip_prefix('/').or_else(|| rest.strip_prefix(' ')) {
-                let t = term.trim();
-                if !t.is_empty() {
-                    return Some(t);
-                }
-            }
-        }
-    }
-    None
-}
 
 fn fetch_text(url: &str) -> Result<String, extism_pdk::Error> {
     let mut req = HttpRequest::new(url);
@@ -84,21 +69,39 @@ fn ensure_list_cached() -> Result<(), extism_pdk::Error> {
     kv_write("cached", "1")
 }
 
+fn actions() -> Vec<Action> {
+    vec![
+        Action { id: "open".into(), label: "Open cheat sheet".into(), hint: Some("in browser".into()) },
+        Action { id: "copy".into(), label: "Copy sheet text".into(), hint: Some("fetches plain text".into()) },
+    ]
+}
+
+/// Background refresh (load + daily): warm the :list cache so search can
+/// prefix-match instantly. Runs on a dedicated instance, off the keystroke path.
+#[plugin_fn]
+pub fn refresh(_input: Json<RefreshInput>) -> FnResult<Json<RefreshOutput>> {
+    ensure_list_cached()?;
+    Ok(Json(RefreshOutput::default()))
+}
+
 #[plugin_fn]
 pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
-    let query = input.0.query.trim().to_lowercase();
-    let Some(term) = parse_term(&query) else {
+    // The host strips the trigger ("ch tar" → "tar") before we see it.
+    let term_owned = input.0.query.trim().to_lowercase();
+    let term = term_owned.as_str();
+    if term.is_empty() {
         return Ok(Json(SearchOutput::default()));
-    };
+    }
 
     if kv_read("cached")?.is_none() {
         return Ok(Json(SearchOutput {
             results: vec![ExtensionResult {
                 id: term.to_string(),
                 title: format!("cheat.sh/{term}"),
-                subtitle: Some("list not cached yet, press Enter to load".into()),
+                subtitle: Some("list not cached yet - refreshing in background".into()),
                 relevance: 50.0,
-                actions: vec!["open".into()],
+                actions: actions(),
+                badge: Some("uncached".into()),
                 ..Default::default()
             }],
         }));
@@ -121,7 +124,7 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
                 id: entry.to_string(),
                 title: format!("cheat.sh/{entry}"),
                 relevance,
-                actions: vec!["open".into(), "copy".into()],
+                actions: actions(),
                 ..Default::default()
             }
         })
@@ -143,20 +146,21 @@ pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
     let action = input.0.action.as_deref().unwrap_or("open");
 
     // Populate list cache on first activate so subsequent searches have
-    // prefix-matching available.
+    // prefix-matching available even before the background refresh lands.
     let _ = ensure_list_cached();
 
-    match action {
+    let effects = match action {
         "copy" => {
             let body = fetch_text(&format!("https://cheat.sh/{id}?T"))?;
-            clipboard(&body)?;
+            vec![
+                ActivateEffect::CopyText { text: body },
+                ActivateEffect::ShowToast { message: format!("Copied cheat.sh/{id}") },
+            ]
         }
-        _ => {
-            open(&format!("https://cheat.sh/{id}"))?;
-        }
-    }
+        _ => vec![ActivateEffect::OpenUrl { url: format!("https://cheat.sh/{id}") }],
+    };
 
-    Ok(Json(ActivateOutput { ok: true }))
+    Ok(Json(ActivateOutput { effects }))
 }
 
 #[plugin_fn]

@@ -3,12 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
-import { Config, SearchResult, ClipboardCapabilities } from "./types";
+import { Config, SearchResult, ClipboardCapabilities, ExtAction } from "./types";
 import ClipboardMode from "./components/clipboard/ClipboardMode";
 import { applyTheme, injectMatugenTheme } from "./theme";
 import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
 import QuickLook from "./components/QuickLook";
+import ActionPicker from "./components/ActionPicker";
+import { useExtensionMeta, matchTrigger } from "./extensions/meta";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
@@ -76,6 +78,12 @@ export default function App() {
   const focusedRef = useRef(true);
   // Mirror of "Quicklook open" for use inside event-listener closures.
   const quicklookRef = useRef(false);
+  // The extension result pinned by the action picker (null = closed). Pins the
+  // result like Quicklook so background reorders can't retarget the actions.
+  const [actionResult, setActionResult] = useState<SearchResult | null>(null);
+  const actionResultRef = useRef(false);
+  // Transient toast from an extension's ShowToast activate effect.
+  const [toast, setToast] = useState<string | null>(null);
 
   // Dedicated clipboard-history browser. While active the launcher's search effect
   // and global key handler stand down; ClipboardMode owns input handling.
@@ -202,6 +210,7 @@ export default function App() {
     // session. (`--clipboard` uses window-show-query, which re-enters the mode.)
     setClipboardMode(false);
     setContentMode(false);
+    setActionResult(null);
     setQuery("");
     setResults([]);
     inputRef.current?.focus();
@@ -389,6 +398,9 @@ export default function App() {
       // Ignore keys when the window isn't focused - an always-on-top launcher can
       // otherwise still receive (and act on) keystrokes meant for another window.
       if (!focusedRef.current) return;
+      // The action picker is modal and handles its own keys via a capture-phase
+      // listener; this bubble-phase handler must stay inert while it's open.
+      if (actionResult) return;
       // Quicklook is modal: result navigation must not run underneath it. Arrow
       // keys scroll the open preview (handled in QuickLook); jump keys are inert.
       if (quickResult && (
@@ -410,6 +422,11 @@ export default function App() {
         if (quickResult) { setQuickResult(null); return; }
         const sel = displayResults[selectedIndex];
         if (sel && isPreviewable(sel)) setQuickResult(sel);
+      } else if ((e.altKey && e.key === "Enter") || (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "k" || e.key === "K"))) {
+        // Action picker for extension results with at least one action.
+        e.preventDefault();
+        const sel = quickResult ?? displayResults[selectedIndex];
+        if (sel?.ext?.actions?.length) setActionResult(sel);
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const target = launchableResults[parseInt(e.key) - 1];
@@ -468,7 +485,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [displayResults, selectedIndex, quickResult]);
+  }, [displayResults, selectedIndex, quickResult, actionResult]);
 
   const selected = displayResults[selectedIndex] ?? null;
 
@@ -485,6 +502,41 @@ export default function App() {
     if (quickResult) inputRef.current?.blur();
     else inputRef.current?.focus();
   }, [quickResult]);
+
+  // Action picker is modal like Quicklook: launcher input blurs while open.
+  useEffect(() => {
+    actionResultRef.current = actionResult != null;
+    if (actionResult) inputRef.current?.blur();
+    else inputRef.current?.focus();
+  }, [actionResult]);
+
+  // A reload swaps extension instances - a pinned picker would target a stale
+  // provider, so drop it.
+  useTauriListener("extensions-reloaded", () => setActionResult(null));
+
+  // Toast from an extension's ShowToast activate effect (visible when the
+  // window is - the backend also raises a desktop notification for the common
+  // hidden-after-activate case).
+  useTauriListener<string>("extension-toast", msg => {
+    setToast(msg);
+    window.setTimeout(() => setToast(t => (t === msg ? null : t)), 2200);
+  });
+
+  const runExtensionAction = (result: SearchResult, action: ExtAction) => {
+    setActionResult(null);
+    setQuery("");
+    setResults([]);
+    invoke("extension_activate", { id: result.id, ext: result.ext, action: action.id })
+      .catch(e => console.error(`[extension] activate failed: ${e}`));
+  };
+
+  // Passive trigger-prefix affordance: when the first token of the query is a
+  // registered extension prefix, annotate the input with the extension's name.
+  const extensionMeta = useExtensionMeta();
+  const triggerHit = useMemo(
+    () => (clipboardMode || contentMode ? null : matchTrigger(query, extensionMeta)),
+    [query, extensionMeta, clipboardMode, contentMode],
+  );
 
   const calcResult = results.find(r => r.kind === "calc");
   // Whether there's an actual term to search (drives the empty state). Content
@@ -526,8 +578,10 @@ export default function App() {
     if (q === 'define' || q === 'define ') return '<word>';
     if (q === 'dict' || q === 'dict ') return '<word>';
     if (q === 'clipboard' || q === 'clipboard ') return '<search>';
+    // Bare extension trigger: mirror the define/dict placeholder treatment.
+    if (triggerHit && q.trimEnd() === triggerHit.prefix) return '<query>';
     return null;
-  }, [query]);
+  }, [query, triggerHit]);
 
   const contentSized = ghostSuffix !== null || hintChip !== null || calcResult != null;
 
@@ -626,6 +680,9 @@ export default function App() {
             {!clipboardMode && !contentMode && hintChip && <span className="search-hint-chip">{hintChip}</span>}
             {!clipboardMode && !contentMode && calcResult && <div className="calc-inline">= {calcResult.title}</div>}
             {!clipboardMode && !contentMode && contentSized && <div className="search-spacer" />}
+            {!clipboardMode && !contentMode && triggerHit && (
+              <span className="search-hint-chip search-trigger-chip">{triggerHit.info.name}</span>
+            )}
           </div>
         </div>
 
@@ -674,8 +731,18 @@ export default function App() {
           />
         )}
 
+        {actionResult && !clipboardMode && (
+          <ActionPicker
+            result={actionResult}
+            onRun={action => runExtensionAction(actionResult, action)}
+            onClose={() => setActionResult(null)}
+          />
+        )}
+
+        {toast && <div className="extension-toast">{toast}</div>}
+
         <div className="footer">
-          <FooterHints selected={selected} canComplete={ghostSuffix !== null} quicklookOpen={quickResult != null} clipboardMode={clipboardMode} contentMode={contentMode} smartPaste={clipCaps.smart_paste} clipboardIdle={clipboardMode && query.trim() === ""} pdfHighlight={highlight} />
+          <FooterHints selected={selected} canComplete={ghostSuffix !== null} quicklookOpen={quickResult != null} clipboardMode={clipboardMode} contentMode={contentMode} smartPaste={clipCaps.smart_paste} clipboardIdle={clipboardMode && query.trim() === ""} pdfHighlight={highlight} actionPickerOpen={actionResult != null} />
           <div className="footer-right">
             <button
               className="footer-settings-btn"

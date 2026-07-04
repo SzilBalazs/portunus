@@ -1,4 +1,5 @@
 mod cli;
+mod cli_ext;
 mod clipboard_ocr;
 mod config;
 mod content_index;
@@ -603,7 +604,7 @@ pub fn run() {
             eprintln!("[extensions] failed to open kv store ({e}) - falling back to in-memory");
             extensions::kv::ExtensionKv::open_in_memory()
         }));
-    let extensions_enabled = cfg.extensions.enabled.clone();
+    let extensions_cfg_startup = cfg.extensions.clone();
 
     // Clipboard OCR cache: opened unconditionally (cheap SQLite file). The
     // background OCR pass and clipboard_list read/write it; gated per-pass by
@@ -756,11 +757,12 @@ pub fn run() {
             let ext_reload_kv = Arc::clone(&ext_kv);
             let ext_reload_frecency = frecency_state.clone();
             let ext_reload_notify = Arc::clone(&notify_cb);
+            let ext_reload_app = app.handle().clone();
             let reload_extensions_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-                let enabled = config::Config::load().extensions.enabled;
+                let extensions_cfg = config::Config::load().extensions;
                 extensions::sync(
                     &ext_reload_registry,
-                    &enabled,
+                    &extensions_cfg,
                     &ext_reload_kv,
                     &ext_reload_frecency,
                     true,
@@ -768,13 +770,38 @@ pub fn run() {
                 );
                 eprintln!("[extensions] reloaded");
                 ext_reload_notify();
+                // Distinct signal so the frontend drops its extension preview
+                // cache - a rebuilt wasm may render previews differently.
+                let _ = ext_reload_app.emit("extensions-reloaded", ());
             });
+
+            // reload-extension:<name> - targeted rebuild of one extension,
+            // `portunus ext dev`'s hot-reload loop.
+            let ext_one_registry = Arc::clone(&bg_registry);
+            let ext_one_kv = Arc::clone(&ext_kv);
+            let ext_one_notify = Arc::clone(&notify_cb);
+            let ext_one_app = app.handle().clone();
+            let reload_one_extension_fn: Arc<dyn Fn(String) + Send + Sync> =
+                Arc::new(move |name| {
+                    let extensions_cfg = config::Config::load().extensions;
+                    extensions::sync_one(
+                        &ext_one_registry,
+                        &name,
+                        &extensions_cfg,
+                        &ext_one_kv,
+                        Some(Arc::clone(&ext_one_notify)),
+                    );
+                    eprintln!("[ext:{name}] reloaded");
+                    ext_one_notify();
+                    let _ = ext_one_app.emit("extensions-reloaded", ());
+                });
 
             ipc::start_socket_listener(
                 app.handle().clone(),
                 reindex_fn,
                 Arc::clone(&reload_fn),
                 Arc::clone(&reload_extensions_fn),
+                reload_one_extension_fn,
             );
 
             // Start watchers before start_config_watcher so that file_watcher_tx /
@@ -890,9 +917,10 @@ pub fn run() {
 
                 // Extensions load after apps-ready: wasm compilation must never
                 // delay the launcher becoming usable.
+                extensions::install::sweep_stale_dirs();
                 extensions::sync(
                     &bg_registry,
-                    &extensions_enabled,
+                    &extensions_cfg_startup,
                     &startup_ext_kv,
                     &startup_frecency,
                     false,
@@ -902,6 +930,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             // Only the launcher dismisses on these events; the settings window
             // manages its own lifecycle.
@@ -958,6 +987,14 @@ pub fn run() {
             extensions::extension_activate,
             extensions::extension_preview,
             extensions::rescan_extensions,
+            extensions::set_extension_settings,
+            extensions::get_extension_logs,
+            extensions::install::preview_extension_install,
+            extensions::install::confirm_extension_install,
+            extensions::install::cancel_extension_install,
+            extensions::install::check_extension_update,
+            extensions::install::uninstall_extension,
+            extensions::install::consent_extension_permissions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

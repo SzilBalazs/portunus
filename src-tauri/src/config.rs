@@ -67,13 +67,27 @@ impl Default for ClipboardConfig {
     }
 }
 
-/// WASM extension enablement. A discovered extension absent from the map is
-/// DISABLED - dropping a folder into the extensions dir must never run code
-/// until the user reviews its permissions and enables it in Settings.
+/// Per-extension state, keyed by extension name:
+///
+/// ```toml
+/// [extensions.emoji]
+/// enabled = true
+/// [extensions.emoji.settings]
+/// skin_tone = "medium"
+/// ```
+///
+/// A discovered extension absent from the map is DISABLED - dropping a folder
+/// into the extensions dir must never run code until the user reviews its
+/// permissions and enables it in Settings.
+pub type ExtensionsConfig = std::collections::HashMap<String, ExtensionEntry>;
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, serde::Serialize)]
 #[serde(default)]
-pub struct ExtensionsConfig {
-    pub enabled: std::collections::HashMap<String, bool>,
+pub struct ExtensionEntry {
+    pub enabled: bool,
+    /// Values for the extension's `[[settings]]` schema. Validated against
+    /// the schema when applied; unknown keys are ignored, never fatal.
+    pub settings: toml::Table,
 }
 
 // ── sections ──────────────────────────────────────────────────────────────────
@@ -429,7 +443,17 @@ impl Config {
             }
         };
         match toml::from_str::<Config>(&content) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
+                // Pre-v2 configs stored `[extensions.enabled] name = bool`; under
+                // the per-extension map that parses as a junk extension literally
+                // named "enabled". Drop it leniently (an extension can't be named
+                // "enabled" without colliding here anyway) - never fail the whole
+                // config over the old shape.
+                if cfg.extensions.remove("enabled").is_some() {
+                    eprintln!(
+                        "[config] dropped pre-v2 [extensions.enabled] table - re-enable extensions in Settings"
+                    );
+                }
                 eprintln!("[config] loaded from {}", path.display());
                 cfg
             }

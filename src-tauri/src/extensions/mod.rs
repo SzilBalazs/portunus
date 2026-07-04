@@ -6,16 +6,20 @@
 //! reviewed its permissions and enabled it.
 
 pub mod hostfns;
+pub mod install;
 pub mod kv;
+pub mod logs;
 pub mod manifest;
+pub mod trigger;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use portunus_ext_sdk::{ExtensionResult, PreviewContent};
+use portunus_ext_sdk::{ActivateEffect, ExtensionResult, PreviewContent};
 use tauri::Manager;
 
+use crate::config::ExtensionsConfig;
 use crate::providers::wasm::WasmProvider;
 use crate::{ConfigState, FrecencyState, Registry};
 use kv::ExtensionKv;
@@ -45,6 +49,11 @@ pub fn discover() -> Vec<Discovered> {
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
             let name = e.file_name().to_str()?.to_string();
+            // Dot-prefixed dirs are install machinery (.staging-*/.old-*),
+            // never extensions.
+            if name.starts_with('.') {
+                return None;
+            }
             Some(match manifest::load(&e.path()) {
                 Ok(m) => Discovered { name, manifest: Some(m), error: None },
                 Err(err) => Discovered { name, manifest: None, error: Some(err) },
@@ -65,7 +74,7 @@ pub fn discover() -> Vec<Discovered> {
 /// open launcher picks the fresh data up.
 pub fn sync(
     registry: &Registry,
-    enabled: &HashMap<String, bool>,
+    extensions_cfg: &ExtensionsConfig,
     kv_store: &Arc<ExtensionKv>,
     frecency: &FrecencyState,
     force: bool,
@@ -77,8 +86,20 @@ pub fn sync(
     // Clean up state belonging to extensions whose directory is gone. The
     // orphan census is the union of every store that records per-extension
     // state - kv alone would miss extensions that only have frecency history.
-    let disk_names: std::collections::HashSet<&str> =
-        on_disk.iter().map(|d| d.name.as_str()).collect();
+    // Present = any directory entry, including a momentarily-broken dev
+    // symlink (mid-rebuild) - purging a dev extension's kv because cargo was
+    // between writes would be data loss.
+    let mut disk_names: std::collections::HashSet<String> =
+        on_disk.iter().map(|d| d.name.clone()).collect();
+    if let Ok(entries) = std::fs::read_dir(extensions_dir()) {
+        for e in entries.flatten() {
+            if let Some(name) = e.file_name().to_str() {
+                if !name.starts_with('.') {
+                    disk_names.insert(name.to_string());
+                }
+            }
+        }
+    }
     let mut known: std::collections::HashSet<String> =
         kv_store.extension_names().into_iter().collect();
     if let Some(store) = frecency {
@@ -94,8 +115,7 @@ pub fn sync(
     // Drop loaded extensions that are now disabled or gone from disk.
     let loaded = crate::util::read(registry).extension_names();
     for name in &loaded {
-        let want = disk_names.contains(name.as_str())
-            && enabled.get(name).copied().unwrap_or(false);
+        let want = disk_names.contains(name.as_str()) && entry_enabled(extensions_cfg, name);
         if !want {
             crate::util::write(registry).set_extension(name, None);
         }
@@ -103,37 +123,104 @@ pub fn sync(
 
     // Load (or force-rebuild) enabled extensions. Compile outside the lock.
     for d in on_disk {
-        if !enabled.get(&d.name).copied().unwrap_or(false) {
+        if !entry_enabled(extensions_cfg, &d.name) {
             continue;
         }
-        let Some((m, wasm_path)) = d.manifest.clone() else {
-            continue; // invalid manifest - surfaced via list_extensions
-        };
         if !force && loaded.contains(&d.name) {
             continue;
         }
-        match WasmProvider::load(m, wasm_path, kv_store.clone()) {
-            Ok(p) => {
-                let p = Arc::new(p);
-                crate::util::write(registry).set_extension(&d.name, Some(p.clone()));
-                // Warm the cache off-thread; sync must never wait on network.
-                if p.background_interval_secs().is_some() {
-                    let ncb = notify_cb.clone();
-                    std::thread::spawn(move || {
-                        if p.refresh("load").is_ok() {
-                            if let Some(ncb) = ncb {
-                                ncb();
-                            }
+        load_one(registry, d, extensions_cfg, kv_store, notify_cb.clone());
+    }
+}
+
+fn entry_enabled(cfg: &ExtensionsConfig, name: &str) -> bool {
+    cfg.get(name).map(|e| e.enabled).unwrap_or(false)
+}
+
+/// Resolves the effective settings snapshot for one extension: schema
+/// defaults overlaid with the (validated) user values from config.
+fn resolved_settings(
+    m: &manifest::ExtensionManifest,
+    cfg: &ExtensionsConfig,
+) -> HashMap<String, serde_json::Value> {
+    let user: serde_json::Map<String, serde_json::Value> = cfg
+        .get(&m.name)
+        .and_then(|e| serde_json::to_value(&e.settings).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .unwrap_or_default();
+    manifest::resolve_settings(&m.settings_schema, &user)
+}
+
+/// Compiles and registers one discovered extension (always rebuilds).
+/// Compile happens outside the registry lock; only pointers swap under it.
+fn load_one(
+    registry: &Registry,
+    d: &Discovered,
+    extensions_cfg: &ExtensionsConfig,
+    kv_store: &Arc<ExtensionKv>,
+    notify_cb: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
+    let Some((m, wasm_path)) = d.manifest.clone() else {
+        return; // invalid manifest - surfaced via list_extensions
+    };
+    // Consent gate: a manifest whose permissions grew past the consented
+    // snapshot must not load until the user re-approves in Settings.
+    if let Err(e) = install::check_consent(&m) {
+        logs::log(&d.name, logs::LogLevel::Error, &e);
+        crate::util::write(registry).set_extension(&d.name, None);
+        return;
+    }
+    let settings = resolved_settings(&m, extensions_cfg);
+    match WasmProvider::load(m, wasm_path, kv_store.clone(), settings) {
+        Ok(p) => {
+            let p = Arc::new(p);
+            crate::util::write(registry).set_extension(&d.name, Some(p.clone()));
+            // Warm the cache off-thread; sync must never wait on network.
+            if p.background_interval_secs().is_some() {
+                std::thread::spawn(move || {
+                    if p.refresh("load").is_ok() {
+                        if let Some(ncb) = notify_cb {
+                            ncb();
                         }
-                    });
-                }
-            }
-            Err(e) => {
-                eprintln!("[ext:{}] {e}", d.name);
-                crate::util::write(registry).set_extension(&d.name, None);
+                    }
+                });
             }
         }
+        Err(e) => {
+            logs::log(&d.name, logs::LogLevel::Error, &e);
+            crate::util::write(registry).set_extension(&d.name, None);
+        }
     }
+}
+
+/// Targeted reload of a single extension - the cheap path for settings
+/// changes and dev-mode iteration. Rebuilds (or unloads) exactly one
+/// extension; everything else keeps its warm instances.
+pub fn sync_one(
+    registry: &Registry,
+    name: &str,
+    extensions_cfg: &ExtensionsConfig,
+    kv_store: &Arc<ExtensionKv>,
+    notify_cb: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
+    let dir = extensions_dir().join(name);
+    let enabled = entry_enabled(extensions_cfg, name);
+    if !dir.is_dir() || !enabled {
+        crate::util::write(registry).set_extension(name, None);
+        return;
+    }
+    let d = match manifest::load(&dir) {
+        Ok(m) => Discovered { name: name.to_string(), manifest: Some(m), error: None },
+        Err(e) => {
+            logs::log(name, logs::LogLevel::Error, &e);
+            crate::util::write(registry).set_extension(name, None);
+            return;
+        }
+    };
+    load_one(registry, &d, extensions_cfg, kv_store, notify_cb);
 }
 
 /// Interval scheduler for extensions declaring `[background]`. One global
@@ -222,6 +309,7 @@ pub struct ExtensionInfo {
     version: String,
     description: String,
     author: String,
+    homepage: String,
     permissions: Option<PermissionsInfo>,
     enabled: bool,
     loaded: bool,
@@ -232,6 +320,23 @@ pub struct ExtensionInfo {
     benched: bool,
     /// Set when the manifest declares `[background]` - shown as a chip.
     background_interval_secs: Option<u64>,
+    /// Trigger prefixes from `[trigger]`; empty = always-mode.
+    triggers: Vec<String>,
+    /// The result kind this extension emits (drives launcher group labels).
+    kind: Option<String>,
+    /// Declared `[[settings]]` schema, rendered by the Settings UI.
+    settings_schema: Vec<manifest::SettingSpec>,
+    /// Effective settings values (defaults overlaid with user config).
+    settings_values: HashMap<String, serde_json::Value>,
+    /// True when the manifest's permissions grew past the consented snapshot -
+    /// the extension won't load until the user re-approves.
+    needs_reconsent: bool,
+    /// Install origin: "url", "file" or "dev". None = no record yet.
+    origin: Option<String>,
+    /// Origin URL for url-installed extensions (update source).
+    origin_url: Option<String>,
+    /// True when the extensions-dir entry is a symlink (`portunus ext dev`).
+    dev: bool,
 }
 
 #[tauri::command]
@@ -239,27 +344,42 @@ pub fn list_extensions(
     config: tauri::State<'_, ConfigState>,
     registry: tauri::State<'_, Registry>,
 ) -> Vec<ExtensionInfo> {
-    let enabled_map = crate::util::lock(&config).extensions.enabled.clone();
+    let extensions_cfg = crate::util::lock(&config).extensions.clone();
+    let consents = install::load_consents();
     let reg = crate::util::read(&registry);
     discover()
         .into_iter()
         .map(|d| {
             let provider = reg.extension(&d.name);
-            let enabled = enabled_map.get(&d.name).copied().unwrap_or(false);
+            let enabled = entry_enabled(&extensions_cfg, &d.name);
+            let m = d.manifest.as_ref().map(|(m, _)| m);
+            let needs_reconsent = m.is_some_and(|m| {
+                consents.get(&d.name).is_some_and(|rec| {
+                    !matches!(rec.origin, install::Origin::Dev)
+                        && rec.permissions.grew_to(
+                            &install::ConsentPermissions::from_manifest(&m.permissions),
+                        )
+                })
+            });
             let error = provider
                 .as_ref()
                 .and_then(|p| p.last_error())
-                .or(d.error);
+                .or(d.error)
+                .or_else(|| {
+                    needs_reconsent.then(|| {
+                        "permissions changed since install - review and re-approve".to_string()
+                    })
+                });
+            let consent = consents.get(&d.name);
+            let dev = std::fs::symlink_metadata(extensions_dir().join(&d.name))
+                .map(|meta| meta.is_symlink())
+                .unwrap_or(false);
             ExtensionInfo {
-                name: d.name,
-                version: d.manifest.as_ref().map(|(m, _)| m.version.clone()).unwrap_or_default(),
-                description: d
-                    .manifest
-                    .as_ref()
-                    .map(|(m, _)| m.description.clone())
-                    .unwrap_or_default(),
-                author: d.manifest.as_ref().map(|(m, _)| m.author.clone()).unwrap_or_default(),
-                permissions: d.manifest.as_ref().map(|(m, _)| PermissionsInfo {
+                version: m.map(|m| m.version.clone()).unwrap_or_default(),
+                description: m.map(|m| m.description.clone()).unwrap_or_default(),
+                author: m.map(|m| m.author.clone()).unwrap_or_default(),
+                homepage: m.map(|m| m.homepage.clone()).unwrap_or_default(),
+                permissions: m.map(|m| PermissionsInfo {
                     network: m.permissions.network.clone(),
                     kv: m.permissions.kv,
                     clipboard: m.permissions.clipboard,
@@ -268,14 +388,77 @@ pub fn list_extensions(
                 enabled,
                 loaded: provider.is_some(),
                 benched: provider.as_ref().is_some_and(|p| p.is_benched()),
-                background_interval_secs: d
-                    .manifest
-                    .as_ref()
-                    .and_then(|(m, _)| m.background.as_ref().map(|b| b.interval_secs())),
+                background_interval_secs: m
+                    .and_then(|m| m.background.as_ref().map(|b| b.interval_secs())),
+                triggers: m
+                    .and_then(|m| m.trigger.as_ref())
+                    .map(|t| t.prefixes.clone())
+                    .unwrap_or_default(),
+                kind: m.map(|m| m.default_kind()),
+                settings_schema: m.map(|m| m.settings_schema.clone()).unwrap_or_default(),
+                settings_values: m
+                    .map(|m| resolved_settings(m, &extensions_cfg))
+                    .unwrap_or_default(),
+                needs_reconsent,
+                origin: consent.map(|rec| match rec.origin {
+                    install::Origin::Url { .. } => "url".to_string(),
+                    install::Origin::File => "file".to_string(),
+                    install::Origin::Dev => "dev".to_string(),
+                }),
+                origin_url: consent.and_then(|rec| match &rec.origin {
+                    install::Origin::Url { url } => Some(url.clone()),
+                    _ => None,
+                }),
+                dev,
                 error,
+                name: d.name,
             }
         })
         .collect()
+}
+
+/// Validates and persists an extension's settings values, then hot-reloads
+/// just that extension so its `settings_get` snapshot picks them up.
+#[tauri::command]
+pub fn set_extension_settings(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, Registry>,
+    config: tauri::State<'_, ConfigState>,
+    kv_state: tauri::State<'_, ExtensionKvState>,
+    name: String,
+    values: HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    let dir = extensions_dir().join(&name);
+    let (m, _) = manifest::load(&dir)?;
+
+    // Validate every incoming value against the schema before writing config.
+    let mut table = toml::Table::new();
+    for spec in &m.settings_schema {
+        let Some(v) = values.get(&spec.key) else { continue };
+        let coerced = manifest::coerce_setting_value(spec, v)
+            .map_err(|e| format!("setting \"{}\": {e}", spec.key))?;
+        let toml_v: toml::Value = serde_json::from_value::<toml::Value>(coerced)
+            .map_err(|e| format!("setting \"{}\": {e}", spec.key))?;
+        table.insert(spec.key.clone(), toml_v);
+    }
+
+    let extensions_cfg = {
+        let mut cfg = crate::util::lock(&config);
+        cfg.extensions.entry(name.clone()).or_default().settings = table;
+        cfg.save()?;
+        cfg.extensions.clone()
+    };
+
+    // Targeted reload off-thread (compiles wasm); pointer swap under lock.
+    let registry = registry.inner().clone();
+    let kv_store = kv_state.0.clone();
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        sync_one(&registry, &name, &extensions_cfg, &kv_store, None);
+        let _ = app.emit("search-invalidated", ());
+        let _ = app.emit("extensions-reloaded", ());
+    });
+    Ok(())
 }
 
 /// Splits `ext:<name>:<local>` and returns the loaded provider plus nothing
@@ -303,19 +486,73 @@ pub fn extension_activate(
     ext: ExtensionResult,
     action: Option<String>,
 ) -> Result<(), String> {
-    // Hide first: activation may briefly wait on an in-flight search call
-    // holding the instance lock (up to the search budget) - the launcher must
-    // dismiss instantly on Enter, like launch_app does. Failures still land
-    // in last_error / Settings.
+    // Hide first: activation may block for seconds (network I/O inside the
+    // extension) - the launcher must dismiss instantly on Enter, like
+    // launch_app does. Effects that need user-visible output (ShowToast) go
+    // through desktop notifications, which work with the window hidden.
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
     let provider = provider_for_id(&crate::util::read(&registry), &id)?;
-    provider.activate(ext, action)?;
+    let effects = provider.activate(ext, action)?;
+    run_activate_effects(&app, &id, effects);
     if let Some(store) = frecency.as_ref() {
         store.record_launch(&id, "extension");
     }
     Ok(())
+}
+
+/// Executes the declarative effects an `activate` call returned. Effects run
+/// only on explicit user activation - the keypress is the consent - so none
+/// of them consult manifest permissions. Caps mirror the equivalent host fns.
+fn run_activate_effects(app: &tauri::AppHandle, id: &str, effects: Vec<ActivateEffect>) {
+    use tauri::Emitter;
+    for effect in effects {
+        match effect {
+            ActivateEffect::CopyText { text } => {
+                if let Err(e) = hostfns::write_clipboard_text(&text) {
+                    eprintln!("[{id}] copy_text effect: {e}");
+                }
+            }
+            ActivateEffect::OpenUrl { url } => {
+                if let Err(e) = hostfns::open_http_url(&url) {
+                    eprintln!("[{id}] open_url effect: {e}");
+                }
+            }
+            ActivateEffect::ShowToast { message } => {
+                let mut msg = message;
+                msg.truncate_char_boundary(512);
+                // The launcher window is already hidden at this point, so an
+                // in-window toast would be invisible - use a desktop
+                // notification. Also emitted as an event for visible windows.
+                let _ = app.emit("extension-toast", &msg);
+                let _ = std::process::Command::new("notify-send")
+                    .arg("--app-name=Portunus")
+                    .arg("--expire-time=3000")
+                    .arg("Portunus")
+                    .arg(&msg)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+        }
+    }
+}
+
+trait TruncateCharBoundary {
+    fn truncate_char_boundary(&mut self, max: usize);
+}
+impl TruncateCharBoundary for String {
+    fn truncate_char_boundary(&mut self, max: usize) {
+        if self.len() > max {
+            let mut cut = max;
+            while !self.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.truncate(cut);
+        }
+    }
 }
 
 #[tauri::command]
@@ -333,6 +570,13 @@ pub async fn extension_preview(
         .map_err(|e| e.to_string())?
 }
 
+/// Tail of one extension's log ring buffer (oldest first) - the Settings log
+/// viewer polls this while the panel is open.
+#[tauri::command]
+pub fn get_extension_logs(name: String, limit: Option<usize>) -> Vec<logs::LogEntry> {
+    logs::LOGS.tail(&name, limit.unwrap_or(100).min(200))
+}
+
 /// Re-discovers the extensions dir and force-reloads wasm bytes. Wired to the
 /// Settings tab button and the `portunus --reload-extensions` CLI flag - the
 /// extension author's iteration loop.
@@ -345,7 +589,7 @@ pub fn rescan_extensions(
     kv_state: tauri::State<'_, ExtensionKvState>,
 ) {
     let registry = registry.inner().clone();
-    let enabled = crate::util::lock(&config).extensions.enabled.clone();
+    let extensions_cfg = crate::util::lock(&config).extensions.clone();
     let kv_store = kv_state.0.clone();
     let frecency = frecency.inner().clone();
     std::thread::spawn(move || {
@@ -354,7 +598,7 @@ pub fn rescan_extensions(
         let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             let _ = notify_app.emit("search-invalidated", ());
         });
-        sync(&registry, &enabled, &kv_store, &frecency, true, Some(notify));
+        sync(&registry, &extensions_cfg, &kv_store, &frecency, true, Some(notify));
         let _ = app.emit("search-invalidated", ());
         // Distinct signal so ExtensionPreview drops its cache only on a real
         // extension reload, not on every file-watcher search-invalidated.

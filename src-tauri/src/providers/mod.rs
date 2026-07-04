@@ -25,7 +25,11 @@ pub const SCORE_DICT_FILL: f32 = 500_000.0;
 
 // ── Discoverable provider bases (apps, files, folders, extensions) ──
 pub const SCORE_APP: f32 = 2_000_000.0;
-/// Base for extension results - above apps (2M), below calc/dict (3M).
+/// Base for prefix-triggered extension results - the user explicitly invoked
+/// the extension, so like other intent-triggered rows it outranks calc/dict
+/// (3M) while staying below clipboard (5M) and content (6M).
+pub const SCORE_EXTENSION_TRIGGERED: f32 = 4_000_000.0;
+/// Base for always-mode extension results - above apps (2M), below calc/dict (3M).
 pub const SCORE_EXTENSION: f32 = 2_500_000.0;
 /// Width of the band extension relevance (0-100) maps into, on top of
 /// `SCORE_EXTENSION`. Matches FUZZY_MAX_BONUS so relevance and fuzzy quality
@@ -235,12 +239,17 @@ impl PluginRegistry {
                 if ext.is_benched() {
                     continue;
                 }
+                // Trigger gating happens here, before any thread exists: a
+                // keystroke that triggers no extension spawns nothing and adds
+                // nothing to the deadline budget.
+                let Some(gated) = ext.gate(query) else {
+                    continue;
+                };
                 budget_ms = budget_ms.max(ext.search_budget_ms());
                 let ext = ext.clone();
                 let tx = tx.clone();
-                let q = query.to_string();
                 std::thread::spawn(move || {
-                    let _ = tx.send(ext.search(&q));
+                    let _ = tx.send(ext.search_gated(gated));
                 });
                 spawned += 1;
             }

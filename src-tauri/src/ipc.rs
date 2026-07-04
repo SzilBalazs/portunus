@@ -19,6 +19,7 @@ pub fn start_socket_listener(
     reindex_fn: Option<Arc<dyn Fn() + Send + Sync>>,
     reload_fn: Arc<dyn Fn() + Send + Sync>,
     reload_extensions_fn: Arc<dyn Fn() + Send + Sync>,
+    reload_one_extension_fn: Arc<dyn Fn(String) + Send + Sync>,
 ) {
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
@@ -35,6 +36,7 @@ pub fn start_socket_listener(
             let reindex_fn = reindex_fn.clone();
             let reload_fn = Arc::clone(&reload_fn);
             let reload_extensions_fn = Arc::clone(&reload_extensions_fn);
+            let reload_one_extension_fn = Arc::clone(&reload_one_extension_fn);
             std::thread::spawn(move || {
                 use std::io::BufRead;
                 // Prevent a stalled client from blocking this handler forever.
@@ -70,6 +72,12 @@ pub fn start_socket_listener(
                     std::thread::spawn(move || reload_fn());
                 } else if cmd == "reload-extensions" {
                     std::thread::spawn(move || reload_extensions_fn());
+                } else if let Some(name) = cmd.strip_prefix("reload-extension:") {
+                    // Targeted reload - `portunus ext dev`'s iteration loop.
+                    let name = name.trim().to_string();
+                    if !name.is_empty() {
+                        std::thread::spawn(move || reload_one_extension_fn(name));
+                    }
                 } else if cmd == "reload-theme" {
                     // Re-read the external matugen.css. Lightweight: no provider
                     // rebuild, just nudge the frontend to re-fetch + re-inject.

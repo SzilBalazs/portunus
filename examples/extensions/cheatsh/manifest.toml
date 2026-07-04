@@ -1,16 +1,22 @@
-api = 1
+api = 2
 name = "cheatsh"
-version = "0.1.0"
+version = "0.2.0"
 description = "Look up command cheat sheets from cheat.sh"
 author = "Portunus examples"
 kinds = ["ext-cheatsh"]
 
+# The host gates and strips these - the extension only ever sees the term.
+[trigger]
+prefixes = ["ch", "cheat"]
+
 [permissions]
 network = ["cheat.sh"]
-clipboard = true
-open_url = true
 kv = true
 
 [limits]
 search_timeout_ms = 50
 activate_timeout_ms = 5000
+
+# Warm the :list cache off the keystroke path (also runs once at load).
+[background]
+refresh_interval_secs = 86400

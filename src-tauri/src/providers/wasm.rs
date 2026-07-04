@@ -15,14 +15,15 @@ use std::time::Duration;
 
 use extism::{CompiledPlugin, Manifest as WasmManifest, Plugin, PluginBuilder, Wasm};
 use portunus_ext_sdk::{
-    ActivateInput, ExtensionResult, PreviewContent, PreviewInput, RefreshInput, SearchInput,
-    SearchOutput,
+    ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, PreviewContent, PreviewInput,
+    RefreshInput, SearchInput, SearchOutput,
 };
 
-use super::{Provider, SearchResult, EXTENSION_BAND, SCORE_EXTENSION};
+use super::{SearchResult, EXTENSION_BAND, SCORE_EXTENSION, SCORE_EXTENSION_TRIGGERED};
 use crate::extensions::hostfns::{self, ExtensionCtx};
 use crate::extensions::kv::ExtensionKv;
 use crate::extensions::manifest::{ExtensionManifest, Limits};
+use crate::extensions::trigger::{self, GatedQuery};
 use crate::util;
 
 /// 64 MB linear-memory cap, in 64 KiB wasm pages.
@@ -86,6 +87,7 @@ impl WasmProvider {
         manifest: ExtensionManifest,
         wasm_path: PathBuf,
         kv: Arc<ExtensionKv>,
+        settings: std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<Self, String> {
         let limits = manifest.limits.clamped();
 
@@ -95,7 +97,7 @@ impl WasmProvider {
             wasm_manifest =
                 wasm_manifest.with_allowed_hosts(manifest.permissions.network.iter().cloned());
         }
-        let ctx = ExtensionCtx::new(manifest.name.clone(), &manifest.permissions, kv);
+        let ctx = ExtensionCtx::new(manifest.name.clone(), &manifest.permissions, kv, settings);
         let compiled = CompiledPlugin::new(
             PluginBuilder::new(wasm_manifest)
                 .with_functions(hostfns::build(ctx))
@@ -231,7 +233,11 @@ impl WasmProvider {
     /// Logs and surfaces an error in Settings without counting it toward the
     /// auto-bench failure streak.
     fn note_error(&self, error: &str) {
-        eprintln!("[ext:{}] {error}", self.name);
+        crate::extensions::logs::log(
+            &self.name,
+            crate::extensions::logs::LogLevel::Error,
+            error,
+        );
         *util::lock(&self.last_error) = Some(error.to_string());
     }
 
@@ -240,24 +246,29 @@ impl WasmProvider {
         let fails = self.fail_count.fetch_add(1, Ordering::Relaxed) + 1;
         if fails >= MAX_CONSECUTIVE_FAILURES {
             self.benched.store(true, Ordering::Relaxed);
-            eprintln!(
-                "[ext:{}] disabled for this session after {fails} consecutive failures",
-                self.name
+            crate::extensions::logs::log(
+                &self.name,
+                crate::extensions::logs::LogLevel::Error,
+                &format!("disabled for this session after {fails} consecutive failures"),
             );
         }
     }
 
     /// Maps one extension DTO into an internal result: namespaced id, fixed
-    /// kind, host-private score band, clamped fields, no exec.
-    fn to_search_result(&self, dto: ExtensionResult) -> SearchResult {
+    /// kind, host-private score band, clamped fields, no exec. A triggered
+    /// query (user typed the extension's prefix) lands in the intent band
+    /// above calc/dict; always-mode results compete just above apps.
+    fn to_search_result(&self, mut dto: ExtensionResult, triggered: bool) -> SearchResult {
         let relevance = if dto.relevance.is_finite() { dto.relevance } else { 0.0 };
         let icon_data_uri = dto.icon.as_ref().and_then(|i| self.icon_data_uri(i));
+        let base = if triggered { SCORE_EXTENSION_TRIGGERED } else { SCORE_EXTENSION };
+        dto.badge = dto.badge.take().map(clamp_field);
         SearchResult {
             id: format!("ext:{}:{}", self.name, dto.id),
             title: clamp_field(dto.title.clone()),
             subtitle: dto.subtitle.clone().map(clamp_field),
             kind: self.kind.clone(),
-            score: SCORE_EXTENSION + relevance.clamp(0.0, 100.0) / 100.0 * EXTENSION_BAND,
+            score: base + relevance.clamp(0.0, 100.0) / 100.0 * EXTENSION_BAND,
             icon_data_uri,
             // Round-tripped back to the extension on activate/preview.
             ext: Some(dto),
@@ -283,8 +294,14 @@ impl WasmProvider {
         Some(format!("data:{};base64,{}", icon.mime, icon.data_base64))
     }
 
-    /// Runs the extension's default (or named) action for a result.
-    pub fn activate(&self, result: ExtensionResult, action: Option<String>) -> Result<(), String> {
+    /// Runs the extension's default (or named) action for a result and
+    /// returns the declarative effects it requested. The caller (command
+    /// layer) executes them - this type stays Tauri-free.
+    pub fn activate(
+        &self,
+        result: ExtensionResult,
+        action: Option<String>,
+    ) -> Result<Vec<ActivateEffect>, String> {
         let input = ActivateInput { result, action };
         let json = serde_json::to_string(&input).map_err(|e| e.to_string())?;
         match self.call_with_budget(
@@ -294,8 +311,17 @@ impl WasmProvider {
             Duration::from_millis(self.limits.activate_timeout_ms),
             true,
         )? {
-            Some(_) => Ok(()),
-            None => Err("extension has no activate function".to_string()),
+            Some(raw) => {
+                // An empty/legacy body means "done, no effects" - only a
+                // present-but-malformed response is an author error.
+                if raw.trim().is_empty() {
+                    return Ok(Vec::new());
+                }
+                let out: ActivateOutput = serde_json::from_str(&raw)
+                    .map_err(|e| format!("activate: invalid response: {e}"))?;
+                Ok(out.effects)
+            }
+            None => Err("extension has no actions".to_string()),
         }
     }
 
@@ -362,13 +388,27 @@ fn clamp_field(mut s: String) -> String {
     s
 }
 
-impl Provider for WasmProvider {
-    fn id(&self) -> &str {
+impl WasmProvider {
+    #[allow(dead_code)]
+    pub fn id(&self) -> &str {
         &self.reg_id
     }
 
-    fn search(&self, query: &str) -> Vec<SearchResult> {
-        let input = match serde_json::to_string(&SearchInput { query: query.to_string() }) {
+    /// Applies this extension's `[trigger]` config to a raw launcher query.
+    /// None = don't run (the registry spawns no thread). Pure and cheap - it
+    /// runs for every loaded extension on every keystroke.
+    pub fn gate(&self, raw_query: &str) -> Option<GatedQuery> {
+        trigger::gate(self.manifest.trigger.as_ref(), raw_query)
+    }
+
+    /// Runs the extension's `search` export for a gated query.
+    pub fn search_gated(&self, gated: GatedQuery) -> Vec<SearchResult> {
+        let triggered = gated.trigger.is_some();
+        let input = match serde_json::to_string(&SearchInput {
+            query: gated.query,
+            raw_query: gated.raw_query,
+            trigger: gated.trigger,
+        }) {
             Ok(j) => j,
             Err(_) => return Vec::new(),
         };
@@ -395,7 +435,7 @@ impl Provider for WasmProvider {
             .results
             .into_iter()
             .take(MAX_RESULTS)
-            .map(|dto| self.to_search_result(dto))
+            .map(|dto| self.to_search_result(dto, triggered))
             .collect()
     }
 }

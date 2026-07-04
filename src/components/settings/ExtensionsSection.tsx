@@ -3,42 +3,20 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriListener } from "../../hooks/useTauriListener";
 import { Config, ExtensionInfo } from "../../types";
-import { WarnIcon } from "../../icons";
-import Toggle from "./Toggle";
 import SectionHeader from "./SectionHeader";
 import SettingsGroup from "./SettingsGroup";
 import SettingsField from "./SettingsField";
+import ExtensionCard from "./extensions/ExtensionCard";
+import InstallExtensionDialog from "./extensions/InstallExtensionDialog";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
 }
 
-function fmtInterval(secs: number): string {
-  if (secs % 3600 === 0) return `${secs / 3600}h`;
-  if (secs % 60 === 0) return `${secs / 60}m`;
-  return `${secs}s`;
-}
-
-/** Human summary of what an extension may touch - shown BEFORE first enable. */
-function PermissionChips({ info }: { info: ExtensionInfo }) {
-  if (!info.permissions) return null;
-  const chips: string[] = [];
-  if (info.permissions.network.length > 0) chips.push(`network: ${info.permissions.network.join(", ")}`);
-  if (info.permissions.kv) chips.push("storage");
-  if (info.permissions.clipboard) chips.push("clipboard");
-  if (info.permissions.open_url) chips.push("open urls");
-  if (chips.length === 0) chips.push("no permissions");
-  if (info.background_interval_secs != null) chips.push(`background: every ${fmtInterval(info.background_interval_secs)}`);
-  return (
-    <div className="settings-ext-perms">
-      {chips.map(c => <code key={c}>{c}</code>)}
-    </div>
-  );
-}
-
 export default function ExtensionsSection({ config, onChange }: Props) {
   const [exts, setExts] = useState<ExtensionInfo[] | null>(null);
+  const [installOpen, setInstallOpen] = useState(false);
 
   const refresh = useCallback(() => {
     invoke<ExtensionInfo[]>("list_extensions")
@@ -51,6 +29,8 @@ export default function ExtensionsSection({ config, onChange }: Props) {
   useEffect(refresh, [refresh]);
   // Fired by the backend when an extension rebuild completes.
   useTauriListener("search-invalidated", refresh, [refresh]);
+  // Installs/uninstalls/reloads emit this dedicated signal.
+  useTauriListener("extensions-reloaded", refresh, [refresh]);
   // Runtime errors happen while the user is in the LAUNCHER; refresh on focus.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -60,55 +40,60 @@ export default function ExtensionsSection({ config, onChange }: Props) {
     return () => unlisten?.();
   }, [refresh]);
 
-  const setEnabled = (name: string, value: boolean) =>
-    onChange({ ...config, extensions: { ...config.extensions, enabled: { ...config.extensions.enabled, [name]: value } } });
+  const setEnabled = (name: string, value: boolean) => {
+    const entry = config.extensions[name] ?? { enabled: false, settings: {} };
+    onChange({ ...config, extensions: { ...config.extensions, [name]: { ...entry, enabled: value } } });
+  };
 
   const rescan = () => { invoke("rescan_extensions").catch(() => {}); };
+
+  // Dev-linked extensions sort first: they're the ones being actively worked on.
+  const sorted = exts ? [...exts].sort((a, b) => Number(b.dev) - Number(a.dev) || a.name.localeCompare(b.name)) : null;
 
   return (
     <div className="settings-section">
       <SectionHeader
         title="Extensions"
-        desc={<>WASM extensions from <code>~/.local/share/portunus/extensions/</code>. New extensions stay disabled until you review their permissions and enable them.</>}
+        desc={<>WASM extensions extend search with new sources and actions. Install from a <code>.portext</code> file or URL, or drop a folder into <code>~/.local/share/portunus/extensions/</code>. Nothing runs until you review its permissions.</>}
       />
 
-      {exts === null && <div className="settings-dep-empty">Scanning…</div>}
-      {exts?.length === 0 && (
+      <SettingsGroup>
+        <SettingsField
+          name="Install extension"
+          desc="From a URL or a downloaded .portext file. Shows permissions and the archive hash before anything is installed."
+        >
+          <button className="settings-btn-primary" onClick={() => setInstallOpen(true)}>Install…</button>
+        </SettingsField>
+      </SettingsGroup>
+
+      {sorted === null && <div className="settings-dep-empty">Scanning…</div>}
+      {sorted?.length === 0 && (
         <SettingsGroup>
           <div className="settings-dep-empty">
-            No extensions installed. Drop a folder with <code>manifest.toml</code> + <code>extension.wasm</code> into the extensions directory, then Rescan.
+            No extensions installed yet. Install one above, or scaffold your own with <code>portunus ext new</code>.
           </div>
         </SettingsGroup>
       )}
 
-      {exts && exts.length > 0 && (
-        <SettingsGroup title="Installed">
-          {exts.map(info => {
-            // Live toggle state comes from config; `info` is a backend snapshot.
-            const enabled = config.extensions.enabled[info.name] ?? false;
-            const isNew = !(info.name in config.extensions.enabled);
-            return (
-              <SettingsField
+      {sorted && sorted.length > 0 && (
+        // Deliberately NOT a SettingsGroup: the cards are containers already,
+        // nesting them in the group card reads as a weird double box.
+        <div className="settings-group-block">
+          <div className="settings-group-title">Installed</div>
+          <div className="settings-ext-cards">
+            {sorted.map(info => (
+              <ExtensionCard
                 key={info.name}
-                name={<>
-                  {info.name}
-                  {info.version && <span className="settings-ext-version"> v{info.version}</span>}
-                  {isNew && <span className="settings-ext-new"> new — review &amp; enable</span>}
-                </>}
-                desc={<>
-                  {info.description}
-                  <PermissionChips info={info} />
-                </>}
-                warn={<>
-                  {info.error && <div className="settings-dep-inline-warn"><WarnIcon />{info.error}</div>}
-                  {info.benched && <div className="settings-dep-inline-warn"><WarnIcon />Disabled for this session after repeated failures. Fix and Rescan.</div>}
-                </>}
-              >
-                <Toggle label={info.name} checked={enabled} onChange={v => setEnabled(info.name, v)} />
-              </SettingsField>
-            );
-          })}
-        </SettingsGroup>
+                info={info}
+                // Live toggle state comes from config; `info` is a backend snapshot.
+                enabled={config.extensions[info.name]?.enabled ?? false}
+                isNew={!(info.name in config.extensions)}
+                onSetEnabled={v => setEnabled(info.name, v)}
+                onChanged={refresh}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       <SettingsGroup>
@@ -119,6 +104,10 @@ export default function ExtensionsSection({ config, onChange }: Props) {
           <button className="settings-btn-secondary" onClick={rescan}>Rescan</button>
         </SettingsField>
       </SettingsGroup>
+
+      {installOpen && (
+        <InstallExtensionDialog onClose={() => setInstallOpen(false)} onInstalled={refresh} />
+      )}
     </div>
   );
 }

@@ -40,7 +40,9 @@ pub fn rebuild_providers(
     file_entries: &SharedFileEntries,
     file_watcher_tx: &FileWatcherTx,
     ext_kv: &Arc<ExtensionKv>,
-    frecency: &FrecencyState,
+    // Kept for parity with sync() callers even though the targeted
+    // per-extension reload below never purges orphan state.
+    _frecency: &FrecencyState,
 ) {
     // Update per-search scalars instantly (no rebuild needed).
     shared.write().unwrap().update_from(new_cfg);
@@ -161,16 +163,35 @@ pub fn rebuild_providers(
     }
 
     if new_cfg.extensions != old_cfg.extensions {
-        let enabled = new_cfg.extensions.enabled.clone();
+        // Targeted reload: only extensions whose entry (enabled flag or
+        // settings table) actually changed are rebuilt; everything else keeps
+        // its warm instances.
+        let changed: Vec<String> = new_cfg
+            .extensions
+            .keys()
+            .chain(old_cfg.extensions.keys())
+            .filter(|n| new_cfg.extensions.get(*n) != old_cfg.extensions.get(*n))
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let extensions_cfg = new_cfg.extensions.clone();
         let reg2 = Arc::clone(registry);
         let ncb = Arc::clone(notify_cb);
         let kv = Arc::clone(ext_kv);
-        let frec = frecency.clone();
-        // Wasm compilation is slow - sync builds instances off-thread and only
-        // takes the registry write lock for pointer swaps.
+        // Wasm compilation is slow - build instances off-thread and only
+        // take the registry write lock for pointer swaps.
         std::thread::spawn(move || {
-            crate::extensions::sync(&reg2, &enabled, &kv, &frec, false, Some(Arc::clone(&ncb)));
-            eprintln!("[config] extensions reloaded");
+            for name in &changed {
+                crate::extensions::sync_one(
+                    &reg2,
+                    name,
+                    &extensions_cfg,
+                    &kv,
+                    Some(Arc::clone(&ncb)),
+                );
+            }
+            eprintln!("[config] {} extension(s) reloaded", changed.len());
             ncb();
         });
     }

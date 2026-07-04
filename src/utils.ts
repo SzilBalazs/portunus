@@ -1,3 +1,5 @@
+import { extensionByKind } from "./extensions/meta";
+
 export function shortenPath(path: string): string {
   return path.replace(/^\/home\/[^/]+/, "~").replace(/^\/root/, "~");
 }
@@ -8,7 +10,11 @@ export function groupLabel(kind: string): string | null {
   if (kind === "app") return "APPS";
   if (kind === "file" || kind === "folder") return "FILES";
   if (kind === "clipboard-mode") return "CLIPBOARD";
-  if (kind.startsWith("ext-")) return "EXTENSIONS";
+  if (kind.startsWith("ext-")) {
+    // Per-extension label from the meta store; generic until the first
+    // list_extensions fetch lands (App re-renders on results anyway).
+    return extensionByKind(kind)?.name.toUpperCase() ?? "EXTENSIONS";
+  }
   return null;
 }
 
