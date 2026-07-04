@@ -53,8 +53,8 @@ vanishes again the second you launch something or press Escape.
 Download the latest release from the [Releases page](https://github.com/SzilBalazs/portunus/releases).
 
 ```bash
-chmod +x Portunus-x86_64.AppImage
-./Portunus-x86_64.AppImage
+chmod +x portunus_*_amd64.AppImage
+./portunus_*_amd64.AppImage
 ```
 
 <details>
@@ -107,11 +107,11 @@ bind = SUPER, V, exec, /path/to/portunus --clipboard
 
 ## Configuration
 
-On first launch Portunus writes a default config to `~/.config/portunus/config.toml`. Every key is documented inline. Config changes are hot-reloaded without a restart.
+On first launch Portunus writes a default config to `~/.config/portunus/config.toml`. Config changes are hot-reloaded without a restart.
 
 ### Themes
 
-Pick a theme in **Settings → Appearance**. Nine dark themes ship built-in.
+Pick a theme in **Settings → Appearance**. Eight dark themes ship built-in, plus a Matugen theme that pulls its colors from your wallpaper.
 
 #### Matugen (Material You from your wallpaper)
 
