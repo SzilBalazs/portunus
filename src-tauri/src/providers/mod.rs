@@ -34,6 +34,15 @@ pub const EXTENSION_BAND: f32 = 300_000.0;
 pub const SCORE_FILE: f32 = 1_000_000.0;
 pub const SCORE_FOLDER: f32 = 0.0;
 
+// ── File-result penalties (down-rank low-value hits within the file band) ─────
+/// Subtracted from a file result that has no preview renderer (archives, video,
+/// audio, unknown binaries). Same scale as FUZZY_MAX_BONUS so it outweighs fuzzy
+/// quality but never crosses into the folder/app band.
+pub const PENALTY_NO_PREVIEW: f32 = 300_000.0;
+/// Subtracted from a result whose path has any dot-prefixed component
+/// (hidden dir or dotfile). Config/cache noise sinks below normal hits.
+pub const PENALTY_HIDDEN: f32 = 200_000.0;
+
 // ── Scoring normalisation constants ──────────────────────────────────────────
 
 /// Nucleo score at which fuzzy bonus is fully awarded. Scores above this are clamped.

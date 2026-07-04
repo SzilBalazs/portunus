@@ -175,6 +175,27 @@ fn has_hidden_component(path: &str) -> bool {
     })
 }
 
+/// Extensions with a real preview renderer. MUST stay in sync with
+/// `isFilePreviewable` / the ext maps in src/utils.ts.
+fn is_previewable_ext(name: &str) -> bool {
+    // extensionless "Dockerfile"/"Makefile" match via lowercased whole name
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(ext.as_str(),
+        "pdf"
+        | "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" | "tif"
+        | "svg"
+        | "csv" | "tsv"
+        | "docx" | "pptx" | "odt" | "odp"
+        | "xlsx" | "ods"
+        | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go"
+        | "sh" | "bash" | "zsh" | "json" | "toml" | "ini" | "conf" | "cfg"
+        | "env" | "yaml" | "yml" | "md" | "css" | "scss" | "less"
+        | "html" | "htm" | "xml" | "vue" | "c" | "h" | "cpp" | "cc" | "cxx"
+        | "hh" | "hpp" | "java" | "rb" | "kt" | "kts" | "sql" | "php" | "lua"
+        | "swift" | "dockerfile" | "makefile" | "rst" | "log" | "txt"
+    )
+}
+
 impl Provider for FileProvider {
     fn id(&self) -> &str {
         "files"
@@ -209,13 +230,21 @@ impl Provider for FileProvider {
                 } else {
                     super::SCORE_FILE
                 };
+                let mut penalty = 0.0;
+                // folders always render a listing → no preview penalty for dirs
+                if !entry.is_dir && !is_previewable_ext(&entry.name) {
+                    penalty += super::PENALTY_NO_PREVIEW;
+                }
+                if has_hidden_component(&entry.path) {
+                    penalty += super::PENALTY_HIDDEN;
+                }
                 let escaped = entry.path.replace('"', "\\\"");
                 Some((score, SearchResult {
                     id: format!("file:{}", entry.path),
                     title: entry.name.clone(),
                     subtitle: Some(entry.parent.clone()),
                     kind: if entry.is_dir { "folder" } else { "file" }.to_string(),
-                    score: base + super::fuzzy_bonus(score),
+                    score: base + super::fuzzy_bonus(score) - penalty,
                     exec: Some(format!("xdg-open \"{}\"", escaped)),
                     file_size: entry.file_size,
                     created: entry.created,
