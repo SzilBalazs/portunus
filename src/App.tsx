@@ -52,9 +52,6 @@ export default function App() {
   // The `search` response races the first `search-stream` done events, so its
   // pendingExts snapshot filters against this to avoid a stuck spinner.
   const doneExtsRef = useRef<Set<string>>(new Set());
-  // Last query_id that streamed rows per extension - a batch from a newer
-  // dispatch replaces that extension's rows instead of merging into them.
-  const streamQidRef = useRef<Map<string, number>>(new Map());
   // True between scheduling a search and its results arriving, so the results
   // list can distinguish "still loading" from a genuine zero-result query.
   const [searching, setSearching] = useState(false);
@@ -356,14 +353,15 @@ export default function App() {
   useTauriListener<StreamPayload>("search-stream", p => {
     if (p.query_id !== queryIdRef.current) return;
     if (p.results.length > 0) {
-      // First batch of a new dispatch replaces the extension's previous rows
-      // (requery keeps old rows on screen until then); later batches of the
-      // same dispatch merge by id.
-      const fresh = streamQidRef.current.get(p.ext) !== p.query_id;
-      streamQidRef.current.set(p.ext, p.query_id);
+      // Merge batches by id. The keystroke path clears `streamed` before
+      // dispatch (see the search effect), so merging into an empty map is
+      // identical to replacing. A requery (same query text, new query_id)
+      // does NOT clear streamed, so merging keeps the extension's rows
+      // visible and updates them in place instead of blanking the list -
+      // which would collapse the row count and jump the selection.
       setStreamed(prev => {
         const next = new Map(prev);
-        const byId = new Map(fresh ? [] : (next.get(p.ext) ?? []).map(r => [r.id, r] as const));
+        const byId = new Map((next.get(p.ext) ?? []).map(r => [r.id, r] as const));
         for (const r of p.results) byId.set(r.id, r);
         next.set(p.ext, [...byId.values()]);
         return next;
@@ -466,11 +464,20 @@ export default function App() {
   useEffect(() => {
     setSelectedIndex(i => {
       const id = selectedIdRef.current;
-      let next = i >= displayResults.length ? 0 : i;
       if (userMovedRef.current && id) {
         const idx = displayResults.findIndex(r => r.id === id);
-        if (idx >= 0) next = idx;
+        if (idx >= 0) {
+          selectedIdRef.current = displayResults[idx].id;
+          return idx;
+        }
+        // Pinned row is temporarily absent - e.g. a requery replaced an
+        // extension's rows before re-delivering them. Do NOT overwrite the
+        // pin here: keep it so the highlight re-selects the row when it
+        // returns instead of getting stranded at the clamped index (which
+        // would look like the selection jumping to the top).
+        return i >= displayResults.length ? Math.max(0, displayResults.length - 1) : i;
       }
+      const next = i >= displayResults.length ? 0 : i;
       selectedIdRef.current = displayResults[next]?.id ?? null;
       return next;
     });
@@ -504,7 +511,6 @@ export default function App() {
   // A real extension reload may have removed extensions entirely - drop their
   // streamed rows (plain search-invalidated keeps them; see requery).
   useTauriListener("extensions-reloaded", () => {
-    streamQidRef.current = new Map();
     setStreamed(new Map());
   });
 
