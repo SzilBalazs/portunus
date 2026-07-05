@@ -716,13 +716,7 @@ pub fn validate_preview_content(content: &PreviewContent) -> Result<(), String> 
 }
 
 fn clamp_field(mut s: String) -> String {
-    if s.len() > MAX_FIELD_BYTES {
-        let mut cut = MAX_FIELD_BYTES;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        s.truncate(cut);
-    }
+    crate::util::truncate_char_boundary(&mut s, MAX_FIELD_BYTES);
     s
 }
 

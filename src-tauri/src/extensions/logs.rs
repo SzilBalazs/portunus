@@ -56,13 +56,7 @@ impl ExtensionLogs {
 
     pub fn push(&self, extension: &str, level: LogLevel, message: &str) {
         let mut message = message.to_string();
-        if message.len() > MAX_MESSAGE_BYTES {
-            let mut cut = MAX_MESSAGE_BYTES;
-            while !message.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            message.truncate(cut);
-        }
+        crate::util::truncate_char_boundary(&mut message, MAX_MESSAGE_BYTES);
         let entry = LogEntry {
             ts_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

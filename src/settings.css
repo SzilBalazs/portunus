@@ -1368,6 +1368,7 @@ a:focus-visible,
 .settings-badge--dev { background: var(--kbd-bg); color: var(--fg-mute); border: 1px dashed var(--border-raised); }
 .settings-badge--update { background: #d2992222; color: #d29922; }
 .settings-badge--error { background: #e5534b22; color: #e5534b; }
+.settings-badge--success { background: #3fb95022; color: #3fb950; }
 
 /* ---------- modal ---------- */
 

@@ -24,7 +24,7 @@ import "./providers";
 import "./App.css";
 import "./themes.css";
 
-const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'content-hint', 'content-disabled', 'search-error']);
+const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'content-hint', 'content-disabled', 'search-error', 'ext-error']);
 
 // Greyed-out completion shown after a partial command word (e.g. "def" -> "ine").
 // Tab accepts it. Returns the suffix to append, or null when nothing completes.
@@ -44,6 +44,10 @@ export default function App() {
   // stale events from a cancelled query can never render.
   const [streamed, setStreamed] = useState<Map<string, SearchResult[]>>(new Map());
   const [pendingExts, setPendingExts] = useState<Set<string>>(new Set());
+  // Extensions whose async `query` tier failed this dispatch, keyed by name →
+  // error message. Surfaced as error rows so a broken extension reads as
+  // "failed - check logs" instead of silently contributing nothing.
+  const [extErrors, setExtErrors] = useState<Map<string, string>>(new Map());
   // Monotonic per-dispatch id correlating a `search` invoke with its
   // `search-stream` events. Seeded with wall-clock so a webview reload can't
   // reuse ids the backend has already seen (its reorder guard is a fetch_max).
@@ -228,6 +232,7 @@ export default function App() {
     setResults([]);
     setStreamed(new Map());
     setPendingExts(new Set());
+    setExtErrors(new Map());
     inputRef.current?.focus();
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); setColoredIcons(cfg.files.colored_icons); configRef.current = cfg; });
   });
@@ -279,6 +284,7 @@ export default function App() {
       if (streamedRef.current || pendingRef.current) {
         setStreamed(new Map());
         setPendingExts(new Set());
+        setExtErrors(new Map());
         invoke("cancel_search").catch(() => {});
       }
       return;
@@ -322,6 +328,7 @@ export default function App() {
       // before the search response resolves, so a fast extension's first
       // batch (or done signal) can legitimately arrive ahead of it.
       setStreamed(new Map());
+      setExtErrors(new Map());
       doneExtsRef.current = new Set();
       invoke<SearchResponse>("search", { query, queryId }).then(resp => {
         if (cancelled || resp.query_id !== queryIdRef.current) return;
@@ -368,6 +375,21 @@ export default function App() {
       });
     }
     if (p.done) {
+      // Track (or clear) the failure so a re-run that now succeeds drops the
+      // stale error row.
+      setExtErrors(prev => {
+        const has = prev.has(p.ext);
+        if (p.error) {
+          if (prev.get(p.ext) === p.error) return prev;
+          const next = new Map(prev);
+          next.set(p.ext, p.error);
+          return next;
+        }
+        if (!has) return prev;
+        const next = new Map(prev);
+        next.delete(p.ext);
+        return next;
+      });
       if (p.error) console.warn(`[extension] ${p.ext} query failed: ${p.error}`);
       // Record completion even if the search response (which populates
       // pendingExts) hasn't resolved yet - it filters against this set.
@@ -408,6 +430,22 @@ export default function App() {
     return [...byId.values()].sort((a, b) => b.score - a.score);
   }, [results, streamed]);
 
+  // Synthetic rows for extensions whose async query failed. Sorted by name so
+  // their order is stable as failures land, and appended after real results.
+  const extErrorRows = useMemo<SearchResult[]>(
+    () =>
+      [...extErrors.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, message]) => ({
+          id: `ext-error:${name}`,
+          title: `${name} failed`,
+          subtitle: message || "Extension error - check its logs in Settings",
+          kind: "ext-error",
+          score: 0,
+        })),
+    [extErrors],
+  );
+
   const displayResults = useMemo<SearchResult[]>(() => {
     if (!query.trim()) return [];
     if (searchError) {
@@ -434,6 +472,10 @@ export default function App() {
       return results;
     }
     if (merged.length === 0) {
+      // A failing extension with no other results: show the error rows rather
+      // than the "search file contents" hint, which would misread the failure
+      // as "nothing matched".
+      if (extErrorRows.length > 0) return extErrorRows;
       // Suggest content search only once a search has actually resolved empty
       // (not on the first-keystroke debounce gap). Kept mounted across
       // re-searches so it doesn't unmount/remount and re-animate per keystroke.
@@ -446,8 +488,9 @@ export default function App() {
         score: 0,
       }];
     }
-    return merged;
-  }, [query, results, merged, contentEnabled, resolvedEmpty, contentMode, searchError]);
+    // Real results first, failed-extension rows pinned to the bottom.
+    return extErrorRows.length > 0 ? [...merged, ...extErrorRows] : merged;
+  }, [query, results, merged, extErrorRows, contentEnabled, resolvedEmpty, contentMode, searchError]);
 
   // Cursor stability under streaming. `selectedIdRef` is the identity of the
   // highlighted result; it's written at every mutation site (nav handlers,
@@ -512,6 +555,7 @@ export default function App() {
   // streamed rows (plain search-invalidated keeps them; see requery).
   useTauriListener("extensions-reloaded", () => {
     setStreamed(new Map());
+    setExtErrors(new Map());
   });
 
   useTauriListener("search-invalidated", () => {
@@ -532,6 +576,10 @@ export default function App() {
   const launch = (result?: SearchResult) => {
     if (!result) return;
     if (result.kind === "search-error") return;
+    if (result.kind === "ext-error") {
+      invoke("open_settings_window", { section: "extensions" }).catch(e => console.error("[settings] open failed:", e));
+      return;
+    }
     if (result.kind === "content-disabled") {
       invoke("open_settings_window", { section: "content" }).catch(e => console.error("[settings] open failed:", e));
       return;

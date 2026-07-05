@@ -14,6 +14,11 @@ pub const SUPPORTED_API: u32 = portunus_ext_sdk::API_VERSION;
 /// Hard cap on `extension.wasm` size - anything bigger is rejected at load.
 const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
+/// Upper bound on `[trigger].min_query_len`. A larger value almost certainly
+/// means the author never meant to gate that aggressively, so it is rejected at
+/// parse time rather than silently clamped.
+pub const MAX_MIN_QUERY_LEN: usize = 32;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExtensionManifest {
     /// Required wire API major; host refuses unknown values.
@@ -66,7 +71,7 @@ pub struct TriggerConfig {
 
 impl TriggerConfig {
     pub fn min_len(&self) -> usize {
-        self.min_query_len.min(32)
+        self.min_query_len.min(MAX_MIN_QUERY_LEN)
     }
 }
 
@@ -253,6 +258,12 @@ fn load_impl(dir: &Path, check_dir_name: bool) -> Result<(ExtensionManifest, Pat
             return Err(
                 "[trigger] must declare prefixes (or set always = true)".to_string(),
             );
+        }
+        if trigger.min_query_len > MAX_MIN_QUERY_LEN {
+            return Err(format!(
+                "[trigger] min_query_len = {} exceeds the max of {MAX_MIN_QUERY_LEN}",
+                trigger.min_query_len
+            ));
         }
         for p in &trigger.prefixes {
             if p.is_empty()

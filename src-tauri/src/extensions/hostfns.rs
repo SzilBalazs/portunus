@@ -165,13 +165,7 @@ host_fn!(log_message(ctx: ExtensionCtx; message: String) {
     let ctx = ctx.get()?;
     let ctx = ctx.lock().unwrap_or_else(|e| e.into_inner());
     let mut msg = message;
-    if msg.len() > 4096 {
-        let mut cut = 4096;
-        while !msg.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        msg.truncate(cut);
-    }
+    crate::util::truncate_char_boundary(&mut msg, 4096);
     super::logs::log(&ctx.name, super::logs::LogLevel::Info, &msg);
     Ok(())
 });

@@ -32,6 +32,20 @@ pub fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     l.write().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Truncates `s` in place to at most `max` bytes, backing up to the nearest
+/// UTF-8 char boundary so the result stays valid. No-op when already within the
+/// cap. Shared by the log ring buffer, host log fn, toast effect, and the wasm
+/// result-field clamp - all of which cap untrusted extension strings.
+pub fn truncate_char_boundary(s: &mut String, max: usize) {
+    if s.len() > max {
+        let mut cut = max;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        s.truncate(cut);
+    }
+}
+
 /// Returns true if `bin` is found as an executable file on any PATH entry.
 /// Used both to gate providers at startup and to report dependency status
 /// to the Settings UI via `check_dependencies`.

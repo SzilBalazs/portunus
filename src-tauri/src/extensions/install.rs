@@ -208,28 +208,14 @@ fn infer_origin(name: &str) -> Origin {
 pub fn consent_extension_permissions(name: String) -> Result<(), String> {
     let dir = extensions_dir().join(&name);
     let (m, _) = manifest::load(&dir)?;
-    let mut consents = load_consents();
-    let origin = consents
+    // Re-snapshot preserving the recorded origin/sha (secret_keys are carried
+    // forward by record_consent itself); fall back to inferred origin when the
+    // record is missing.
+    let (origin, sha) = load_consents()
         .get(&name)
-        .map(|r| r.origin.clone())
-        .unwrap_or_else(|| infer_origin(&name));
-    let sha = consents.get(&name).map(|r| r.sha256.clone()).unwrap_or_default();
-    let secret_keys = consents
-        .get(&name)
-        .map(|r| r.secret_keys.clone())
-        .unwrap_or_default();
-    consents.insert(
-        name.clone(),
-        ConsentRecord {
-            version: m.version.clone(),
-            sha256: sha,
-            origin,
-            permissions: ConsentPermissions::from_manifest(&m),
-            consented_at: now_unix(),
-            secret_keys,
-        },
-    );
-    save_consents(&consents)
+        .map(|r| (r.origin.clone(), r.sha256.clone()))
+        .unwrap_or_else(|| (infer_origin(&name), String::new()));
+    record_consent(&name, &m, sha, origin)
 }
 
 // ── packaging ─────────────────────────────────────────────────────────────────

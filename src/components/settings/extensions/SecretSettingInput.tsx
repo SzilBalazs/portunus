@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Badge from "../Badge";
 
@@ -25,6 +25,16 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Transient "Saved"/"Cleared" confirmation. A write-only field otherwise gives
+  // no signal that the keyring actually took the value.
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  const showFlash = (msg: string) => {
+    setFlash(msg);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2000);
+  };
 
   if (!available) {
     return (
@@ -42,7 +52,7 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
     setBusy(true);
     setError(null);
     invoke("extension_secret_set", { name: extension, key: settingKey, value: draft })
-      .then(() => { setDraft(""); setRevealed(false); onChanged(); })
+      .then(() => { setDraft(""); setRevealed(false); showFlash("Saved"); onChanged(); })
       .catch(e => setError(String(e)))
       .finally(() => setBusy(false));
   };
@@ -51,7 +61,7 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
     setBusy(true);
     setError(null);
     invoke("extension_secret_clear", { name: extension, key: settingKey })
-      .then(() => onChanged())
+      .then(() => { showFlash("Cleared"); onChanged(); })
       .catch(e => setError(String(e)))
       .finally(() => setBusy(false));
   };
@@ -59,7 +69,8 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
   return (
     <div className="settings-ext-secret">
       <div className="settings-ext-secret-row">
-        {isSet && !draft && <Badge tone="neutral">stored</Badge>}
+        {flash && <Badge tone="success">{flash}</Badge>}
+        {!flash && isSet && !draft && <Badge tone="neutral">stored</Badge>}
         <input
           className="settings-text-input mono"
           type={revealed ? "text" : "password"}

@@ -95,6 +95,7 @@ function hints(
   if (k === "dict-hint") return <><span className="hint"><kbd>|</kbd> start typing</span><Esc /></>;
   if (k === "dict") return <><Nav /><span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy definition</span><Esc /></>;
 
+  if (k === "ext-error") return <><span className="hint"><kbd><EnterIcon /></kbd> open logs</span><Esc /></>;
   if (k === "content-disabled") return <><span className="hint"><kbd><EnterIcon /></kbd> open settings</span><Esc /></>;
   if (k === "content-hint") return <><span className="hint"><kbd>Tab</kbd> search contents</span><Esc /></>;
 

@@ -6,7 +6,7 @@ activation (Enter) and an optional preview panel, all through a small, versioned
 JSON wire contract. Extensions never ship UI; the host renders everything.
 
 - **Runtime:** [Extism](https://extism.org/) (wasmtime). No WASI.
-- **Wire API version:** `2` (see `extension-sdk/`, the single source of truth).
+- **Wire API version:** `3` (see `extension-sdk/`, the single source of truth).
 - **Distribution:** a `.portext` archive installed from Settings → Extensions
   (URL or file), or a directory in `~/.local/share/portunus/extensions/`.
 

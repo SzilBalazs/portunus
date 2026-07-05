@@ -649,7 +649,7 @@ fn run_activate_effects(app: &tauri::AppHandle, id: &str, effects: Vec<ActivateE
             }
             ActivateEffect::ShowToast { message } => {
                 let mut msg = message;
-                msg.truncate_char_boundary(512);
+                crate::util::truncate_char_boundary(&mut msg, 512);
                 // The launcher window is already hidden at this point, so an
                 // in-window toast would be invisible - use a desktop
                 // notification. Also emitted as an event for visible windows.
@@ -664,21 +664,6 @@ fn run_activate_effects(app: &tauri::AppHandle, id: &str, effects: Vec<ActivateE
                     .stderr(std::process::Stdio::null())
                     .spawn();
             }
-        }
-    }
-}
-
-trait TruncateCharBoundary {
-    fn truncate_char_boundary(&mut self, max: usize);
-}
-impl TruncateCharBoundary for String {
-    fn truncate_char_boundary(&mut self, max: usize) {
-        if self.len() > max {
-            let mut cut = max;
-            while !self.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            self.truncate(cut);
         }
     }
 }
