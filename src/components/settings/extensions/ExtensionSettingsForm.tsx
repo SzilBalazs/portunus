@@ -96,7 +96,7 @@ export default function ExtensionSettingsForm({ extension, schema, values, secre
         <div className="settings-dep-inline-warn">{formError}</div>
       )}
       {schema.map(spec => (
-        <SettingsField key={spec.key} name={spec.label} desc={spec.description || undefined}>
+        <SettingsField key={spec.key} name={spec.label} desc={spec.description || undefined} stacked={spec.type === "secret" || spec.type === "string"}>
           {spec.type === "bool" && (
             <Toggle label={spec.label} checked={Boolean(local[spec.key])} onChange={v => set(spec.key, v)} />
           )}

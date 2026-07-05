@@ -314,6 +314,18 @@ a:focus-visible,
   align-items: center;
 }
 
+/* Stacked: label on top, control full-width below. For wide inputs that would
+   overflow the two-column row (secret/text fields), especially when narrow. */
+.settings-field--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.settings-field--stacked .settings-field-control {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 /* ---------- toggle switch ---------- */
 
 .toggle-wrap {
@@ -1269,7 +1281,6 @@ a:focus-visible,
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 6px;
 }
 
 .settings-ext-perms code {
@@ -1427,7 +1438,7 @@ a:focus-visible,
 }
 
 .settings-ext-chevron { color: var(--fg-mute); transition: transform 0.12s; flex-shrink: 0; }
-.settings-ext-card.expanded .settings-ext-chevron { transform: rotate(90deg); }
+.settings-ext-card.expanded > .settings-ext-card-header .settings-ext-chevron { transform: rotate(90deg); }
 
 .settings-ext-card-name { font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); }
 .settings-ext-card-spacer { flex: 1; }
@@ -1435,11 +1446,56 @@ a:focus-visible,
 .settings-ext-card-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 2px 12px 12px 30px;
+  gap: 12px;
+  padding: 4px 12px 12px 30px;
 }
 
-.settings-ext-origin { font-size: 10px; color: var(--fg-dim); }
+/* Compact identity block: triggers, permissions, origin. */
+.settings-ext-meta { display: flex; flex-direction: column; gap: 6px; }
+
+.settings-ext-triggers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.settings-ext-triggers code {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.settings-ext-triggers-hint { font-size: 10px; color: var(--fg-dim); }
+
+/* Labeled zone with a hairline spine (Settings, Logs). */
+.settings-ext-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings-ext-eyebrow {
+  font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-mute);
+}
+
+.settings-ext-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  margin: -2px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-ext-disclosure:hover .settings-ext-eyebrow,
+.settings-ext-disclosure:hover .settings-ext-chevron { color: var(--fg); }
+.settings-ext-disclosure[aria-expanded="true"] .settings-ext-chevron { transform: rotate(90deg); }
+
+.settings-ext-origin { font-size: 10px; color: var(--fg-dim); overflow-wrap: anywhere; }
 .settings-ext-origin code, .settings-ext-origin-url { font-size: 10px; word-break: break-all; }
 .settings-ext-origin a { color: var(--fg-mute); }
 
@@ -1447,6 +1503,8 @@ a:focus-visible,
 
 .settings-ext-form { display: flex; flex-direction: column; }
 .settings-ext-form .settings-field { padding: 8px 0; }
+.settings-ext-form .settings-field:first-child { padding-top: 0; }
+.settings-ext-form .settings-field:last-child { padding-bottom: 0; }
 
 .settings-ext-perm-new { outline: 1px solid var(--accent); color: var(--accent) !important; }
 
@@ -1454,8 +1512,9 @@ a:focus-visible,
 
 /* Secret setting input (masked, keyring-backed). */
 .settings-ext-secret { display: flex; flex-direction: column; gap: 4px; }
-.settings-ext-secret-row { display: flex; align-items: center; gap: 6px; }
+.settings-ext-secret-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .settings-ext-secret-row .settings-text-input { flex: 1; min-width: 0; }
+.settings-ext-secret-row .settings-badge { flex-shrink: 0; }
 .settings-ext-secret-hint {
   font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--fg-mute);
@@ -1473,14 +1532,7 @@ a:focus-visible,
 
 .settings-ext-logs { display: flex; flex-direction: column; gap: 6px; }
 
-.settings-ext-logs-bar { display: flex; align-items: center; gap: 6px; }
-.settings-ext-logs-bar .settings-ext-logs-title { margin-right: auto; }
-.settings-ext-logs-title {
-  font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-mute);
-}
+.settings-ext-logs-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 
 .settings-ext-logs-list {
   max-height: 160px;

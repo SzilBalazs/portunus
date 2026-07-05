@@ -9,6 +9,9 @@ interface Props {
   warn?: ReactNode;
   /** Optional stable id (anchoring / tests). */
   id?: string;
+  /** Stack the control full-width below the label instead of beside it.
+   *  For wide controls (text/secret inputs) that overflow the two-column row. */
+  stacked?: boolean;
   /** The control on the right (Toggle, Slider, Select, NumberStepper, …). */
   children: ReactNode;
 }
@@ -19,9 +22,9 @@ interface Props {
  * `settings-field / -label / -name / -desc / -control` block every section used
  * to copy. Compose it with any control primitive.
  */
-export default function SettingsField({ name, desc, warn, id, children }: Props) {
+export default function SettingsField({ name, desc, warn, id, stacked, children }: Props) {
   return (
-    <div className="settings-field" id={id}>
+    <div className={`settings-field${stacked ? " settings-field--stacked" : ""}`} id={id}>
       <div className="settings-field-label">
         <div className="settings-field-name">{name}</div>
         {desc && <div className="settings-field-desc">{desc}</div>}

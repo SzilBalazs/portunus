@@ -35,6 +35,7 @@ interface Props {
  */
 export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, pendingUpdate, onUpdateConsumed, onSetEnabled, onChanged }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
   const [updateState, setUpdateState] = useState<"idle" | "checking" | "current">("idle");
   const [updatePreview, setUpdatePreview] = useState<InstallPreview | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -110,14 +111,23 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
 
       {expanded && (
         <div className="settings-ext-card-body">
-          {info.description && <div className="settings-field-desc">{info.description}</div>}
-          {info.triggers.length > 0 && (
-            <div className="settings-field-desc">
-              Trigger: {info.triggers.map(t => <code key={t}>{t}&nbsp;</code>)}
-              — type it in the launcher to search this extension.
+          <div className="settings-ext-meta">
+            {info.triggers.length > 0 && (
+              <div className="settings-ext-triggers">
+                {info.triggers.map(t => <code key={t}>{t}</code>)}
+                <span className="settings-ext-triggers-hint">type to search</span>
+              </div>
+            )}
+            <PermissionChips permissions={info.permissions} backgroundIntervalSecs={info.background_interval_secs} />
+            <div className="settings-ext-origin">
+              {info.dev
+                ? <>Linked working directory (<code>portunus ext dev</code>)</>
+                : info.origin === "url"
+                  ? <>Installed from <code className="settings-ext-origin-url">{info.origin_url}</code></>
+                  : <>Installed locally</>}
+              {info.homepage && <> · <a href={info.homepage} target="_blank" rel="noreferrer">{info.homepage}</a></>}
             </div>
-          )}
-          <PermissionChips permissions={info.permissions} backgroundIntervalSecs={info.background_interval_secs} />
+          </div>
 
           {info.error && (
             <div className="settings-dep-inline-warn"><WarnIcon />{info.error}</div>
@@ -131,18 +141,22 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
             </div>
           )}
 
-          <div className="settings-ext-origin">
-            {info.dev
-              ? <>Linked working directory (<code>portunus ext dev</code>)</>
-              : info.origin === "url"
-                ? <>Installed from <code className="settings-ext-origin-url">{info.origin_url}</code></>
-                : <>Installed locally</>}
-            {info.homepage && <> · <a href={info.homepage} target="_blank" rel="noreferrer">{info.homepage}</a></>}
+          {info.settings_schema.length > 0 && (
+            <div className="settings-ext-section">
+              <div className="settings-ext-eyebrow">Settings</div>
+              <ExtensionSettingsForm extension={info.name} schema={info.settings_schema} values={info.settings_values} secretsSet={info.secrets_set} secretsAvailable={secretsAvailable} onChanged={onChanged} />
+            </div>
+          )}
+
+          <div className="settings-ext-section">
+            <button className="settings-ext-disclosure" onClick={() => setLogsOpen(o => !o)} aria-expanded={logsOpen}>
+              <svg className="settings-ext-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3.5 2l3 3-3 3" />
+              </svg>
+              <span className="settings-ext-eyebrow">Logs</span>
+            </button>
+            {logsOpen && <ExtensionLogs extension={info.name} />}
           </div>
-
-          <ExtensionSettingsForm extension={info.name} schema={info.settings_schema} values={info.settings_values} secretsSet={info.secrets_set} secretsAvailable={secretsAvailable} onChanged={onChanged} />
-
-          <ExtensionLogs extension={info.name} />
 
           <div className="settings-ext-card-actions">
             {info.origin === "url" && !info.dev && (

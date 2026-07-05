@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Badge from "../Badge";
 
 interface Props {
   extension: string;
@@ -58,25 +59,27 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
   return (
     <div className="settings-ext-secret">
       <div className="settings-ext-secret-row">
+        {isSet && !draft && <Badge tone="neutral">stored</Badge>}
         <input
           className="settings-text-input mono"
           type={revealed ? "text" : "password"}
           value={draft}
           autoComplete="off"
           spellCheck={false}
-          placeholder={isSet ? "••••••••  (stored — enter to replace)" : (placeholder || "not set")}
+          placeholder={isSet ? "New value to replace" : (placeholder || "Not set")}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") save(); }}
         />
-        <button
-          className="settings-btn-secondary"
-          type="button"
-          onClick={() => setRevealed(r => !r)}
-          disabled={!draft}
-          title={revealed ? "Hide" : "Reveal what you're typing"}
-        >
-          {revealed ? "Hide" : "Show"}
-        </button>
+        {draft && (
+          <button
+            className="settings-btn-secondary"
+            type="button"
+            onClick={() => setRevealed(r => !r)}
+            title={revealed ? "Hide" : "Reveal what you're typing"}
+          >
+            {revealed ? "Hide" : "Show"}
+          </button>
+        )}
         <button className="settings-btn-secondary" type="button" onClick={save} disabled={!draft || busy}>
           {isSet ? "Replace" : "Set"}
         </button>
@@ -87,7 +90,7 @@ export default function SecretSettingInput({ extension, settingKey, placeholder,
         )}
       </div>
       {error && <div className="settings-ext-secret-hint settings-ext-secret-warn">{error}</div>}
-      <div className="settings-ext-secret-hint">Stored in your system keyring, not in config files.</div>
+      <div className="settings-ext-secret-hint">Stored in your system keyring.</div>
     </div>
   );
 }

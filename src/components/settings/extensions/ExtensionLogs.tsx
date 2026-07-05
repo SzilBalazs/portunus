@@ -64,7 +64,6 @@ export default function ExtensionLogs({ extension }: Props) {
   return (
     <div className="settings-ext-logs">
       <div className="settings-ext-logs-bar">
-        <span className="settings-ext-logs-title">Logs</span>
         <button className="settings-btn-secondary" onClick={clear}>Clear</button>
         <button className="settings-btn-secondary" onClick={refresh}>Refresh</button>
       </div>
