@@ -12,7 +12,7 @@ use portunus_ext_sdk::guest::{self, kv_read, kv_write, plugin_fn, FnResult, Json
 use portunus_ext_sdk::{
     Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, MetadataItem,
     PreviewContent, PreviewInput, QueryInput, QueryOutput, RefreshInput, RefreshOutput,
-    SearchInput, SearchOutput,
+    ResultIcon, SearchInput, SearchOutput,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,16 @@ const API: &str = "https://api.github.com";
 const CACHE_KEY: &str = "repos";
 const CACHE_CAP: usize = 200;
 const README_CAP: usize = 64 * 1024;
+
+// Octicon glyphs (base64 PNG) shown next to each result row. Colored to match
+// GitHub's semantics: repo blue, pull-request purple, issue green.
+const ICON_REPO_B64: &str = include_str!("../icon_repo.b64");
+const ICON_PR_B64: &str = include_str!("../icon_pr.b64");
+const ICON_ISSUE_B64: &str = include_str!("../icon_issue.b64");
+
+fn png_icon(b64: &str) -> ResultIcon {
+    ResultIcon { mime: "image/png".into(), data_base64: b64.trim().to_string() }
+}
 
 // ---------------------------------------------------------------------------
 // GitHub API plumbing
@@ -301,6 +311,7 @@ fn repo_result(r: &CachedRepo, relevance: f32, badge: &str) -> ExtensionResult {
         subtitle: Some(repo_subtitle(r.stars, r.language.as_deref(), r.description.as_deref())),
         relevance,
         actions: repo_actions(),
+        icon: Some(png_icon(ICON_REPO_B64)),
         badge: Some(if r.private { "private".into() } else { badge.into() }),
         ..Default::default()
     }
@@ -314,7 +325,8 @@ fn repo_from_api_url(url: &str) -> Option<&str> {
 
 fn issue_result(i: &IssueItem, relevance: f32) -> Option<ExtensionResult> {
     let repo = repo_from_api_url(&i.repository_url)?;
-    let kind = if i.pull_request.is_some() { "PR" } else { "issue" };
+    let is_pr = i.pull_request.is_some();
+    let kind = if is_pr { "PR" } else { "issue" };
     Some(ExtensionResult {
         id: format!("issue:{repo}#{}", i.number),
         title: i.title.clone(),
@@ -326,6 +338,7 @@ fn issue_result(i: &IssueItem, relevance: f32) -> Option<ExtensionResult> {
         )),
         relevance,
         actions: issue_actions(),
+        icon: Some(png_icon(if is_pr { ICON_PR_B64 } else { ICON_ISSUE_B64 })),
         badge: Some("live".into()),
         ..Default::default()
     })
