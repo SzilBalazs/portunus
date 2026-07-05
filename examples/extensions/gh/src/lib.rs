@@ -471,38 +471,62 @@ pub fn query(input: Json<QueryInput>) -> FnResult<Json<QueryOutput>> {
     }
 
     // Endpoint 2: issues & PRs. Independent of endpoint 1's outcome.
+    // GitHub's advanced issue search (now the default for authenticated
+    // requests) rejects a query unless it names a type, so issues and PRs are
+    // fetched as two separate `is:` searches and merged.
     let issues_on = guest::setting_bool("search_issues").ok().flatten().unwrap_or(true);
     if issues_on {
-        let iq = urlencode(&format!("{term} in:title"));
-        match api_get(&format!("/search/issues?q={iq}&per_page={max}"), "application/vnd.github+json") {
-            Ok((200, body)) => {
-                if let Ok(resp) = serde_json::from_str::<SearchResp<IssueItem>>(&body) {
-                    let n = resp.items.len();
-                    let results: Vec<ExtensionResult> = resp
-                        .items
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, item)| {
-                            issue_result(item, 60.0 - (i as f32 / n.max(1) as f32) * 30.0)
-                        })
-                        .collect();
-                    let _ = guest::emit(results);
-                }
-            }
-            Ok((status, _)) if is_rate_limited(status) => {
-                let _ = guest::debug(&format!("issue search rate limited ({status})"));
-                let _ = guest::emit(vec![rate_limit_result()]);
-            }
-            Ok((status, _)) => {
-                let _ = guest::debug(&format!("issue search failed ({status})"));
-            }
-            Err(e) => {
-                let _ = guest::debug(&format!("issue search error: {e}"));
-            }
+        let mut items: Vec<IssueItem> = Vec::new();
+        let mut rate_limited = false;
+        for kind in ["is:issue", "is:pull-request"] {
+            let (mut batch, limited) = fetch_issues(&term, kind, max);
+            items.append(&mut batch);
+            rate_limited |= limited;
+        }
+        if items.is_empty() && rate_limited {
+            let _ = guest::emit(vec![rate_limit_result()]);
+        } else {
+            items.truncate(max as usize);
+            let n = items.len();
+            let results: Vec<ExtensionResult> = items
+                .iter()
+                .enumerate()
+                .filter_map(|(i, item)| {
+                    issue_result(item, 60.0 - (i as f32 / n.max(1) as f32) * 30.0)
+                })
+                .collect();
+            let _ = guest::emit(results);
         }
     }
 
     Ok(Json(QueryOutput::default()))
+}
+
+/// Fetch one title-scoped issue-or-PR batch. `kind` is the required advanced-
+/// search type qualifier (`is:issue` / `is:pull-request`). Returns the parsed
+/// items plus a flag set when the call was rate limited.
+fn fetch_issues(term: &str, kind: &str, max: u32) -> (Vec<IssueItem>, bool) {
+    let iq = urlencode(&format!("{term} in:title {kind}"));
+    match api_get(&format!("/search/issues?q={iq}&per_page={max}"), "application/vnd.github+json") {
+        Ok((200, body)) => (
+            serde_json::from_str::<SearchResp<IssueItem>>(&body)
+                .map(|r| r.items)
+                .unwrap_or_default(),
+            false,
+        ),
+        Ok((status, _)) if is_rate_limited(status) => {
+            let _ = guest::debug(&format!("issue search rate limited ({status})"));
+            (Vec::new(), true)
+        }
+        Ok((status, body)) => {
+            let _ = guest::debug(&format!("issue search failed ({status}): {body}"));
+            (Vec::new(), false)
+        }
+        Err(e) => {
+            let _ = guest::debug(&format!("issue search error: {e}"));
+            (Vec::new(), false)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
