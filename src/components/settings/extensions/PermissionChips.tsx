@@ -28,6 +28,7 @@ export default function PermissionChips({ permissions, backgroundIntervalSecs, d
   if (permissions.kv) chips.push({ text: "storage", grew: old ? !old.kv : false });
   if (permissions.clipboard) chips.push({ text: "clipboard", grew: old ? !old.clipboard : false });
   if (permissions.open_url) chips.push({ text: "open urls", grew: old ? !old.open_url : false });
+  if (permissions.paste) chips.push({ text: "paste keystrokes", grew: old ? !old.paste : false });
   if (permissions.has_secrets) chips.push({ text: "secrets (keyring)", grew: old ? !old.has_secrets : false });
   if (chips.length === 0) chips.push({ text: "no permissions", grew: false });
   if (backgroundIntervalSecs != null) {

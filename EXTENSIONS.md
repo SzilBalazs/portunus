@@ -73,6 +73,7 @@ network = ["api.github.com"]   # exact hosts only; wildcards are rejected; omit 
 kv = true                      # per-extension key-value storage
 clipboard = true               # clipboard_write host fn (NOT needed for CopyText effects)
 open_url = true                # open_url host fn (NOT needed for OpenUrl effects)
+paste = true                   # Paste activate effect (synthetic Ctrl+V into other apps)
 
 [limits]
 search_timeout_ms = 100        # clamped to [10, 500]
@@ -246,18 +247,69 @@ browser" (see `examples/extensions/gh/manifest.toml`'s `notifications`
 command).
 
 **Effects** run host-side after your call returns, in order. Because they only
-ever run on an explicit keypress, they need **no permissions**:
+ever run on an explicit keypress, they need **no permissions** (except
+`paste`, which injects keystrokes into *another* application):
 
 | Effect | Fields | Notes |
 |---|---|---|
 | `copy_text` | `text` | system clipboard |
 | `open_url` | `url` | http(s) only, default browser |
-| `show_toast` | `message` | desktop notification + in-launcher toast; ≤ 512 bytes |
+| `show_toast` | `message`, `level?` | `level`: `info` (default) / `success` / `error`; in-launcher toast queue, desktop notification when the window is hidden (errors always notify); ≤ 512 bytes |
+| `show_form` | `title`, `fields`, `submit_action`, `submit_label?` | open a modal form — see below |
+| `hide` | — | hide the launcher after activation (the default; explicit form for clarity) |
+| `keep_open` | — | keep the launcher open (toggle-style actions) |
+| `refresh_results` | — | re-run the current query (after delete/toggle/mark-done actions) |
+| `paste` | `text` | copy + synthetic Ctrl+V into the previously focused window; **requires `paste = true` in `[permissions]`**. Clobbers the clipboard; falls back to a "Copied — press Ctrl+V" notification on compositors without the virtual-keyboard protocol (e.g. GNOME) |
+
+At most 16 effects run per activation; extras are dropped and logged. Window
+visibility resolves as `show_form` > `hide` > `keep_open` > default (hide).
 
 Most extensions can drop their `clipboard`/`open_url` permissions entirely and
 just return effects. The host functions remain for side effects *outside*
 activation (e.g. during `refresh`). Returning `{ "effects": [] }` (or `{}`) is
 fine when you did your work via host functions.
+
+#### Forms (`show_form`)
+
+`show_form` turns an action into a multi-input flow — create an issue, add a
+bookmark, rename something — without the extension shipping any UI:
+
+```jsonc
+// activate out:
+{ "effects": [ { "type": "show_form",
+  "title": "New issue in portunus",
+  "submit_action": "create_issue",   // comes back as `action` on submit
+  "submit_label": "Create",          // optional; defaults to "Submit"
+  "fields": [
+    { "key": "title", "label": "Title", "type": "text", "required": true },
+    { "key": "body",  "label": "Body",  "type": "textarea", "placeholder": "Describe…" },
+    { "key": "label", "label": "Label", "type": "select",
+      "options": [ { "value": "bug", "label": "Bug" }, { "value": "feat", "label": "Feature" } ] }
+  ] } ] }
+```
+
+The launcher renders the modal. **Submit** calls your `activate` again on the
+same result with `action = submit_action` and the collected values:
+
+```jsonc
+// activate in (second call):
+{ "command": "repos", "result": { ...same result... },
+  "action": "create_issue",
+  "form_values": { "title": "Crash on start", "body": "…", "label": "bug" } }
+```
+
+**Cancel (Esc) makes no call.** A submit handler may return another
+`show_form` for multi-step flows — each step is user-gated, so there is no
+loop risk. Field types: `text`, `textarea` (Ctrl+Enter submits), `password`,
+`select`, `checkbox` (bool value), `number` (number value). `required` fields
+block submit client-side. Caps: 32 fields, 64 select options, title ≤ 120
+chars, submitted string values ≤ 16 KB. A failed/timed-out submit shows an
+error toast and keeps the form open with the entered values. Form-opening
+activations don't count toward frecency; the submit does.
+
+In Rust, `ActivateOutput::form(...)`, `::copy(...)`, `::open(...)`,
+`::toast(...)` and `FormField::new(key, label, kind).required().placeholder(…)`
+build these without hand-writing JSON.
 
 ### `preview` (optional)
 
@@ -571,7 +623,10 @@ history and logs.
 `api` in the manifest is the wire-contract major. The host refuses to load
 extensions targeting a different major and shows why. Additive changes (new
 optional fields, new preview types, new effects) do not bump the major; field
-removals or semantic changes do. **v4 broke from v3:** removed `[trigger]` in
+removals or semantic changes do. The effects added within v4 (`show_form`,
+`show_toast.level`, `hide`/`keep_open`/`refresh_results`/`paste`) are
+additive: older extensions keep working unchanged, but an extension returning
+the new effects needs a Portunus build that knows them. **v4 broke from v3:** removed `[trigger]` in
 favor of one or more `[[commands]]` entries (each a searchable launcher entry
 found by fuzzy-matching its title and `keywords`), removed prefix/alias
 triggering entirely (commands are opened as scopes, not invoked by a typed
@@ -597,4 +652,5 @@ from v1: `actions` became structured objects, `activate` returns effects,
   search commands plus an `action` command), secret setting (PAT in the
   keyring), dual-endpoint streaming `query` (repos + issues) merged over a kv
   repo cache by id, streaming Metadata→Markdown previews, clone-command copy
-  effects, daily background cache warm.
+  effects, a `show_form` flow ("New Issue…" → form → POST → success toast +
+  open), daily background cache warm.

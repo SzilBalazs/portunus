@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { CommandDescriptor, Config, SearchResult } from '../types';
+import type { CommandDescriptor, Config, ExtensionResult, SearchResult } from '../types';
 
 export interface LaunchContext {
   setQuery: (q: string) => void;
@@ -7,6 +7,15 @@ export interface LaunchContext {
   requery: () => void;
   /** Invoke a command (enter its scope, seed its alias, or run its action). */
   runCommand: (command: CommandDescriptor) => void;
+  /** Route an extension activation through the shared response flow
+   *  (optimistic hide, forms, toast queue, refresh-results). */
+  activateExtension: (req: {
+    id: string;
+    ext: ExtensionResult;
+    action: string | null;
+    command: string | null;
+    formValues?: Record<string, unknown>;
+  }) => void;
   config: Config | null;
 }
 

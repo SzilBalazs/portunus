@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
-import { Config, SearchResult, SearchResponse, StreamPayload, ClipboardCapabilities, ExtAction, CommandDescriptor } from "./types";
+import { Config, SearchResult, SearchResponse, StreamPayload, ClipboardCapabilities, ExtAction, CommandDescriptor, ActivateResponse, ExtensionResult, FormDto, ToastLevel } from "./types";
 import { commandById } from "./commands/store";
 import ClipboardMode from "./components/clipboard/ClipboardMode";
 import { applyTheme, injectMatugenTheme } from "./theme";
@@ -11,6 +11,7 @@ import ResultsList from "./components/ResultsList";
 import PreviewPanel from "./components/PreviewPanel";
 import QuickLook from "./components/QuickLook";
 import ActionPicker from "./components/ActionPicker";
+import ExtensionFormModal from "./components/ExtensionFormModal";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
@@ -25,6 +26,34 @@ import "./App.css";
 import "./themes.css";
 
 const NON_INDEXABLE_KINDS = new Set(['calc', 'dict', 'dict-hint', 'content-hint', 'content-disabled', 'search-error', 'ext-error', 'command']);
+
+// Optimistic-hide budget for extension activations: dismiss feels instant,
+// yet a fast response can still keep the window open (form/keep-open).
+const ACTIVATE_HIDE_MS = 150;
+
+/** One activation routed through the shared response flow. */
+interface ExtActivateRequest {
+  id: string;
+  ext: ExtensionResult;
+  action: string | null;
+  command: string | null;
+  /** Present on form submits; its presence marks the call as form-originated. */
+  formValues?: Record<string, unknown>;
+}
+
+interface ActiveToast {
+  id: number;
+  message: string;
+  level: ToastLevel;
+}
+
+/** Form pinned by a ShowForm activate effect, with what's needed to submit. */
+interface ActiveExtForm {
+  id: string;
+  ext: ExtensionResult;
+  command: string | null;
+  form: FormDto;
+}
 
 // Active launcher mode: a Scope command the user entered. Null = root search.
 interface ActiveMode {
@@ -95,8 +124,16 @@ export default function App() {
   // result like Quicklook so background reorders can't retarget the actions.
   const [actionResult, setActionResult] = useState<SearchResult | null>(null);
   const actionResultRef = useRef(false);
-  // Transient toast from an extension's ShowToast activate effect.
-  const [toast, setToast] = useState<string | null>(null);
+  // Toast queue fed by extension activate responses (newest at the bottom,
+  // capped at 3). Errors linger longer and are click-dismissable like the rest.
+  const [toasts, setToasts] = useState<ActiveToast[]>([]);
+  const toastIdRef = useRef(0);
+  // Form pinned by a ShowForm activate effect (null = closed). Modal like the
+  // action picker; pins the result so background reorders can't retarget it.
+  const [extForm, setExtForm] = useState<ActiveExtForm | null>(null);
+  // True while a form submit's activate call is in flight (locks the form).
+  const [formBusy, setFormBusy] = useState(false);
+  const extFormRef = useRef(false);
 
   // Single active-mode scalar: the Scope command the user is inside, or null
   // for root search. UI-takeover scopes (clipboard) swap in their own
@@ -164,16 +201,14 @@ export default function App() {
     }
     // Action command: one-shot - run the extension's activate with the
     // command name and a synthetic default result (there's no search result
-    // behind an entry row). The backend hides the window first.
+    // behind an entry row).
     if (command.route.type === "extension") {
-      setQuery("");
-      setResults([]);
-      invoke("extension_activate", {
+      activateExtension({
         id: command.id,
         ext: { id: command.route.command, title: command.title, relevance: 0 },
         action: null,
         command: command.route.command,
-      }).catch(e => console.error(`[command] action failed: ${e}`));
+      });
     }
   };
 
@@ -239,6 +274,7 @@ export default function App() {
     // session. (`--clipboard` uses window-show-query, which re-enters the mode.)
     setMode(null);
     setActionResult(null);
+    setExtForm(null);
     setQuery("");
     setResults([]);
     setStreamed(new Map());
@@ -566,11 +602,77 @@ export default function App() {
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); setColoredIcons(cfg.files.colored_icons); configRef.current = cfg; });
   });
 
+  const pushToast = (message: string, level: ToastLevel) => {
+    const id = ++toastIdRef.current;
+    setToasts(ts => [...ts.slice(-2), { id, message, level }]);
+    window.setTimeout(
+      () => setToasts(ts => ts.filter(t => t.id !== id)),
+      level === "error" ? 5000 : 2200,
+    );
+  };
+
+  const reshowWindow = () => {
+    const win = getCurrentWindow();
+    win.show().then(() => win.setFocus()).catch(() => {});
+  };
+
+  // Every extension activation (Enter, action picker, action command, form
+  // submit) funnels through here. The window hides optimistically after
+  // ACTIVATE_HIDE_MS so dismissal feels instant even when the extension does
+  // network I/O; the response then settles visibility (a form or keep-open
+  // re-shows), feeds the toast queue, and requeries when asked to.
+  const activateExtension = (req: ExtActivateRequest) => {
+    const fromForm = req.formValues !== undefined;
+    if (fromForm) setFormBusy(true);
+    let hidden = false;
+    // No optimistic hide behind an open form - it would yank the modal away.
+    const timer = fromForm
+      ? undefined
+      : window.setTimeout(() => {
+          hidden = true;
+          invoke("hide_window");
+        }, ACTIVATE_HIDE_MS);
+    invoke<ActivateResponse>("extension_activate", {
+      id: req.id,
+      ext: req.ext,
+      action: req.action,
+      command: req.command,
+      formValues: req.formValues ?? null,
+    }).then(resp => {
+      if (timer !== undefined) clearTimeout(timer);
+      setFormBusy(false);
+      for (const t of resp.toasts) pushToast(t.message, t.level);
+      if (resp.refreshResults) requery();
+      if (resp.form) {
+        setExtForm({ id: req.id, ext: req.ext, command: req.command, form: resp.form });
+        if (hidden) reshowWindow();
+        return;
+      }
+      setExtForm(null);
+      if (resp.hide) {
+        setQuery("");
+        setResults([]);
+        if (!hidden) invoke("hide_window");
+      } else if (hidden) {
+        // A slow keep-open activation lost the race against the timer.
+        reshowWindow();
+      }
+    }).catch(e => {
+      if (timer !== undefined) clearTimeout(timer);
+      setFormBusy(false);
+      console.error(`[extension] activate failed: ${e}`);
+      // Visible when the window is (form submits, keep-open flows); a hidden
+      // launcher's failure still lands in the extension's Settings log.
+      pushToast(String(e), "error");
+    });
+  };
+
   const makeCtx = (): LaunchContext => ({
     setQuery,
     setResults,
     requery,
     runCommand,
+    activateExtension,
     config: configRef.current,
   });
 
@@ -617,9 +719,10 @@ export default function App() {
       // Ignore keys when the window isn't focused - an always-on-top launcher can
       // otherwise still receive (and act on) keystrokes meant for another window.
       if (!focusedRef.current) return;
-      // The action picker is modal and handles its own keys via a capture-phase
-      // listener; this bubble-phase handler must stay inert while it's open.
-      if (actionResult) return;
+      // The action picker and extension form are modal and handle their own
+      // keys via capture-phase listeners; this bubble-phase handler must stay
+      // inert while either is open.
+      if (actionResult || extForm) return;
       // Quicklook is modal: result navigation must not run underneath it. Arrow
       // keys scroll the open preview (handled in QuickLook); jump keys are inert.
       if (quickResult && (
@@ -713,7 +816,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [displayResults, selectedIndex, quickResult, actionResult]);
+  }, [displayResults, selectedIndex, quickResult, actionResult, extForm]);
 
   const selected = displayResults[selectedIndex] ?? null;
 
@@ -731,31 +834,31 @@ export default function App() {
     else inputRef.current?.focus();
   }, [quickResult]);
 
-  // Action picker is modal like Quicklook: launcher input blurs while open.
+  // Action picker and extension form are modal like Quicklook: launcher input
+  // blurs while either is open.
   useEffect(() => {
     actionResultRef.current = actionResult != null;
-    if (actionResult) inputRef.current?.blur();
+    extFormRef.current = extForm != null;
+    if (actionResult || extForm) inputRef.current?.blur();
     else inputRef.current?.focus();
-  }, [actionResult]);
+  }, [actionResult, extForm]);
 
-  // A reload swaps extension instances - a pinned picker would target a stale
-  // provider, so drop it.
-  useTauriListener("extensions-reloaded", () => setActionResult(null));
-
-  // Toast from an extension's ShowToast activate effect (visible when the
-  // window is - the backend also raises a desktop notification for the common
-  // hidden-after-activate case).
-  useTauriListener<string>("extension-toast", msg => {
-    setToast(msg);
-    window.setTimeout(() => setToast(t => (t === msg ? null : t)), 2200);
+  // A reload swaps extension instances - a pinned picker or form would target
+  // a stale provider, so drop them.
+  useTauriListener("extensions-reloaded", () => {
+    setActionResult(null);
+    setExtForm(null);
   });
 
   const runExtensionAction = (result: SearchResult, action: ExtAction) => {
     setActionResult(null);
-    setQuery("");
-    setResults([]);
-    invoke("extension_activate", { id: result.id, ext: result.ext, action: action.id, command: result.ext_command ?? null })
-      .catch(e => console.error(`[extension] activate failed: ${e}`));
+    if (!result.ext) return;
+    activateExtension({
+      id: result.id,
+      ext: result.ext,
+      action: action.id,
+      command: result.ext_command ?? null,
+    });
   };
 
   const calcResult = results.find(r => r.kind === "calc");
@@ -931,7 +1034,34 @@ export default function App() {
           />
         )}
 
-        {toast && <div className="extension-toast">{toast}</div>}
+        {extForm && !inClipboard && (
+          <ExtensionFormModal
+            form={extForm.form}
+            busy={formBusy}
+            onSubmit={values => activateExtension({
+              id: extForm.id,
+              ext: extForm.ext,
+              action: extForm.form.submitAction,
+              command: extForm.command,
+              formValues: values,
+            })}
+            onClose={() => setExtForm(null)}
+          />
+        )}
+
+        {toasts.length > 0 && (
+          <div className="extension-toast-stack">
+            {toasts.map(t => (
+              <div
+                key={t.id}
+                className={`extension-toast ${t.level}`}
+                onClick={() => setToasts(ts => ts.filter(x => x.id !== t.id))}
+              >
+                {t.message}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="footer">
           <FooterHints selected={selected} quicklookOpen={quickResult != null} clipboardMode={inClipboard} contentMode={inContents} smartPaste={clipCaps.smart_paste} clipboardIdle={inClipboard && query.trim() === ""} pdfHighlight={highlight} actionPickerOpen={actionResult != null} />

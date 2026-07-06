@@ -179,6 +179,9 @@ pub struct Permissions {
     pub clipboard: bool,
     /// May open http(s) URLs in the default browser.
     pub open_url: bool,
+    /// May use the `Paste` activate effect (clipboard write + synthetic
+    /// Ctrl+V into the previously focused window).
+    pub paste: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

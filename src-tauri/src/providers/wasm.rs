@@ -45,6 +45,15 @@ const MAX_ICON_B64_BYTES: usize = 32_768;
 /// sandbox-independent attack surface).
 const ALLOWED_IMAGE_MIME: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 /// Consecutive failures before the extension is paused (see `FailureBreaker`).
+/// Cap on activate's effect list - a sane flow needs a handful, not dozens.
+const MAX_EFFECTS: usize = 16;
+/// Caps on `ShowForm` payloads and submitted `form_values`.
+const MAX_FORM_TITLE_BYTES: usize = 120;
+const MAX_FORM_FIELDS: usize = 32;
+const MAX_FORM_OPTIONS: usize = 64;
+const MAX_FORM_VALUES: usize = 32;
+const MAX_FORM_VALUE_BYTES: usize = 16 * 1024;
+
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// Consecutive async-`query` failures before the async tier is disabled for
 /// the session. Separate from the interactive breaker: a flaky network query
@@ -513,15 +522,30 @@ impl WasmProvider {
     }
 
     /// Runs the extension's default (or named) action for a result and
-    /// returns the declarative effects it requested. The caller (command
-    /// layer) executes them - this type stays Tauri-free.
+    /// returns the declarative effects it requested, validated and
+    /// normalized. The caller (command layer) executes them - this type
+    /// stays Tauri-free.
     pub fn activate(
         &self,
         command: String,
         result: ExtensionResult,
         action: Option<String>,
+        form_values: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<Vec<ActivateEffect>, String> {
-        let input = ActivateInput { command, result, action };
+        if let Some(values) = &form_values {
+            if values.len() > MAX_FORM_VALUES {
+                return Err(format!("form submit exceeds {MAX_FORM_VALUES} values"));
+            }
+            if values
+                .values()
+                .any(|v| v.as_str().is_some_and(|s| s.len() > MAX_FORM_VALUE_BYTES))
+            {
+                return Err(format!(
+                    "form submit value exceeds {MAX_FORM_VALUE_BYTES} bytes"
+                ));
+            }
+        }
+        let input = ActivateInput { command, result, action, form_values };
         let json = serde_json::to_string(&input).map_err(|e| e.to_string())?;
         match self.call_with_budget(
             &self.instance,
@@ -540,10 +564,63 @@ impl WasmProvider {
                 }
                 let out: ActivateOutput = serde_json::from_str(&raw)
                     .map_err(|e| format!("activate: invalid response: {e}"))?;
-                Ok(out.effects)
+                Ok(self.normalize_effects(out.effects))
             }
             None => Err("extension has no actions".to_string()),
         }
+    }
+
+    /// Applies the activate-effect caps: at most [`MAX_EFFECTS`] effects, at
+    /// most one `ShowForm` (first wins), form field/option caps, and the
+    /// `paste` permission gate. Violations are dropped and surfaced in the
+    /// extension's log/Settings - they never fail the activation.
+    fn normalize_effects(&self, effects: Vec<ActivateEffect>) -> Vec<ActivateEffect> {
+        if effects.len() > MAX_EFFECTS {
+            self.note_error(&format!(
+                "activate returned {} effects - only the first {MAX_EFFECTS} run",
+                effects.len()
+            ));
+        }
+        let mut form_seen = false;
+        let mut out = Vec::new();
+        for effect in effects.into_iter().take(MAX_EFFECTS) {
+            match effect {
+                ActivateEffect::ShowForm { mut title, mut fields, submit_action, submit_label } => {
+                    if form_seen {
+                        self.note_error("activate returned more than one show_form - extras dropped");
+                        continue;
+                    }
+                    form_seen = true;
+                    crate::util::truncate_char_boundary(&mut title, MAX_FORM_TITLE_BYTES);
+                    if fields.len() > MAX_FORM_FIELDS {
+                        self.note_error(&format!(
+                            "show_form has more than {MAX_FORM_FIELDS} fields - extras dropped"
+                        ));
+                        fields.truncate(MAX_FORM_FIELDS);
+                    }
+                    for field in &mut fields {
+                        crate::util::truncate_char_boundary(&mut field.key, MAX_FIELD_BYTES);
+                        crate::util::truncate_char_boundary(&mut field.label, MAX_FIELD_BYTES);
+                        if let Some(p) = &mut field.placeholder {
+                            crate::util::truncate_char_boundary(p, MAX_FIELD_BYTES);
+                        }
+                        if field.options.len() > MAX_FORM_OPTIONS {
+                            field.options.truncate(MAX_FORM_OPTIONS);
+                        }
+                    }
+                    out.push(ActivateEffect::ShowForm { title, fields, submit_action, submit_label });
+                }
+                ActivateEffect::Paste { text } => {
+                    if !self.manifest.permissions.paste {
+                        self.note_error("paste effect requires `paste = true` in [permissions]");
+                        continue;
+                    }
+                    out.push(ActivateEffect::Paste { text });
+                }
+                other => out.push(other),
+            }
+        }
+        out
     }
 
     /// Runs the extension's optional `refresh` export on the dedicated

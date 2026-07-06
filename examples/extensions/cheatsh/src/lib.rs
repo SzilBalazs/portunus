@@ -9,6 +9,7 @@ use portunus_ext_sdk::guest::{self, kv_read, kv_write, plugin_fn, FnResult, Json
 use portunus_ext_sdk::{
     Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, PreviewContent,
     PreviewInput, QueryInput, QueryOutput, RefreshInput, RefreshOutput, SearchInput, SearchOutput,
+    ToastLevel,
 };
 
 fn fetch_text(url: &str) -> Result<String, extism_pdk::Error> {
@@ -200,7 +201,7 @@ pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
             let body = fetch_text(&format!("https://cheat.sh/{id}?T"))?;
             vec![
                 ActivateEffect::CopyText { text: body },
-                ActivateEffect::ShowToast { message: format!("Copied cheat.sh/{id}") },
+                ActivateEffect::ShowToast { message: format!("Copied cheat.sh/{id}"), level: ToastLevel::Success },
             ]
         }
         _ => vec![ActivateEffect::OpenUrl { url: format!("https://cheat.sh/{id}") }],

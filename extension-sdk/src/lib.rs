@@ -142,18 +142,74 @@ pub struct ActivateInput {
     /// Action id chosen by the user, or None for the default action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+    /// Values collected from a [`ActivateEffect::ShowForm`] the extension
+    /// returned earlier. Present only on the follow-up call the host makes
+    /// when the user submits the form (`action` is then the form's
+    /// `submit_action`). Keyed by [`FormField::key`]; values are strings for
+    /// text-like fields, booleans for checkboxes, numbers for number fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_values: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Output of the extension's exported `activate` function.
 ///
 /// Effects are executed by the host after the call returns, in order. They
 /// run only on explicit user activation - the keypress is the consent - so
-/// none of them require a manifest permission. An empty list is fine (the
-/// extension did its work via host functions or has nothing to do).
+/// none of them require a manifest permission (except [`ActivateEffect::Paste`],
+/// which injects synthetic keystrokes into another application). An empty
+/// list is fine (the extension did its work via host functions or has
+/// nothing to do).
+///
+/// The host caps the list at 16 effects and honors at most one `ShowForm`.
+/// Window visibility after activation resolves as: `ShowForm` > `Hide` >
+/// `KeepOpen` > default (hide).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActivateOutput {
     #[serde(default)]
     pub effects: Vec<ActivateEffect>,
+}
+
+impl ActivateOutput {
+    /// Output with a single effect.
+    pub fn single(effect: ActivateEffect) -> Self {
+        Self { effects: vec![effect] }
+    }
+
+    /// Convenience: copy text to the clipboard.
+    pub fn copy(text: impl Into<String>) -> Self {
+        Self::single(ActivateEffect::CopyText { text: text.into() })
+    }
+
+    /// Convenience: open a URL in the default browser.
+    pub fn open(url: impl Into<String>) -> Self {
+        Self::single(ActivateEffect::OpenUrl { url: url.into() })
+    }
+
+    /// Convenience: show a toast at the given level.
+    pub fn toast(message: impl Into<String>, level: ToastLevel) -> Self {
+        Self::single(ActivateEffect::ShowToast { message: message.into(), level })
+    }
+
+    /// Convenience: open a form. The host calls `activate` again with
+    /// `action = submit_action` and `form_values` filled when the user submits.
+    pub fn form(
+        title: impl Into<String>,
+        fields: Vec<FormField>,
+        submit_action: impl Into<String>,
+    ) -> Self {
+        Self::single(ActivateEffect::ShowForm {
+            title: title.into(),
+            fields,
+            submit_action: submit_action.into(),
+            submit_label: None,
+        })
+    }
+
+    /// Append another effect (builder-style).
+    pub fn and(mut self, effect: ActivateEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
 }
 
 /// Declarative side effect requested by `activate`, executed host-side.
@@ -164,8 +220,109 @@ pub enum ActivateEffect {
     CopyText { text: String },
     /// Open a http(s) URL in the default browser. No permission needed.
     OpenUrl { url: String },
-    /// Show a brief toast in the launcher ("Copied!", "Added to list").
-    ShowToast { message: String },
+    /// Show a brief toast ("Copied!", "Added to list"). Shown in the launcher
+    /// when it stays open, as a desktop notification when it hides. `level`
+    /// tints the toast and controls how long it lingers (errors stay longer).
+    ShowToast {
+        message: String,
+        #[serde(default)]
+        level: ToastLevel,
+    },
+    /// Open a modal form in the launcher. When the user submits, the host
+    /// calls `activate` again on the same result with `action = submit_action`
+    /// and `form_values` populated; cancelling (Esc) makes no call. A submit
+    /// handler may itself return another `ShowForm` for multi-step flows.
+    /// Implies the window stays open. No permission needed.
+    ShowForm {
+        /// Modal heading. Capped at 120 chars by the host.
+        title: String,
+        /// Input fields, rendered in order. Capped at 32 by the host.
+        fields: Vec<FormField>,
+        /// Action id the host passes back on submit.
+        submit_action: String,
+        /// Label for the submit button; defaults to "Submit".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submit_label: Option<String>,
+    },
+    /// Hide the launcher window after activation (the default when no
+    /// visibility effect is present). Explicit form for clarity.
+    Hide {},
+    /// Keep the launcher window open after activation (e.g. toggle-style
+    /// actions where the user will act again).
+    KeepOpen {},
+    /// Re-run the current launcher query after activation - use after
+    /// mutating whatever the results reflect (delete, toggle, mark-done).
+    RefreshResults {},
+    /// Put `text` on the clipboard and inject a paste chord (Ctrl+V) into the
+    /// previously focused window. Requires `paste = true` in the manifest
+    /// permissions. Clobbers the clipboard; falls back to a "Copied - press
+    /// Ctrl+V" notification when injection is unavailable.
+    Paste { text: String },
+}
+
+/// Toast severity; controls tint and linger time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToastLevel {
+    #[default]
+    Info,
+    Success,
+    Error,
+}
+
+/// One input field of a [`ActivateEffect::ShowForm`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FormField {
+    /// Key under which the value is returned in `form_values`.
+    pub key: String,
+    /// Visible field label.
+    pub label: String,
+    /// Field kind: `text`, `textarea`, `password`, `select`, `checkbox`,
+    /// or `number`. Unknown kinds are rendered as `text`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Submit is blocked while a required field is empty.
+    #[serde(default)]
+    pub required: bool,
+    /// Placeholder for text-like fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    /// Initial value. String for text-like fields, bool for `checkbox`,
+    /// number for `number`, option value for `select`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    /// Choices for `select` fields (capped at 64 by the host).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<FormOption>,
+}
+
+impl FormField {
+    /// Shorthand for a field of the given kind.
+    pub fn new(key: impl Into<String>, label: impl Into<String>, kind: &str) -> Self {
+        Self { key: key.into(), label: label.into(), kind: kind.to_string(), ..Self::default() }
+    }
+
+    /// Mark the field required.
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    /// Set the placeholder.
+    pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = Some(text.into());
+        self
+    }
+}
+
+/// One choice of a `select` form field.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FormOption {
+    /// Value returned in `form_values` when chosen.
+    pub value: String,
+    /// Visible label; defaults to `value` when empty.
+    #[serde(default)]
+    pub label: String,
 }
 
 /// Input to the extension's optional exported `preview` function.

@@ -15,7 +15,7 @@ use portunus_ext_sdk::guest::extism_pdk;
 use portunus_ext_sdk::guest::{plugin_fn, setting_str, FnResult, Json};
 use portunus_ext_sdk::{
     Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, MetadataItem,
-    PreviewContent, PreviewInput, ResultIcon, SearchInput, SearchOutput,
+    PreviewContent, PreviewInput, ResultIcon, SearchInput, SearchOutput, ToastLevel,
 };
 
 /// Pre-encoded result icon (icon.png as base64) - guests embed the encoded
@@ -109,7 +109,7 @@ pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
     let effects = match action.as_deref() {
         Some("copy-name") => vec![
             ActivateEffect::CopyText { text: format!(":{}:", result.id.replace(' ', "_")) },
-            ActivateEffect::ShowToast { message: format!("Copied :{}:", result.id) },
+            ActivateEffect::ShowToast { message: format!("Copied :{}:", result.id), level: ToastLevel::Success },
         ],
         // Default (Enter / "copy"): the emoji itself, tone-modified if set.
         _ => {

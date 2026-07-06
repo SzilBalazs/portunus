@@ -126,6 +126,7 @@ pub fn repo_actions() -> Vec<Action> {
         Action { id: "open-prs".into(), label: "Open Pull Requests".into(), hint: None },
         Action { id: "open-releases".into(), label: "Open Releases".into(), hint: None },
         Action { id: "open-actions".into(), label: "Open Actions".into(), hint: None },
+        Action { id: "new-issue".into(), label: "New Issue…".into(), hint: Some("opens a form".into()) },
         Action { id: "copy-clone".into(), label: "Copy clone URL".into(), hint: Some("respects protocol setting".into()) },
         Action { id: "copy-ssh".into(), label: "Copy SSH clone URL".into(), hint: None },
         Action { id: "copy-gh".into(), label: "Copy gh clone command".into(), hint: Some("gh repo clone".into()) },

@@ -72,6 +72,18 @@ chip = "Users"
 icon = "icon_user.b64"
 placeholder = "Search GitHub users…"
 
+# --- one-shot actions --------------------------------------------------------
+
+# Opens the create-issue form directly from the launcher (no repo context -
+# the form asks, pre-filled from the cached repo list). Token-gated.
+[[commands]]
+name = "new-issue"
+title = "New GitHub Issue"
+description = "Create an issue via a form (needs a token)"
+mode = "action"
+keywords = ["gh", "github", "new", "issue", "create", "report"]
+icon = "icon_issue.b64"
+
 # --- dashboards (token-gated, list on entry) ---------------------------------
 
 [[commands]]

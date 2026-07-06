@@ -40,6 +40,23 @@ pub fn api_get(path: &str, accept: &str) -> Result<(u16, String), extism_pdk::Er
     Ok((resp.status_code(), body))
 }
 
+/// POST a JSON body to an api.github.com path. Returns (status, body).
+/// Requires a stored token (mutations are never anonymous).
+pub fn api_post(path: &str, json_body: &str) -> Result<(u16, String), extism_pdk::Error> {
+    let mut req = HttpRequest::new(format!("{API}{path}"));
+    req.method = Some("POST".into());
+    req.headers.insert("User-Agent".into(), "portunus-gh-ext".into());
+    req.headers.insert("Accept".into(), ACCEPT_JSON.into());
+    req.headers.insert("Content-Type".into(), "application/json".into());
+    req.headers.insert("X-GitHub-Api-Version".into(), "2022-11-28".into());
+    if let Some(t) = token() {
+        req.headers.insert("Authorization".into(), format!("Bearer {t}"));
+    }
+    let resp = http::request(&req, Some(json_body.as_bytes()))?;
+    let body = String::from_utf8_lossy(&resp.body()).into_owned();
+    Ok((resp.status_code(), body))
+}
+
 /// Default GitHub JSON accept header.
 pub const ACCEPT_JSON: &str = "application/vnd.github+json";
 

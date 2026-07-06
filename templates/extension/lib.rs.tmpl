@@ -15,7 +15,7 @@ use portunus_ext_sdk::guest::extism_pdk;
 use portunus_ext_sdk::guest::{plugin_fn, FnResult, Json};
 use portunus_ext_sdk::{
     Action, ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, MetadataItem,
-    PreviewContent, PreviewInput, SearchInput, SearchOutput,
+    PreviewContent, PreviewInput, SearchInput, SearchOutput, ToastLevel,
 };
 
 #[plugin_fn]
@@ -55,10 +55,18 @@ pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
     let result = input.0.result;
     // Effects run host-side after this returns; copying text and opening
     // http(s) urls need no permissions on the explicit activation path.
+    // Beyond copy/open/toast there are `show_form` (modal input form whose
+    // submit calls `activate` again with `form_values`), `keep_open`,
+    // `refresh_results`, and `paste` - see EXTENSIONS.md "Forms". E.g.:
+    //   return Ok(Json(ActivateOutput::form(
+    //       "Add note",
+    //       vec![FormField::new("text", "Note", "textarea").required()],
+    //       "save-note",
+    //   )));
     Ok(Json(ActivateOutput {
         effects: vec![
             ActivateEffect::CopyText { text: result.title.clone() },
-            ActivateEffect::ShowToast { message: "Copied!".into() },
+            ActivateEffect::ShowToast { message: "Copied!".into(), level: ToastLevel::Success },
         ],
     }))
 }

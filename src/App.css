@@ -2372,14 +2372,264 @@ mark.preview-hl {
   text-align: center;
 }
 
+/* ---------- extension form modal (ShowForm activate effect) ---------- */
+
+/* Backdrop: dims the launcher, click-outside cancels. */
+.ext-form-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 26;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 56px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  animation: quicklook-fade 0.12s ease-out forwards;
+}
+
+.ext-form {
+  width: 420px;
+  max-height: calc(100% - 100px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-preview);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 16px 48px -12px rgba(0, 0, 0, 0.7);
+}
+
+.ext-form-header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ext-form-title {
+  font-size: 13px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ext-form-fields {
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ext-form-fields::-webkit-scrollbar { width: 6px; }
+.ext-form-fields::-webkit-scrollbar-thumb {
+  background: var(--bg-input);
+  border-radius: 3px;
+}
+
+.ext-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ext-form-field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.ext-form-label {
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+.ext-form-required {
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+.ext-form-input {
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  outline: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 9px;
+  resize: vertical;
+}
+
+.ext-form-input:focus {
+  border-color: var(--accent-border);
+}
+
+.ext-form-input.invalid {
+  border-color: color-mix(in srgb, #f87171 60%, transparent);
+}
+
+.ext-form-checkbox {
+  accent-color: var(--accent);
+}
+
+.ext-form-error {
+  font-size: 10px;
+  color: color-mix(in srgb, #f87171 80%, var(--fg));
+}
+
+.ext-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ext-form-cancel,
+.ext-form-submit {
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--bg-card);
+  color: var(--fg-mute);
+}
+
+.ext-form-submit {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--fg);
+}
+
+.ext-form-cancel:disabled,
+.ext-form-submit:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ext-form-footer kbd {
+  font: 500 10px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 4px;
+}
+
+/* Custom select: native <select> popups can't open in the layer-shell
+   launcher window, so the menu is in-DOM. */
+.ext-form-select-wrap {
+  position: relative;
+}
+
+.ext-form-select {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ext-form-select-value {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-form-select-placeholder {
+  color: var(--fg-mute);
+}
+
+.ext-form-select-arrow {
+  color: var(--fg-mute);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ext-form-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  background: var(--bg-preview);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+  animation: quicklook-fade 0.1s ease-out forwards;
+}
+
+.ext-form-select-filter {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  outline: none;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+.ext-form-select-list {
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.ext-form-select-list::-webkit-scrollbar { width: 6px; }
+.ext-form-select-list::-webkit-scrollbar-thumb {
+  background: var(--bg-input);
+  border-radius: 3px;
+}
+
+.ext-form-select-row {
+  padding: 6px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ext-form-select-row.selected {
+  background: var(--accent-soft);
+}
+
+.ext-form-select-row.current {
+  color: var(--accent);
+}
+
+.ext-form-select-empty {
+  padding: 10px;
+  color: var(--fg-mute);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* ---------- extension toast + badges + trigger chip ---------- */
 
-.extension-toast {
+.extension-toast-stack {
   position: absolute;
   left: 50%;
   bottom: 48px;
   transform: translateX(-50%);
   z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.extension-toast {
   background: var(--bg-card);
   border: 1px solid var(--accent-border);
   color: var(--fg);
@@ -2388,7 +2638,20 @@ mark.preview-hl {
   border-radius: 6px;
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
   animation: quicklook-fade 0.15s ease-out forwards;
-  pointer-events: none;
+  cursor: pointer;
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-toast.success {
+  border-color: color-mix(in srgb, #4ade80 45%, transparent);
+}
+
+.extension-toast.error {
+  border-color: color-mix(in srgb, #f87171 55%, transparent);
+  color: color-mix(in srgb, #f87171 70%, var(--fg));
 }
 
 .result-badge {

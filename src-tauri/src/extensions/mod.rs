@@ -18,8 +18,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use portunus_ext_sdk::{ActivateEffect, ExtensionResult, PreviewContent};
-use tauri::Manager;
+use portunus_ext_sdk::{ActivateEffect, ExtensionResult, FormField, PreviewContent, ToastLevel};
 
 use crate::config::ExtensionsConfig;
 use crate::providers::wasm::WasmProvider;
@@ -323,6 +322,7 @@ pub struct PermissionsInfo {
     kv: bool,
     clipboard: bool,
     open_url: bool,
+    paste: bool,
     /// Derived: the settings schema declares at least one `type = "secret"`.
     has_secrets: bool,
 }
@@ -421,6 +421,7 @@ pub fn list_extensions(
                     kv: m.permissions.kv,
                     clipboard: m.permissions.clipboard,
                     open_url: m.permissions.open_url,
+                    paste: m.permissions.paste,
                     has_secrets: m.settings_schema.iter().any(|s| s.kind == "secret"),
                 }),
                 enabled,
@@ -626,37 +627,75 @@ fn provider_for_id(
         .ok_or_else(|| format!("extension \"{name}\" is not loaded"))
 }
 
+/// What the frontend needs to finish an activation: whether to hide the
+/// window, a form to render, toasts for the in-window queue, and whether to
+/// re-run the current query. Side effects (copy/open/paste) already ran
+/// backend-side by the time this is returned.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivateResponse {
+    pub hide: bool,
+    pub form: Option<FormPayload>,
+    pub toasts: Vec<ToastPayload>,
+    pub refresh_results: bool,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FormPayload {
+    pub title: String,
+    pub fields: Vec<FormField>,
+    pub submit_action: String,
+    pub submit_label: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ToastPayload {
+    pub message: String,
+    pub level: ToastLevel,
+}
+
 #[tauri::command]
-pub fn extension_activate(
-    app: tauri::AppHandle,
+pub async fn extension_activate(
     registry: tauri::State<'_, Registry>,
     frecency: tauri::State<'_, FrecencyState>,
     id: String,
     ext: ExtensionResult,
     action: Option<String>,
     command: Option<String>,
-) -> Result<(), String> {
-    // Hide first: activation may block for seconds (network I/O inside the
-    // extension) - the launcher must dismiss instantly on Enter, like
-    // launch_app does. Effects that need user-visible output (ShowToast) go
-    // through desktop notifications, which work with the window hidden.
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
+    form_values: Option<serde_json::Map<String, serde_json::Value>>,
+) -> Result<ActivateResponse, String> {
+    // The frontend owns hide timing (optimistic 150 ms timer): activation may
+    // block for seconds, but its outcome - a form, keep-open, toasts - must
+    // reach the UI, so this is a request/response call on the blocking pool.
     let provider = provider_for_id(&crate::util::read(&registry), &id)?;
-    let effects = provider.activate(command.unwrap_or_default(), ext, action)?;
-    run_activate_effects(&app, &id, effects);
-    if let Some(store) = frecency.as_ref() {
-        store.record_launch(&id, "extension");
+    let effects = tauri::async_runtime::spawn_blocking({
+        let command = command.unwrap_or_default();
+        move || provider.activate(command, ext, action, form_values)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let response = run_activate_effects(&id, effects);
+    // A form-opening Enter isn't a completed launch - record frecency only
+    // when the activation actually did its work.
+    if response.form.is_none() {
+        if let Some(store) = frecency.as_ref() {
+            store.record_launch(&id, "extension");
+        }
     }
-    Ok(())
+    Ok(response)
 }
 
-/// Executes the declarative effects an `activate` call returned. Effects run
-/// only on explicit user activation - the keypress is the consent - so none
-/// of them consult manifest permissions. Caps mirror the equivalent host fns.
-fn run_activate_effects(app: &tauri::AppHandle, id: &str, effects: Vec<ActivateEffect>) {
-    use tauri::Emitter;
+/// Executes the side-effect half of an `activate` response (copy/open/paste,
+/// hidden-window toasts) and folds the UI half into an [`ActivateResponse`].
+/// Effects run only on explicit user activation - the keypress is the consent
+/// - so only `Paste` consults a manifest permission (gated in the provider).
+/// Visibility precedence: ShowForm > Hide > KeepOpen > default(hide).
+fn run_activate_effects(id: &str, effects: Vec<ActivateEffect>) -> ActivateResponse {
+    let mut form: Option<FormPayload> = None;
+    let mut toasts: Vec<ToastPayload> = Vec::new();
+    let mut refresh_results = false;
+    let (mut explicit_hide, mut keep_open) = (false, false);
     for effect in effects {
         match effect {
             ActivateEffect::CopyText { text } => {
@@ -669,25 +708,58 @@ fn run_activate_effects(app: &tauri::AppHandle, id: &str, effects: Vec<ActivateE
                     eprintln!("[{id}] open_url effect: {e}");
                 }
             }
-            ActivateEffect::ShowToast { message } => {
+            ActivateEffect::Paste { text } => {
+                if let Err(e) = hostfns::paste_text(&text) {
+                    eprintln!("[{id}] paste effect: {e}");
+                }
+            }
+            ActivateEffect::ShowToast { message, level } => {
                 let mut msg = message;
                 crate::util::truncate_char_boundary(&mut msg, 512);
-                // The launcher window is already hidden at this point, so an
-                // in-window toast would be invisible - use a desktop
-                // notification. Also emitted as an event for visible windows.
-                let _ = app.emit("extension-toast", &msg);
-                let _ = std::process::Command::new("notify-send")
-                    .arg("--app-name=Portunus")
-                    .arg("--expire-time=3000")
-                    .arg("Portunus")
-                    .arg(&msg)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
+                toasts.push(ToastPayload { message: msg, level });
             }
+            ActivateEffect::ShowForm { title, fields, submit_action, submit_label } => {
+                // The provider already enforced "at most one ShowForm".
+                form = Some(FormPayload { title, fields, submit_action, submit_label });
+            }
+            ActivateEffect::Hide {} => explicit_hide = true,
+            ActivateEffect::KeepOpen {} => keep_open = true,
+            ActivateEffect::RefreshResults {} => refresh_results = true,
         }
     }
+    if form.is_some() && explicit_hide {
+        logs::log(
+            &id_extension_name(id),
+            logs::LogLevel::Error,
+            "activate returned both show_form and hide - the form wins",
+        );
+    }
+    let hide = form.is_none() && (explicit_hide || !keep_open);
+    for toast in &toasts {
+        // A hidden window can't show an in-window toast - raise a desktop
+        // notification. Errors get one even when the window stays open, so
+        // they aren't missed while the user's eyes are elsewhere.
+        if hide || toast.level == ToastLevel::Error {
+            let _ = std::process::Command::new("notify-send")
+                .arg("--app-name=Portunus")
+                .arg("--expire-time=3000")
+                .arg("Portunus")
+                .arg(&toast.message)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+    ActivateResponse { hide, form, toasts, refresh_results }
+}
+
+/// Extension name from an `ext:<name>:<local>` result id (for log routing).
+fn id_extension_name(id: &str) -> String {
+    id.strip_prefix("ext:")
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or(id)
+        .to_string()
 }
 
 #[derive(serde::Serialize, Clone)]

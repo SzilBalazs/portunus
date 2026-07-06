@@ -46,6 +46,8 @@ pub struct ConsentPermissions {
     pub kv: bool,
     pub clipboard: bool,
     pub open_url: bool,
+    /// May inject synthetic paste keystrokes into other applications.
+    pub paste: bool,
     /// Derived from the settings schema: any `type = "secret"` setting means
     /// the extension stores secrets in the keyring - consent-relevant,
     /// especially paired with `network`.
@@ -61,6 +63,7 @@ impl ConsentPermissions {
             kv: m.permissions.kv,
             clipboard: m.permissions.clipboard,
             open_url: m.permissions.open_url,
+            paste: m.permissions.paste,
             has_secrets: m.settings_schema.iter().any(|s| s.kind == "secret"),
         }
     }
@@ -71,6 +74,7 @@ impl ConsentPermissions {
         (!self.kv && other.kv)
             || (!self.clipboard && other.clipboard)
             || (!self.open_url && other.open_url)
+            || (!self.paste && other.paste)
             || (!self.has_secrets && other.has_secrets)
             || other.network.iter().any(|h| !self.network.contains(h))
     }
@@ -771,6 +775,7 @@ mod tests {
             kv: true,
             clipboard: false,
             open_url: false,
+            paste: false,
             has_secrets: false,
         };
         // Same or narrower: no growth.
@@ -779,6 +784,7 @@ mod tests {
         // Any new grant: growth.
         assert!(base.grew_to(&ConsentPermissions { clipboard: true, ..base.clone() }));
         assert!(base.grew_to(&ConsentPermissions { has_secrets: true, ..base.clone() }));
+        assert!(base.grew_to(&ConsentPermissions { paste: true, ..base.clone() }));
         assert!(base.grew_to(&ConsentPermissions {
             network: vec!["a.com".into(), "b.com".into()],
             ..base.clone()

@@ -273,6 +273,45 @@ pub fn write_clipboard_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Delay between hiding the launcher and injecting the paste chord - focus
+/// must return to the previously focused surface first. Same heuristic as
+/// the clipboard provider's smart paste; raise if pastes land in the void
+/// on slower compositors.
+const PASTE_FOCUS_DELAY_MS: u64 = 150;
+
+/// Backs the `Paste` activate effect: clipboard write now, paste chord after
+/// the launcher has hidden and focus returned. wtype speaks
+/// zwp_virtual_keyboard_v1 (wlroots compositors); where it fails the text is
+/// already on the clipboard, so degrade to a "press Ctrl+V" notification -
+/// never a silent no-op.
+pub fn paste_text(text: &str) -> Result<(), String> {
+    write_clipboard_text(text)?;
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(PASTE_FOCUS_DELAY_MS));
+        // Same chord the clipboard provider's smart paste uses.
+        let ok = std::process::Command::new("wtype")
+            .args(["-M", "ctrl", "-k", "v", "-m", "ctrl"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            let _ = std::process::Command::new("notify-send")
+                .arg("--app-name=Portunus")
+                .arg("--expire-time=3000")
+                .arg("Portunus")
+                .arg("Copied to clipboard — press Ctrl+V to paste")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    });
+    Ok(())
+}
+
 /// Builds the host-function imports for one extension. Returns the functions
 /// plus the shared `UserData` handle - the provider keeps it to install the
 /// streaming emit slots around `query`/`preview` calls.

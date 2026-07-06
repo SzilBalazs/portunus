@@ -23,8 +23,8 @@ use api::*;
 use portunus_ext_sdk::guest::extism_pdk;
 use portunus_ext_sdk::guest::{self, plugin_fn, FnResult, Json};
 use portunus_ext_sdk::{
-    ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, PreviewInput, QueryInput,
-    QueryOutput, RefreshInput, RefreshOutput, SearchInput, SearchOutput,
+    ActivateEffect, ActivateInput, ActivateOutput, ExtensionResult, FormField, PreviewInput,
+    QueryInput, QueryOutput, RefreshInput, RefreshOutput, SearchInput, SearchOutput, ToastLevel,
 };
 use render::*;
 
@@ -457,12 +457,134 @@ pub fn activate(input: Json<ActivateInput>) -> FnResult<Json<ActivateOutput>> {
     let action = input.0.action.as_deref().unwrap_or("open");
     let result = &input.0.result;
     let id = result.id.as_str();
+
+    // Form round-trip: the "New GitHub Issue" launcher command and the
+    // repo-result "New Issue…" action both open a form; its submit comes back
+    // as `create-issue` with the collected values. The launcher command has
+    // no repo context, so its form adds a repo picker.
+    if input.0.command == "new-issue" {
+        if action == "create-issue" {
+            return Ok(Json(create_issue(None, input.0.form_values.as_ref())));
+        }
+        return Ok(Json(new_issue_form(None)));
+    }
+    if let Some(full) = id.strip_prefix("repo:") {
+        if action == "new-issue" {
+            return Ok(Json(new_issue_form(Some(full))));
+        }
+        if action == "create-issue" {
+            return Ok(Json(create_issue(Some(full), input.0.form_values.as_ref())));
+        }
+    }
+
     let effects = activate_effects(id, action, &result.title);
     Ok(Json(ActivateOutput { effects }))
 }
 
+/// The create-issue form. With a repo (result action) the repo is fixed in
+/// the title; without one (launcher command) the form asks - a select over
+/// the user's own repos (fetched live, falling back to the cache), or a
+/// free-text owner/repo field when neither is available.
+fn new_issue_form(full: Option<&str>) -> ActivateOutput {
+    if token().is_none() {
+        return ActivateOutput::toast("Set a GitHub token first (gh settings)", ToastLevel::Error);
+    }
+    let mut fields = Vec::new();
+    if full.is_none() {
+        let repos = own_repos();
+        if repos.is_empty() {
+            fields.push(
+                FormField::new("repo", "Repository", "text").required().placeholder("owner/repo"),
+            );
+        } else {
+            let mut field = FormField::new("repo", "Repository", "select");
+            field.required = true;
+            field.options = repos
+                .iter()
+                .map(|r| portunus_ext_sdk::FormOption {
+                    value: r.full_name.clone(),
+                    label: r.full_name.clone(),
+                })
+                .collect();
+            fields.push(field);
+        }
+    }
+    fields.push(FormField::new("title", "Title", "text").required().placeholder("Short summary"));
+    fields.push(FormField::new("body", "Body", "textarea").placeholder("Describe the issue (Markdown)…"));
+    ActivateOutput::single(ActivateEffect::ShowForm {
+        title: match full {
+            Some(full) => format!("New issue in {full}"),
+            None => "New GitHub issue".into(),
+        },
+        fields,
+        submit_action: "create-issue".into(),
+        submit_label: Some("Create issue".into()),
+    })
+}
+
+/// Repos the user can file issues in, for the form's picker. Fetches the
+/// user's repos live (the shared repo cache also holds arbitrary searched
+/// repos, so it can't be trusted as-is); a successful fetch warms the cache.
+/// On failure fall back to the cache, stale-but-usable beats empty.
+fn own_repos() -> Vec<CachedRepo> {
+    match api_get("/user/repos?sort=pushed&per_page=100", ACCEPT_JSON) {
+        Ok((200, body)) => match serde_json::from_str::<Vec<RepoItem>>(&body) {
+            Ok(repos) => {
+                let cached: Vec<CachedRepo> = repos.iter().map(CachedRepo::from).collect();
+                merge_repo_cache(&cached);
+                return cached;
+            }
+            Err(e) => log_err("own repos", &e.into()),
+        },
+        Ok((s, _)) => log_status("own repos", s),
+        Err(e) => log_err("own repos", &e),
+    }
+    cache_read::<CachedRepo>(CACHE_REPOS)
+}
+
+fn create_issue(
+    full: Option<&str>,
+    values: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> ActivateOutput {
+    let get = |k: &str| {
+        values
+            .and_then(|v| v.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let repo = match full {
+        Some(full) => full.to_string(),
+        None => get("repo"),
+    };
+    let repo = repo.trim().to_string();
+    if !repo.contains('/') {
+        return ActivateOutput::toast("Repository must be owner/repo", ToastLevel::Error);
+    }
+    let payload = serde_json::json!({ "title": get("title"), "body": get("body") });
+    match api_post(&format!("/repos/{repo}/issues"), &payload.to_string()) {
+        Ok((201, body)) => {
+            let url = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["html_url"].as_str().map(str::to_string));
+            let mut out = ActivateOutput::toast("Issue created", ToastLevel::Success);
+            if let Some(url) = url {
+                out = out.and(ActivateEffect::OpenUrl { url });
+            }
+            out
+        }
+        Ok((status, _)) => {
+            ActivateOutput::toast(format!("GitHub refused the issue ({status})"), ToastLevel::Error)
+        }
+        Err(e) => ActivateOutput::toast(format!("Create failed: {e}"), ToastLevel::Error),
+    }
+}
+
 fn copy_toast(text: String, msg: &str) -> Vec<ActivateEffect> {
-    vec![ActivateEffect::CopyText { text }, ActivateEffect::ShowToast { message: msg.into() }]
+    vec![
+        ActivateEffect::CopyText { text },
+        ActivateEffect::ShowToast { message: msg.into(), level: ToastLevel::Success },
+    ]
 }
 
 fn open(url: String) -> Vec<ActivateEffect> {

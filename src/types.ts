@@ -131,8 +131,45 @@ export interface ExtensionPermissions {
   kv: boolean;
   clipboard: boolean;
   open_url: boolean;
+  /** May inject synthetic paste keystrokes into other applications. */
+  paste: boolean;
   /** Declares at least one `type = "secret"` setting (stored in the keyring). */
   has_secrets: boolean;
+}
+
+/** One input field of a form an extension's `activate` returned. */
+export interface FormFieldDto {
+  key: string;
+  label: string;
+  /** "text" | "textarea" | "password" | "select" | "checkbox" | "number"; unknown renders as text. */
+  type: string;
+  required?: boolean;
+  placeholder?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+}
+
+/** Form an extension asked the launcher to render (ShowForm effect). */
+export interface FormDto {
+  title: string;
+  fields: FormFieldDto[];
+  submitAction: string;
+  submitLabel: string | null;
+}
+
+export type ToastLevel = "info" | "success" | "error";
+
+export interface ToastDto {
+  message: string;
+  level: ToastLevel;
+}
+
+/** Response of the `extension_activate` command; side effects already ran. */
+export interface ActivateResponse {
+  hide: boolean;
+  form: FormDto | null;
+  toasts: ToastDto[];
+  refreshResults: boolean;
 }
 
 /** One `[[settings]]` entry from an extension's manifest. */
