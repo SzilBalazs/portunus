@@ -2318,6 +2318,12 @@ mark.preview-hl {
   padding: 4px;
 }
 
+.action-picker-list::-webkit-scrollbar { width: 6px; }
+.action-picker-list::-webkit-scrollbar-thumb {
+  background: var(--bg-input);
+  border-radius: 3px;
+}
+
 .action-picker-row {
   display: flex;
   align-items: center;

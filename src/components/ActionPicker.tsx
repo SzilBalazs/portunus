@@ -17,6 +17,7 @@ export default function ActionPicker({ result, onRun, onClose }: Props) {
   const [filter, setFilter] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedRef = useRef<HTMLDivElement>(null);
 
   const actions = useMemo(() => {
     const all = result.ext?.actions ?? [];
@@ -27,6 +28,9 @@ export default function ActionPicker({ result, onRun, onClose }: Props) {
 
   useEffect(() => setIndex(0), [filter]);
   useEffect(() => inputRef.current?.focus(), []);
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" });
+  }, [index]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -79,6 +83,7 @@ export default function ActionPicker({ result, onRun, onClose }: Props) {
         {actions.map((a, i) => (
           <div
             key={a.id}
+            ref={i === index ? selectedRef : undefined}
             className={`action-picker-row${i === index ? " selected" : ""}`}
             onMouseEnter={() => setIndex(i)}
             onClick={() => onRun(a)}
