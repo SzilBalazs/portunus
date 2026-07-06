@@ -247,6 +247,8 @@ export interface CommandDescriptor {
   min_query_len: number;
   /** `SearchResult.kind` the command's own results carry. */
   result_kind: string;
+  /** Built-in command icon: a named glyph rendered inline (theme-aware). */
+  glyph?: string;
   icon_data_uri?: string;
   route: CommandRoute;
 }

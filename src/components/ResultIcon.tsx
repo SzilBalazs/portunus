@@ -1,17 +1,25 @@
-import { useState, useContext } from "react";
+import { useState, useContext, type ReactElement } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { BookIcon, CategoryGlyph, FileGlyphIcon } from "../icons";
+import { BookIcon, CategoryGlyph, ClipboardIcon, FileGlyphIcon, SearchIcon } from "../icons";
 import { fileCategory } from "../utils";
 import { ColoredIconsContext } from "../coloredIcons";
 
 interface Props {
   icon_path?: string;
   iconDataUri?: string;
+  /** Named glyph for a built-in command entry (theme-aware inline SVG). */
+  glyph?: string;
   title: string;
   kind: string;
 }
 
-export default function ResultIcon({ icon_path, iconDataUri, title, kind }: Props) {
+const COMMAND_GLYPHS: Record<string, () => ReactElement> = {
+  book: BookIcon,
+  clipboard: ClipboardIcon,
+  search: SearchIcon,
+};
+
+export default function ResultIcon({ icon_path, iconDataUri, glyph, title, kind }: Props) {
   const [failed, setFailed] = useState(false);
   const coloredIcons = useContext(ColoredIconsContext);
 
@@ -51,8 +59,13 @@ export default function ResultIcon({ icon_path, iconDataUri, title, kind }: Prop
     );
   }
 
-  // Command entries: chevron-prompt glyph (a "command palette" affordance).
+  // Command entries: a named glyph when the descriptor supplies one (built-in
+  // commands), else the generic chevron-prompt glyph.
   if (kind === "command") {
+    const Glyph = glyph ? COMMAND_GLYPHS[glyph] : undefined;
+    if (Glyph) {
+      return <div className="result-icon"><Glyph /></div>;
+    }
     return (
       <div className="result-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16">

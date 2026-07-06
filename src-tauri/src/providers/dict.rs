@@ -293,6 +293,7 @@ impl Provider for DictProvider {
             placeholder: Some("Type a word to look it up…".to_string()),
             min_query_len: 1,
             result_kind: "dict".to_string(),
+            glyph: Some("book".to_string()),
             icon_data_uri: None,
             route: CommandRoute::Builtin { provider_id: "dict".to_string() },
         }]

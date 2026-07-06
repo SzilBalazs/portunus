@@ -43,6 +43,7 @@ impl Provider for ContentProvider {
             placeholder: Some("Search file contents…".to_string()),
             min_query_len: 2,
             result_kind: "file".to_string(),
+            glyph: Some("search".to_string()),
             icon_data_uri: None,
             route: CommandRoute::Builtin { provider_id: "content".to_string() },
         }]

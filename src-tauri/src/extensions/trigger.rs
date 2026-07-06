@@ -78,6 +78,7 @@ mod tests {
             chip: String::new(),
             placeholder: String::new(),
             kind: None,
+            icon: None,
         }
     }
 

@@ -66,6 +66,7 @@ always = false                 # run live in root search on every keystroke (dis
 chip = "Emoji"                 # optional: active-mode chip label; defaults to title
 placeholder = "Search emoji…"  # optional: input placeholder while the mode is active
 kind = "ext-emoji"             # optional: per-command result-kind override; must be in `kinds`
+icon = "icon_emoji.b64"        # optional: bundled base64-PNG file (bare filename) shown on the command's entry; else a generic glyph
 
 [permissions]
 network = ["api.github.com"]   # exact hosts only; wildcards are rejected; omit for none

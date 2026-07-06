@@ -65,6 +65,11 @@ pub struct CommandDescriptor {
     pub min_query_len: usize,
     /// `SearchResult.kind` the command's own results carry.
     pub result_kind: String,
+    /// Built-in command icon: a named glyph the frontend renders inline (so it
+    /// follows the theme's `currentColor`). Extension commands leave this None
+    /// and ship a raster icon via `icon_data_uri` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_data_uri: Option<String>,
     pub route: CommandRoute,
@@ -139,6 +144,7 @@ mod tests {
             placeholder: None,
             min_query_len: 1,
             result_kind: "dict".to_string(),
+            glyph: None,
             icon_data_uri: None,
             route: CommandRoute::Builtin { provider_id: "dict".to_string() },
         }

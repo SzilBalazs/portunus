@@ -25,6 +25,7 @@ mode = "scope"
 keywords = ["gh", "github", "repos", "repositories"]
 min_query_len = 2
 chip = "Repos"
+icon = "icon_repo.b64"
 placeholder = "Search GitHub repositories…"
 
 [[commands]]
@@ -35,6 +36,7 @@ mode = "scope"
 keywords = ["ghi", "github", "issues"]
 min_query_len = 2
 chip = "Issues"
+icon = "icon_issue.b64"
 placeholder = "Search GitHub issues…"
 
 [[commands]]
@@ -45,6 +47,7 @@ mode = "scope"
 keywords = ["ghpr", "github", "pull", "pulls", "pr", "prs"]
 min_query_len = 2
 chip = "PRs"
+icon = "icon_pr.b64"
 placeholder = "Search GitHub pull requests…"
 
 [[commands]]
@@ -55,6 +58,7 @@ mode = "scope"
 keywords = ["ghcode", "github", "code", "source"]
 min_query_len = 2
 chip = "Code"
+icon = "icon_code.b64"
 placeholder = "Search GitHub code…"
 
 [[commands]]
@@ -65,6 +69,7 @@ mode = "scope"
 keywords = ["ghuser", "github", "users", "orgs", "people"]
 min_query_len = 2
 chip = "Users"
+icon = "icon_user.b64"
 placeholder = "Search GitHub users…"
 
 # --- dashboards (token-gated, list on entry) ---------------------------------
@@ -77,6 +82,7 @@ mode = "scope"
 keywords = ["ghmy", "github", "my", "pull", "requests", "prs"]
 min_query_len = 0
 chip = "My PRs"
+icon = "icon_pr.b64"
 placeholder = "Filter your pull requests…"
 
 [[commands]]
@@ -87,6 +93,7 @@ mode = "scope"
 keywords = ["ghmy", "github", "my", "issues"]
 min_query_len = 0
 chip = "My Issues"
+icon = "icon_issue.b64"
 placeholder = "Filter your issues…"
 
 [[commands]]
@@ -97,6 +104,7 @@ mode = "scope"
 keywords = ["ghmy", "github", "my", "repos", "repositories"]
 min_query_len = 0
 chip = "My Repos"
+icon = "icon_repo.b64"
 placeholder = "Filter your repositories…"
 
 [[commands]]
@@ -107,6 +115,7 @@ mode = "scope"
 keywords = ["ghstar", "github", "starred", "stars"]
 min_query_len = 0
 chip = "Starred"
+icon = "icon_star.b64"
 placeholder = "Filter starred repositories…"
 
 [[commands]]
@@ -117,6 +126,7 @@ mode = "scope"
 keywords = ["ghnotif", "github", "notifications", "inbox"]
 min_query_len = 0
 chip = "Notifications"
+icon = "icon_bell.b64"
 placeholder = "Filter notifications…"
 
 [permissions]

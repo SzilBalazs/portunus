@@ -513,6 +513,7 @@ impl Provider for ClipboardProvider {
             placeholder: Some("Search clipboard history…".to_string()),
             min_query_len: 0,
             result_kind: "clipboard".to_string(),
+            glyph: Some("clipboard".to_string()),
             icon_data_uri: None,
             route: CommandRoute::UiTakeover,
         }]

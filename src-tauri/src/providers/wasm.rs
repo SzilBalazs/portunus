@@ -8,7 +8,7 @@
 //! - three consecutive failures pause the extension behind an escalating
 //!   cooldown (see `breaker`), with the error surfaced to the Settings UI.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -101,6 +101,10 @@ pub struct WasmProvider {
     manifest: ExtensionManifest,
     #[allow(dead_code)]
     wasm_path: PathBuf,
+    /// Per-command icon `data:` URIs, keyed by command name. Precomputed from
+    /// bundled asset files at load so the per-keystroke `commands()` path does
+    /// no file I/O.
+    command_icons: std::collections::HashMap<String, String>,
     limits: Limits,
     /// Interactive slot (search/activate).
     instance: Slot,
@@ -132,6 +136,44 @@ pub struct WasmProvider {
     preview_cancel_flag: Mutex<Option<Arc<AtomicBool>>>,
     /// Epoch cancel handle of the in-flight `preview` call.
     preview_epoch: Mutex<Option<CancelHandle>>,
+}
+
+/// Precomputes each command's icon `data:` URI from its bundled asset file,
+/// once at load (never on the per-keystroke `commands()` path). A missing,
+/// oversized, or unsafe icon is logged and skipped - the command still lists,
+/// just with the generic glyph.
+fn precompute_command_icons(
+    manifest: &ExtensionManifest,
+    wasm_path: &Path,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Some(dir) = wasm_path.parent() else { return out };
+    for c in &manifest.commands {
+        let Some(icon) = &c.icon else { continue };
+        let note = |msg: &str| {
+            crate::extensions::logs::log(&manifest.name, crate::extensions::logs::LogLevel::Error, msg);
+        };
+        // Untrusted manifest value: bare filename only, no separators or `..`,
+        // so the asset can never escape the extension's own directory.
+        if icon.is_empty() || icon.contains('/') || icon.contains('\\') || icon.contains("..") {
+            note(&format!("command \"{}\" icon \"{icon}\" must be a bare filename", c.name));
+            continue;
+        }
+        let b64 = match std::fs::read_to_string(dir.join(icon)) {
+            Ok(s) => s.trim().to_string(),
+            Err(e) => {
+                note(&format!("command \"{}\" icon \"{icon}\" unreadable: {e}", c.name));
+                continue;
+            }
+        };
+        if b64.len() > MAX_ICON_B64_BYTES {
+            note(&format!("command \"{}\" icon exceeds the {MAX_ICON_B64_BYTES}-byte cap", c.name));
+            continue;
+        }
+        // `.b64` bundled assets are base64-encoded PNG by convention.
+        out.insert(c.name.clone(), format!("data:image/png;base64,{b64}"));
+    }
+    out
 }
 
 /// Builds a fresh instance from a slot's compiled plugin.
@@ -197,12 +239,15 @@ impl WasmProvider {
         let query_instance = if has_query { Some(Slot::new(compile()?)) } else { None };
         let bg_instance = if has_refresh { Some(Slot::new(compile()?)) } else { None };
 
+        let command_icons = precompute_command_icons(&manifest, &wasm_path);
+
         Ok(Self {
             reg_id: format!("ext:{}", manifest.name),
             name: manifest.name.clone(),
             kind: manifest.default_kind(),
             manifest,
             wasm_path,
+            command_icons,
             limits,
             instance: interactive,
             preview_instance,
@@ -774,7 +819,8 @@ impl WasmProvider {
                 placeholder: (!c.placeholder.is_empty()).then(|| c.placeholder.clone()),
                 min_query_len: c.min_len(),
                 result_kind: c.kind.clone().unwrap_or_else(|| self.kind.clone()),
-                icon_data_uri: None,
+                glyph: None,
+                icon_data_uri: self.command_icons.get(&c.name).cloned(),
                 route: CommandRoute::Extension {
                     name: self.name.clone(),
                     command: c.name.clone(),

@@ -94,6 +94,12 @@ pub struct CommandSpec {
     /// the extension's default kind. Must be listed in `kinds`.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Optional icon for the command's root-search entry: a bare filename of a
+    /// bundled asset (a base64-encoded PNG, by convention a `.b64` file). The
+    /// host reads it once at load and shows it in place of the generic command
+    /// glyph. Absent = the generic glyph.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 fn default_command_mode() -> String {
