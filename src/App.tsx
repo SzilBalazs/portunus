@@ -108,6 +108,10 @@ export default function App() {
   const isTakeover = (m: ActiveMode | null) => m?.command.route.type === "ui_takeover";
   const inClipboard = isTakeover(mode);
   const inContents = mode?.command.id === "cmd:contents";
+  // A "browse" scope (min_query_len 0) renders its list the moment it's entered,
+  // with an empty query - used by dashboard-style commands (e.g. an extension's
+  // "My Pull Requests"). Every other scope stays blank until the user types.
+  const browsing = !!mode && !inClipboard && !inContents && (mode.command.min_query_len ?? 1) === 0;
   const [clipCaps, setClipCaps] = useState<ClipboardCapabilities>({ smart_paste: false });
   const capsFetched = useRef(false);
 
@@ -285,8 +289,10 @@ export default function App() {
     const trimmed = query.trim();
     // A scope's min_query_len (e.g. contents needs >= 2 chars, matching the
     // backend guard) gates the dispatch; below it, clear and show the prompt.
-    const minLen = Math.max(1, mode?.command.min_query_len ?? 1);
-    if (!trimmed || trimmed.length < minLen) {
+    // Browse scopes dispatch on entry with an empty query (they list first,
+    // filter as you type); every other context needs at least one character.
+    const minLen = browsing ? 0 : Math.max(1, mode?.command.min_query_len ?? 1);
+    if ((!trimmed && !browsing) || trimmed.length < minLen) {
       setResults([]); setSearching(false); setResolvedEmpty(false);
       // Nothing to search = nothing the async tier should keep working on.
       if (streamedRef.current || pendingRef.current) {
@@ -440,7 +446,12 @@ export default function App() {
   );
 
   const displayResults = useMemo<SearchResult[]>(() => {
-    if (!query.trim()) return [];
+    if (!query.trim()) {
+      // Browse scopes show their streamed list immediately; failed-extension
+      // rows still pin to the bottom. Everything else stays blank when empty.
+      if (browsing) return extErrorRows.length > 0 ? [...merged, ...extErrorRows] : merged;
+      return [];
+    }
     if (searchError) {
       return [{
         id: "search:error",
@@ -483,7 +494,7 @@ export default function App() {
     }
     // Real results first, failed-extension rows pinned to the bottom.
     return extErrorRows.length > 0 ? [...merged, ...extErrorRows] : merged;
-  }, [query, results, merged, extErrorRows, contentEnabled, resolvedEmpty, inContents, searchError]);
+  }, [query, results, merged, extErrorRows, contentEnabled, resolvedEmpty, inContents, searchError, browsing]);
 
   // Cursor stability under streaming. `selectedIdRef` is the identity of the
   // highlighted result; it's written at every mutation site (nav handlers,
@@ -752,7 +763,7 @@ export default function App() {
   // mode needs >= 2 chars; below that the list stays blank instead of "No results".
   const hasSearchTerm = inContents
     ? query.trim().length >= 2
-    : query.trim().length > 0;
+    : browsing || query.trim().length > 0;
 
   // Terms to highlight in the preview - only in content (full-text) mode.
   const previewTerms = useMemo(

@@ -1,7 +1,7 @@
 api = 4
 name = "gh"
-version = "0.2.0"
-description = "Live GitHub search - repos and issues, instant cache, streaming results"
+version = "0.3.0"
+description = "GitHub launcher - search repos/issues/PRs/code/users and browse your PRs, issues, repos, stars and notifications"
 author = "Portunus examples"
 homepage = "https://github.com"
 kinds = ["ext-gh"]
@@ -9,6 +9,14 @@ kinds = ["ext-gh"]
 # Raycast-style multi-command manifest: each entry is its own searchable
 # launcher command (found by title + keywords, entered as a scope); the wire
 # `command` field tells the guest which one ran.
+#
+# Two families:
+#   search scopes (min_query_len = 2)  - type a term, live results stream in
+#   dashboards    (min_query_len = 0)  - list on entry, filter as you type;
+#                                        token-gated (need your PAT)
+
+# --- search scopes -----------------------------------------------------------
+
 [[commands]]
 name = "repos"
 title = "Search Repositories"
@@ -22,18 +30,94 @@ placeholder = "Search GitHub repositories…"
 [[commands]]
 name = "issues"
 title = "Search Issues"
-description = "GitHub issues and pull requests"
+description = "GitHub issues"
 mode = "scope"
-keywords = ["ghi", "github", "issues", "pulls", "pr"]
+keywords = ["ghi", "github", "issues"]
 min_query_len = 2
 chip = "Issues"
 placeholder = "Search GitHub issues…"
 
 [[commands]]
+name = "prs"
+title = "Search Pull Requests"
+description = "GitHub pull requests"
+mode = "scope"
+keywords = ["ghpr", "github", "pull", "pulls", "pr", "prs"]
+min_query_len = 2
+chip = "PRs"
+placeholder = "Search GitHub pull requests…"
+
+[[commands]]
+name = "code"
+title = "Search Code"
+description = "Code across GitHub (needs a token)"
+mode = "scope"
+keywords = ["ghcode", "github", "code", "source"]
+min_query_len = 2
+chip = "Code"
+placeholder = "Search GitHub code…"
+
+[[commands]]
+name = "users"
+title = "Search Users & Orgs"
+description = "GitHub users and organizations"
+mode = "scope"
+keywords = ["ghuser", "github", "users", "orgs", "people"]
+min_query_len = 2
+chip = "Users"
+placeholder = "Search GitHub users…"
+
+# --- dashboards (token-gated, list on entry) ---------------------------------
+
+[[commands]]
+name = "my-prs"
+title = "My Pull Requests"
+description = "PRs you opened, are assigned, or asked to review"
+mode = "scope"
+keywords = ["ghmy", "github", "my", "pull", "requests", "prs"]
+min_query_len = 0
+chip = "My PRs"
+placeholder = "Filter your pull requests…"
+
+[[commands]]
+name = "my-issues"
+title = "My Issues"
+description = "Issues you opened, are assigned, or mentioned in"
+mode = "scope"
+keywords = ["ghmy", "github", "my", "issues"]
+min_query_len = 0
+chip = "My Issues"
+placeholder = "Filter your issues…"
+
+[[commands]]
+name = "my-repos"
+title = "My Repositories"
+description = "Your repositories, most recently pushed first"
+mode = "scope"
+keywords = ["ghmy", "github", "my", "repos", "repositories"]
+min_query_len = 0
+chip = "My Repos"
+placeholder = "Filter your repositories…"
+
+[[commands]]
+name = "starred"
+title = "Starred Repositories"
+description = "Repositories you've starred"
+mode = "scope"
+keywords = ["ghstar", "github", "starred", "stars"]
+min_query_len = 0
+chip = "Starred"
+placeholder = "Filter starred repositories…"
+
+[[commands]]
 name = "notifications"
-title = "Open GitHub Notifications"
-description = "github.com/notifications in the browser"
-mode = "action"
+title = "Notifications"
+description = "Your GitHub notification inbox"
+mode = "scope"
+keywords = ["ghnotif", "github", "notifications", "inbox"]
+min_query_len = 0
+chip = "Notifications"
+placeholder = "Filter notifications…"
 
 [permissions]
 network = ["api.github.com"]
@@ -41,11 +125,12 @@ kv = true
 
 [limits]
 search_timeout_ms = 50        # kv-only fast path, no network
-query_timeout_ms = 10000      # two API round-trips, off the keystroke path
-preview_timeout_ms = 8000     # metadata then README, streamed
+query_timeout_ms = 10000      # up to a few API round-trips, off the keystroke path
+preview_timeout_ms = 8000     # metadata then README/body, streamed
 activate_timeout_ms = 3000
 
-# Warm the "my repos" cache daily (also runs once at load).
+# Warm the my-repos + starred caches daily (also runs once at load) so their
+# dashboards paint instantly on entry.
 [background]
 refresh_interval_secs = 86400
 
@@ -53,13 +138,21 @@ refresh_interval_secs = 86400
 key = "token"
 type = "secret"
 label = "GitHub token (PAT)"
-description = "Optional. Unlocks private repos and higher rate limits. Scopes: repo (or public_repo)."
+description = "Required for the 'My …', Code and Notifications commands. Unlocks private repos and higher rate limits. Scopes: repo, notifications, read:user (or public_repo for public only). OAuth isn't available - the sandbox can't host a callback."
 
 [[settings]]
 key = "max_per_endpoint"
 type = "number"
-label = "Results per endpoint"
+label = "Search results per query"
 default = 6
 min = 1
 max = 15
 step = 1
+
+[[settings]]
+key = "clone_protocol"
+type = "select"
+label = "Clone URL protocol"
+description = "Which URL the repo 'Copy clone URL' action produces."
+default = "https"
+options = ["https", "ssh"]
