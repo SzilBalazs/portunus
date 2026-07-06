@@ -790,14 +790,13 @@ export default function App() {
         setResults([]);
         invoke("hide_window");
       } else if (e.ctrlKey && !e.altKey && !e.metaKey
-                 && (e.code === "KeyH" || e.key === "h" || e.key === "H" || e.key === "Backspace")) {
+                 && (e.code === "KeyH" || e.key === "h" || e.key === "H")) {
         // Toggle PDF search-term highlighting. Only meaningful in Contents mode
         // (where there are terms to highlight); otherwise let the key fall through.
-        // WebKitGTK maps Ctrl+H to its "delete backward" editing command, so the
-        // keydown can surface as a Backspace event (key & code both "Backspace")
-        // rather than KeyH - hence the Backspace fallback, gated on Ctrl being held
-        // (a bare Backspace is handled above; Ctrl+Backspace = delete-word is rare
-        // in the content query and acceptable to repurpose here).
+        // Gate on the physical H key (e.code stays "KeyH" even though WebKitGTK
+        // remaps Ctrl+H to its "delete backward" editing command). We must NOT
+        // match Backspace here: Ctrl+Backspace (code "Backspace") is delete-word
+        // and has to fall through to the input's native editing.
         if (modeRef.current?.command.id !== "cmd:contents") return;
         e.preventDefault();
         setHighlight(h => !h);
