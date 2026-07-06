@@ -75,6 +75,12 @@ pub struct Action {
     /// Optional muted secondary text shown next to the label in the picker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Hint that running this action opens a form (a `ShowForm` effect)
+    /// rather than dismissing the launcher. The host keeps the window
+    /// visible while `activate` runs instead of hiding it optimistically,
+    /// so the form doesn't flash the window hidden-then-shown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub opens_form: bool,
 }
 
 /// Small inline icon for a search result. Same mime allowlist as image

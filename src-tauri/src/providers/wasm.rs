@@ -898,6 +898,7 @@ impl WasmProvider {
                 result_kind: c.kind.clone().unwrap_or_else(|| self.kind.clone()),
                 glyph: None,
                 icon_data_uri: self.command_icons.get(&c.name).cloned(),
+                opens_form: c.opens_form,
                 route: CommandRoute::Extension {
                     name: self.name.clone(),
                     command: c.name.clone(),

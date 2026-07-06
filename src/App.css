@@ -2629,6 +2629,27 @@ mark.preview-hl {
   gap: 6px;
 }
 
+/* "Working…" pill while an opens_form activation runs with the window kept
+   visible (no optimistic hide) - the launcher isn't frozen, just waiting. */
+.activate-pending {
+  position: absolute;
+  left: 50%;
+  bottom: 48px;
+  transform: translateX(-50%);
+  z-index: 29;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-border);
+  color: var(--fg-dim);
+  font-size: 12px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  animation: quicklook-fade 0.15s ease-out forwards;
+}
+
 .extension-toast {
   background: var(--bg-card);
   border: 1px solid var(--accent-border);

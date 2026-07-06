@@ -81,6 +81,7 @@ name = "new-issue"
 title = "New GitHub Issue"
 description = "Create an issue via a form (needs a token)"
 mode = "action"
+opens_form = true
 keywords = ["gh", "github", "new", "issue", "create", "report"]
 icon = "icon_issue.b64"
 

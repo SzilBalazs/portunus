@@ -9,11 +9,14 @@ registerProvider({
   Preview: null,
   handleLaunch: (result, ctx) => {
     if (!result.id.startsWith('ext:') || !result.ext) return false;
+    // Enter runs the default (first) action - honor its opens_form hint so
+    // the launcher stays visible while the extension builds the form.
     ctx.activateExtension({
       id: result.id,
       ext: result.ext,
       action: null,
       command: result.ext_command ?? null,
+      opensForm: result.ext.actions?.[0]?.opens_form === true,
     });
     return true;
   },

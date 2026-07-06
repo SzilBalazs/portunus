@@ -121,42 +121,42 @@ pub fn pr_state(is_open: bool, merged: bool, draft: bool) -> &'static str {
 
 pub fn repo_actions() -> Vec<Action> {
     vec![
-        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()) },
-        Action { id: "open-issues".into(), label: "Open Issues".into(), hint: None },
-        Action { id: "open-prs".into(), label: "Open Pull Requests".into(), hint: None },
-        Action { id: "open-releases".into(), label: "Open Releases".into(), hint: None },
-        Action { id: "open-actions".into(), label: "Open Actions".into(), hint: None },
-        Action { id: "new-issue".into(), label: "New Issue…".into(), hint: Some("opens a form".into()) },
-        Action { id: "copy-clone".into(), label: "Copy clone URL".into(), hint: Some("respects protocol setting".into()) },
-        Action { id: "copy-ssh".into(), label: "Copy SSH clone URL".into(), hint: None },
-        Action { id: "copy-gh".into(), label: "Copy gh clone command".into(), hint: Some("gh repo clone".into()) },
-        Action { id: "copy-url".into(), label: "Copy repo URL".into(), hint: None },
+        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()), opens_form: false },
+        Action { id: "open-issues".into(), label: "Open Issues".into(), hint: None, opens_form: false },
+        Action { id: "open-prs".into(), label: "Open Pull Requests".into(), hint: None, opens_form: false },
+        Action { id: "open-releases".into(), label: "Open Releases".into(), hint: None, opens_form: false },
+        Action { id: "open-actions".into(), label: "Open Actions".into(), hint: None, opens_form: false },
+        Action { id: "new-issue".into(), label: "New Issue…".into(), hint: Some("opens a form".into()), opens_form: true },
+        Action { id: "copy-clone".into(), label: "Copy clone URL".into(), hint: Some("respects protocol setting".into()), opens_form: false },
+        Action { id: "copy-ssh".into(), label: "Copy SSH clone URL".into(), hint: None, opens_form: false },
+        Action { id: "copy-gh".into(), label: "Copy gh clone command".into(), hint: Some("gh repo clone".into()), opens_form: false },
+        Action { id: "copy-url".into(), label: "Copy repo URL".into(), hint: None, opens_form: false },
     ]
 }
 
 fn issue_actions(is_pr: bool) -> Vec<Action> {
     let kind = if is_pr { "PR" } else { "issue" };
     vec![
-        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()) },
-        Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None },
-        Action { id: "copy-number".into(), label: format!("Copy {kind} number"), hint: None },
-        Action { id: "copy-title".into(), label: "Copy title".into(), hint: None },
-        Action { id: "copy-md".into(), label: "Copy Markdown link".into(), hint: Some("[title](url)".into()) },
+        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()), opens_form: false },
+        Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None, opens_form: false },
+        Action { id: "copy-number".into(), label: format!("Copy {kind} number"), hint: None, opens_form: false },
+        Action { id: "copy-title".into(), label: "Copy title".into(), hint: None, opens_form: false },
+        Action { id: "copy-md".into(), label: "Copy Markdown link".into(), hint: Some("[title](url)".into()), opens_form: false },
     ]
 }
 
 fn user_actions() -> Vec<Action> {
     vec![
-        Action { id: "open".into(), label: "Open profile".into(), hint: Some("in browser".into()) },
-        Action { id: "copy-url".into(), label: "Copy profile URL".into(), hint: None },
+        Action { id: "open".into(), label: "Open profile".into(), hint: Some("in browser".into()), opens_form: false },
+        Action { id: "copy-url".into(), label: "Copy profile URL".into(), hint: None, opens_form: false },
     ]
 }
 
 fn notif_actions() -> Vec<Action> {
     vec![
-        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()) },
-        Action { id: "open-inbox".into(), label: "Open notification inbox".into(), hint: None },
-        Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None },
+        Action { id: "open".into(), label: "Open on GitHub".into(), hint: Some("in browser".into()), opens_form: false },
+        Action { id: "open-inbox".into(), label: "Open notification inbox".into(), hint: None, opens_form: false },
+        Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None, opens_form: false },
     ]
 }
 
@@ -255,8 +255,8 @@ pub fn code_result(c: &CodeItem, relevance: f32) -> ExtensionResult {
         subtitle: Some(format!("{} \u{b7} {}", c.repository.full_name, c.path)),
         relevance,
         actions: vec![
-            Action { id: "open".into(), label: "Open file".into(), hint: Some("in browser".into()) },
-            Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None },
+            Action { id: "open".into(), label: "Open file".into(), hint: Some("in browser".into()), opens_form: false },
+            Action { id: "copy-url".into(), label: "Copy URL".into(), hint: None, opens_form: false },
         ],
         icon: Some(icon_code()),
         badge: Some("code".into()),
@@ -295,6 +295,7 @@ pub fn notoken_result(cmd: &str) -> ExtensionResult {
             id: "open".into(),
             label: "Open token settings".into(),
             hint: Some("github.com/settings/tokens".into()),
+            opens_form: false,
         }],
         icon: None,
         badge: Some("setup".into()),
@@ -316,6 +317,7 @@ pub fn rate_limit_result() -> ExtensionResult {
             id: "open".into(),
             label: "Open token settings".into(),
             hint: Some("github.com/settings/tokens".into()),
+            opens_form: false,
         }],
         icon: None,
         badge: Some("rate limited".into()),

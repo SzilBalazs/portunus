@@ -100,6 +100,8 @@ export interface ExtAction {
   id: string;
   label: string;
   hint?: string;
+  /** Running this action opens a form - don't hide the launcher optimistically. */
+  opens_form?: boolean;
 }
 
 /** Wire DTO an extension returned for a result; round-tripped on activate/preview. */
@@ -287,6 +289,8 @@ export interface CommandDescriptor {
   /** Built-in command icon: a named glyph rendered inline (theme-aware). */
   glyph?: string;
   icon_data_uri?: string;
+  /** Action command opens a form - don't hide the launcher optimistically. */
+  opens_form?: boolean;
   route: CommandRoute;
 }
 

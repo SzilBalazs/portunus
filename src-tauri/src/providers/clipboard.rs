@@ -515,6 +515,7 @@ impl Provider for ClipboardProvider {
             result_kind: "clipboard".to_string(),
             glyph: Some("clipboard".to_string()),
             icon_data_uri: None,
+            opens_form: false,
             route: CommandRoute::UiTakeover,
         }]
     }

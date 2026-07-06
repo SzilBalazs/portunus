@@ -15,6 +15,8 @@ export interface LaunchContext {
     action: string | null;
     command: string | null;
     formValues?: Record<string, unknown>;
+    /** The action/command declared `opens_form` - skip the optimistic hide. */
+    opensForm?: boolean;
   }) => void;
   config: Config | null;
 }

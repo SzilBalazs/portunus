@@ -39,6 +39,8 @@ interface ExtActivateRequest {
   command: string | null;
   /** Present on form submits; its presence marks the call as form-originated. */
   formValues?: Record<string, unknown>;
+  /** The action/command declared `opens_form` - skip the optimistic hide. */
+  opensForm?: boolean;
 }
 
 interface ActiveToast {
@@ -133,6 +135,10 @@ export default function App() {
   const [extForm, setExtForm] = useState<ActiveExtForm | null>(null);
   // True while a form submit's activate call is in flight (locks the form).
   const [formBusy, setFormBusy] = useState(false);
+  // True while an opens_form activation runs with the window kept visible
+  // (no optimistic hide) - drives the "Working…" pill so the launcher
+  // doesn't look frozen during the extension's network I/O.
+  const [activatePending, setActivatePending] = useState(false);
   const extFormRef = useRef(false);
 
   // Single active-mode scalar: the Scope command the user is inside, or null
@@ -208,6 +214,7 @@ export default function App() {
         ext: { id: command.route.command, title: command.title, relevance: 0 },
         action: null,
         command: command.route.command,
+        opensForm: command.opens_form === true,
       });
     }
   };
@@ -626,7 +633,12 @@ export default function App() {
     if (fromForm) setFormBusy(true);
     let hidden = false;
     // No optimistic hide behind an open form - it would yank the modal away.
-    const timer = fromForm
+    // Same when the action/command declared opens_form: hiding would flash
+    // the window hidden-then-shown around the arriving form, so the window
+    // stays up and a "Working…" pill shows while the extension runs.
+    const skipHide = fromForm || req.opensForm === true;
+    if (skipHide && !fromForm) setActivatePending(true);
+    const timer = skipHide
       ? undefined
       : window.setTimeout(() => {
           hidden = true;
@@ -641,6 +653,7 @@ export default function App() {
     }).then(resp => {
       if (timer !== undefined) clearTimeout(timer);
       setFormBusy(false);
+      setActivatePending(false);
       for (const t of resp.toasts) pushToast(t.message, t.level);
       if (resp.refreshResults) requery();
       if (resp.form) {
@@ -660,6 +673,7 @@ export default function App() {
     }).catch(e => {
       if (timer !== undefined) clearTimeout(timer);
       setFormBusy(false);
+      setActivatePending(false);
       console.error(`[extension] activate failed: ${e}`);
       // Visible when the window is (form submits, keep-open flows); a hidden
       // launcher's failure still lands in the extension's Settings log.
@@ -857,6 +871,7 @@ export default function App() {
       ext: result.ext,
       action: action.id,
       command: result.ext_command ?? null,
+      opensForm: action.opens_form === true,
     });
   };
 
@@ -1046,6 +1061,13 @@ export default function App() {
             })}
             onClose={() => setExtForm(null)}
           />
+        )}
+
+        {activatePending && !extForm && (
+          <div className="activate-pending">
+            <span className="result-pending-spinner" />
+            Working…
+          </div>
         )}
 
         {toasts.length > 0 && (

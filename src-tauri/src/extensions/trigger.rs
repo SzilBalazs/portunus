@@ -79,6 +79,7 @@ mod tests {
             placeholder: String::new(),
             kind: None,
             icon: None,
+            opens_form: false,
         }
     }
 

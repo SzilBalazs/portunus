@@ -100,6 +100,12 @@ pub struct CommandSpec {
     /// glyph. Absent = the generic glyph.
     #[serde(default)]
     pub icon: Option<String>,
+    /// Action commands only: hint that running the command opens a form (a
+    /// `ShowForm` effect) rather than dismissing the launcher. The host keeps
+    /// the window visible while `activate` runs instead of hiding it
+    /// optimistically, so the form doesn't flash the window hidden-then-shown.
+    #[serde(default)]
+    pub opens_form: bool,
 }
 
 fn default_command_mode() -> String {

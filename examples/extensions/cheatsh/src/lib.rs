@@ -73,8 +73,8 @@ fn ensure_list_cached() -> Result<(), extism_pdk::Error> {
 
 fn actions() -> Vec<Action> {
     vec![
-        Action { id: "open".into(), label: "Open cheat sheet".into(), hint: Some("in browser".into()) },
-        Action { id: "copy".into(), label: "Copy sheet text".into(), hint: Some("fetches plain text".into()) },
+        Action { id: "open".into(), label: "Open cheat sheet".into(), hint: Some("in browser".into()), opens_form: false },
+        Action { id: "copy".into(), label: "Copy sheet text".into(), hint: Some("fetches plain text".into()), opens_form: false },
     ]
 }
 

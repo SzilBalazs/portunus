@@ -72,6 +72,10 @@ pub struct CommandDescriptor {
     pub glyph: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_data_uri: Option<String>,
+    /// Action commands only: the command opens a form on activation, so the
+    /// frontend must not hide the launcher optimistically while it runs.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub opens_form: bool,
     pub route: CommandRoute,
 }
 
@@ -146,6 +150,7 @@ mod tests {
             result_kind: "dict".to_string(),
             glyph: None,
             icon_data_uri: None,
+            opens_form: false,
             route: CommandRoute::Builtin { provider_id: "dict".to_string() },
         }
     }

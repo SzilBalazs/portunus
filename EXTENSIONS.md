@@ -119,7 +119,7 @@ then opens it.
 | Mode | Behavior |
 |---|---|
 | `scope` (default) | Enter opens an enterable mode with its own chip and input placeholder; every keystroke then routes to your `search`. Backspace on an empty query exits. (`inline` is accepted as a legacy alias for `scope`.) |
-| `action` | One-shot: Enter calls `activate` immediately with a synthetic default result and closes. |
+| `action` | One-shot: Enter calls `activate` immediately with a synthetic default result and closes. Set `opens_form = true` on the entry if the activation answers with a `show_form` effect — the launcher then stays visible (with a "Working…" pill) instead of hiding optimistically, so the form doesn't flash the window hidden-then-shown. |
 
 Inside a scope, your `search` receives the whole typed term (`query` and
 `raw_query` are identical); an empty `query` is the *browse state*:
@@ -168,7 +168,8 @@ you can hit the network without blocking the launcher.
     "relevance": 87.5,            // 0-100, higher = better
     "actions": [                  // optional; first = default on Enter,
       { "id": "copy", "label": "Copy emoji" },              // rest via Alt+Enter picker
-      { "id": "copy-name", "label": "Copy name", "hint": "as :shortcode:" }
+      { "id": "copy-name", "label": "Copy name", "hint": "as :shortcode:" },
+      { "id": "report", "label": "New Issue…", "opens_form": true }  // keeps the window up while activate runs
     ],
     "badge": "beta",              // optional small chip on the result row
     "icon": {                     // optional; shown instead of the default glyph
@@ -306,6 +307,13 @@ block submit client-side. Caps: 32 fields, 64 select options, title ≤ 120
 chars, submitted string values ≤ 16 KB. A failed/timed-out submit shows an
 error toast and keeps the form open with the entered values. Form-opening
 activations don't count toward frecency; the submit does.
+
+**Declare form-opening entry points.** The launcher normally hides itself
+~150 ms into an activation so dismissal feels instant; an activation that
+answers with `show_form` would flash the window hidden-then-shown. Mark such
+entry points up front — `opens_form = true` on an `action` command in the
+manifest, or `"opens_form": true` on a result action — and the window stays
+visible (with a "Working…" pill) while your `activate` runs.
 
 In Rust, `ActivateOutput::form(...)`, `::copy(...)`, `::open(...)`,
 `::toast(...)` and `FormField::new(key, label, kind).required().placeholder(…)`

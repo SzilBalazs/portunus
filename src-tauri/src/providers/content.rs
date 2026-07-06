@@ -45,6 +45,7 @@ impl Provider for ContentProvider {
             result_kind: "file".to_string(),
             glyph: Some("search".to_string()),
             icon_data_uri: None,
+            opens_form: false,
             route: CommandRoute::Builtin { provider_id: "content".to_string() },
         }]
     }
