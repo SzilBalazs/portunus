@@ -618,6 +618,11 @@ html, body, #root {
   font-size: 13px;
   font-weight: 600;
   flex-shrink: 0;
+  /* Own compositing layer, pinned to integer pixels. Without it, moving the
+     selection re-rasterizes the row and the icon snaps to a different subpixel
+     - visible jitter. Same fix as .result-shortcut / .clip-row-shortcut. */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* Category-tinted glyphs. Colors track the same `--hljs-*` theme tokens as the
@@ -642,6 +647,9 @@ html, body, #root {
   height: 28px;
   object-fit: contain;
   flex-shrink: 0;
+  /* See .result-icon: keep on its own layer so selection moves don't jitter it. */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .result-text { min-width: 0; }
