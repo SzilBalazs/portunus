@@ -439,7 +439,12 @@ html, body, #root {
   position: relative;
   border-right: 1px solid var(--line-soft);
   padding: 10px;
-  overflow-y: auto;
+  /* Always reserve the scrollbar track (overflow: scroll, not auto) so a list that
+     overflows doesn't narrow the content box — otherwise the row crop and
+     .selection-bg width shift the moment the scrollbar appears. scrollbar-gutter
+     is a no-op on the WebKitGTK build, so reserve it the hard way. The track/thumb
+     stay transparent until hover, so the reserved 4px is invisible when idle. */
+  overflow-y: scroll;
   scroll-padding-top: 10px;
 }
 
@@ -1150,6 +1155,16 @@ kbd {
 
 .pdf-img-revealed {
   animation: pdf-reveal 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+/* Plain images reveal with opacity only — the pdf-reveal scale reads as a weird
+   pop on a full-bleed image (it's masked by the skeleton for PDFs). */
+@keyframes img-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.img-preview-in {
+  animation: img-fade-in 0.2s ease-out forwards;
 }
 
 /* ---------- pdf search-term highlight overlay ---------- */

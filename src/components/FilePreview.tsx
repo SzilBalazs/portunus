@@ -793,7 +793,7 @@ function ImagePreview({ path, quicklook = false, terms = [], highlight = true }:
           ref={imgRef}
           src={src}
           alt="Image preview"
-          className={loaded ? "pdf-img-revealed" : undefined}
+          className={loaded ? "img-preview-in" : undefined}
           style={{ opacity: loaded ? undefined : 0 }}
           onLoad={() => { setLoaded(true); measureImg(); }}
         />
@@ -1165,25 +1165,54 @@ function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
 
 // ── text preview ─────────────────────────────────────────────────────────────
 
+// Highlighted-HTML cache keyed path\0lang\0terms, so a revisited file paints
+// synchronously instead of blanking to an empty dark wrap while it re-reads +
+// re-highlights (the "code preview flash"). Capped like the pdf/img caches.
+const textHtmlCache = new Map<string, string>();
+const TEXT_HTML_CACHE_CAP = 64;
+function textHtmlKey(path: string, lang: string, terms: string[]): string {
+  return `${path}\0${lang}\0${terms.join(" ")}`;
+}
+function storeTextHtml(key: string, html: string) {
+  textHtmlCache.set(key, html);
+  while (textHtmlCache.size > TEXT_HTML_CACHE_CAP) {
+    const oldest = textHtmlCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    textHtmlCache.delete(oldest);
+  }
+}
+
 function TextPreview({ path, lang, terms }: { path: string; lang: string; terms: string[] }) {
-  const [html, setHtml] = useState<string | null>(null);
+  const termsKey = terms.join(" ");
+  const key = textHtmlKey(path, lang, terms);
+  const [html, setHtml] = useState<string | null>(() => textHtmlCache.get(key) ?? null);
   const ref = useTermHighlight<HTMLPreElement>(terms, html);
 
   useEffect(() => {
+    const cached = textHtmlCache.get(key);
+    // Cache hit: swap synchronously, no fetch, no flash.
+    if (cached !== undefined) { setHtml(cached); return; }
     let cancelled = false;
-    setHtml(null);
+    // Keep the previous file's code up until the new one resolves (matches the
+    // PDF preview's "hold the old page" pattern) rather than blanking to the
+    // empty wrap — the stale frame is imperceptible for local reads and avoids
+    // the dark-box flash. First-ever mount has nothing to show, so html stays null.
     // Pass terms so the backend returns a window centered on the first match.
     invoke<string>("read_text_preview", { path, terms })
       .then(text => {
         if (cancelled) return;
         setTimeout(() => {
           if (cancelled) return;
-          setHtml(hljs.highlight(text, { language: lang, ignoreIllegals: true }).value);
+          const out = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+          storeTextHtml(key, out);
+          setHtml(out);
         }, 0);
       })
       .catch(() => { if (!cancelled) setHtml(""); });
     return () => { cancelled = true; };
-  }, [path, lang, terms]);
+    // termsKey stands in for the terms array (stable string identity).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, path, lang, termsKey]);
 
   if (html === null) return <div className="text-preview-wrap" />;
 

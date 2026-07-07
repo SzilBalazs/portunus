@@ -1,6 +1,6 @@
 import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { SearchResult } from "../types";
-import { groupLabel, formatBytes, shortenPath } from "../utils";
+import { groupLabel, shortenPath } from "../utils";
 import ResultIcon from "./ResultIcon";
 
 interface Props {
@@ -166,9 +166,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
               <div className={`result-meta${result.ext?.badge ? " has-badge" : ""}`}>
                 {result.ext?.badge
                   ? <span className="result-badge">{result.ext.badge}</span>
-                  : result.kind === "file" && result.file_size != null
-                    ? formatBytes(result.file_size)
-                    : ""}
+                  : ""}
               </div>
               <div className="result-shortcut" style={!showShortcut ? { visibility: 'hidden' } : undefined}>
                 {showShortcut ? shortcutIdx + 1 : ""}
