@@ -1399,9 +1399,11 @@ a:focus-visible,
 .settings-ext-cards { display: flex; flex-direction: column; gap: 8px; }
 
 .settings-ext-card {
-  /* A hairline only: cards are interactive containers, the one thing that
-     still earns a border in this window. */
-  border: 1px solid var(--line-soft);
+  /* Interactive containers - the one thing that still earns a border in this
+     window. Raised a step off the page (--bg-card body) so the cards read as
+     distinct surfaces instead of dissolving into the background. */
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -1568,7 +1570,7 @@ a:focus-visible,
 .settings-ext-card-titlerow { display: flex; align-items: center; gap: 8px; }
 .settings-ext-card-sub {
   font-size: var(--fs-desc);
-  color: var(--fg-dim);
+  color: var(--fg-desc);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

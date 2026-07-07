@@ -680,6 +680,11 @@ html, body, #root {
   flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.1s ease;
+  /* Keep a stable compositing layer: without this, toggling opacity makes
+     WebKit re-rasterize the whole row and the icon snaps to a different
+     subpixel - visible jitter when Alt is spammed. */
+  will-change: opacity;
+  backface-visibility: hidden;
 }
 
 :root[data-alt-held="true"] .result-shortcut,
@@ -1491,6 +1496,8 @@ mark.preview-hl {
   flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.1s ease;
+  will-change: opacity;
+  backface-visibility: hidden;
 }
 
 .clip-list-more {
