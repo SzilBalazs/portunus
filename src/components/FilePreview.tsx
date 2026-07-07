@@ -47,6 +47,15 @@ function pdfKey(path: string, page: number, width: number): string {
   return `${path}#${page}@${width}`;
 }
 
+// Content-match page per (path, query), deterministic so safe to cache. Lets a
+// revisited PDF resolve its match page synchronously - the PdfPreview stays
+// mounted and seeds straight to the (already-rendered) page instead of
+// unmounting for the async content_match_page fetch and blanking a frame.
+const contentMatchPageCache = new Map<string, number>();
+function contentMatchKey(path: string, query: string): string {
+  return `${path}\0${query}`;
+}
+
 // Normalized [x, y, w, h] highlight boxes (0..1, top-left origin) per page, from
 // the backend text layer. Keyed path#page#terms - width-independent (normalized),
 // so the side preview and Quicklook share entries. Deduped via a promise cache.
@@ -1235,13 +1244,18 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], hi
   // reader seeds straight to the match page (no page-0 flash then jump). Empty
   // `terms` (non-content file search) skips the fetch and opens at page 0.
   const termsKey = terms.join(" ");
-  const [matchPage, setMatchPage] = useState<number | null>(() => (isPdf && terms.length ? null : 0));
+  const [matchPage, setMatchPage] = useState<number | null>(() =>
+    isPdf && terms.length ? contentMatchPageCache.get(contentMatchKey(filePath, termsKey)) ?? null : 0,
+  );
   // Tracks the file the current matchPage belongs to. Blanking to `null` only when
   // the file itself changes lets a same-file term refetch (i.e. typing) keep the
   // page mounted instead of unmounting/remounting the reader between keystrokes.
   const matchPagePathRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isPdf || !terms.length) { setMatchPage(0); matchPagePathRef.current = filePath; return; }
+    // Cache hit (revisited PDF): resolve synchronously, no unmount, no fetch.
+    const cached = contentMatchPageCache.get(contentMatchKey(filePath, termsKey));
+    if (cached != null) { setMatchPage(cached); matchPagePathRef.current = filePath; return; }
     let cancelled = false;
     // Hold the reader (page-0 flash then jump) only on a file change / first mount.
     // On a same-file refetch keep the current page so the PDF doesn't flash.
@@ -1250,7 +1264,10 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], hi
     invoke<number | null>("content_match_page", { path: filePath, query: termsKey })
       // Same page number -> return prev so PdfPreview's props are referentially
       // unchanged and it doesn't re-render.
-      .then(p => { if (!cancelled) setMatchPage(prev => (prev === (p ?? 0) ? prev : (p ?? 0))); })
+      .then(p => {
+        contentMatchPageCache.set(contentMatchKey(filePath, termsKey), p ?? 0);
+        if (!cancelled) setMatchPage(prev => (prev === (p ?? 0) ? prev : (p ?? 0)));
+      })
       .catch(e => { console.error("[preview] content_match_page failed:", e); if (!cancelled) setMatchPage(0); });
     return () => { cancelled = true; };
     // termsKey stands in for the terms array (stable string identity).
