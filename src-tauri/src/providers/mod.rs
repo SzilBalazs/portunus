@@ -409,8 +409,8 @@ impl PluginRegistry {
     /// extensions declare them) extension commands. Recomputed per call - the
     /// descriptor lists are tiny and this keeps reload invalidation free.
     pub fn commands(&self) -> Vec<CommandDescriptor> {
-        let mut out: Vec<CommandDescriptor> =
-            self.providers.iter().flat_map(|p| p.commands()).collect();
+        let mut out: Vec<CommandDescriptor> = builtin_commands();
+        out.extend(self.providers.iter().flat_map(|p| p.commands()));
         for ext in self.extensions.values() {
             out.extend(ext.commands());
         }
@@ -443,11 +443,40 @@ impl PluginRegistry {
                 _ => Vec::new(),
             },
             command::CommandRoute::UiTakeover => Vec::new(),
+            // Action route: activated frontend-side, never scope-searched.
+            command::CommandRoute::Invoke { .. } => Vec::new(),
         };
         sort_by_score(&mut results);
         results.truncate(self.max_results);
         results
     }
+}
+
+/// Built-in commands that belong to no single provider (app-level actions).
+fn builtin_commands() -> Vec<CommandDescriptor> {
+    use command::{CommandRoute, CommandSource, ModeKind};
+    vec![CommandDescriptor {
+        id: "cmd:settings".to_string(),
+        title: "Open Settings".to_string(),
+        chip: "Settings".to_string(),
+        subtitle: Some("Portunus".to_string()),
+        source: CommandSource::Builtin,
+        mode_kind: ModeKind::Action,
+        keywords: vec![
+            "settings".into(),
+            "preferences".into(),
+            "config".into(),
+            "configuration".into(),
+            "options".into(),
+        ],
+        placeholder: None,
+        min_query_len: 0,
+        result_kind: "command".to_string(),
+        glyph: Some("settings".to_string()),
+        icon_data_uri: None,
+        opens_form: false,
+        route: CommandRoute::Invoke { command: "open_settings_window".to_string() },
+    }]
 }
 
 fn sort_by_score(results: &mut [SearchResult]) {

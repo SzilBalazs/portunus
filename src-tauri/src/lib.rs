@@ -1000,14 +1000,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
-            // Only the launcher dismisses on these events; the settings window
-            // manages its own lifecycle.
-            if window.label() != "main" {
+            let label = window.label();
+            // Both windows are long-lived and reused (main via --show, settings
+            // via open_settings_window). The compositor's "close active window"
+            // (e.g. Super+C / killactive) sends CloseRequested; the default
+            // destroys the window - for main that exits the app, for settings it
+            // leaves get_webview_window("settings") empty so it can't reopen.
+            // Hide instead and stay alive.
+            if label != "main" && label != "settings" {
                 return;
             }
-            // The compositor's "close active window" (e.g. Super+C / killactive)
-            // sends CloseRequested. Default behavior destroys the window and
-            // exits the app; instead hide and stay alive for the next --show.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();

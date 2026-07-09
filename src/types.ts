@@ -267,7 +267,9 @@ export type CommandRoute =
   | { type: "builtin"; provider_id: string }
   | { type: "extension"; name: string; command: string }
   /** Frontend swaps in a dedicated component; the backend is not searched. */
-  | { type: "ui_takeover" };
+  | { type: "ui_takeover" }
+  /** Built-in action: activation invokes the named Tauri command. */
+  | { type: "invoke"; command: string };
 
 /** A searchable launcher command ("Define Word", "Search Issues"). */
 export interface CommandDescriptor {

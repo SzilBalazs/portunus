@@ -40,6 +40,10 @@ pub enum CommandRoute {
     Extension { name: String, command: String },
     /// The frontend swaps in a dedicated component; the backend is not called.
     UiTakeover,
+    /// A built-in action that invokes a named Tauri command frontend-side on
+    /// activation (e.g. "Open Settings"). Backend-authored only - extension
+    /// commands never carry this route.
+    Invoke { command: String },
 }
 
 #[derive(Debug, Clone, Serialize)]

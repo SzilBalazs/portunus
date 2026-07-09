@@ -208,6 +208,17 @@ export default function App() {
       enterMode(command, { seed: "" });
       return;
     }
+    // Built-in action: invoke the named Tauri command directly. The launcher
+    // is cleaned up so it's fresh when next shown (the command may hide it,
+    // e.g. open_settings_window hides "main" backend-side).
+    if (command.route.type === "invoke") {
+      const tauriCmd = command.route.command;
+      setMode(null);
+      setQuery("");
+      setResults([]);
+      invoke(tauriCmd).catch(e => console.error(`[command] invoke ${tauriCmd} failed:`, e));
+      return;
+    }
     // Action command: one-shot - run the extension's activate with the
     // command name and a synthetic default result (there's no search result
     // behind an entry row).
