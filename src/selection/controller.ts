@@ -259,10 +259,56 @@ class SelectionController {
   /** Sticky column for Up/Down runs (reset by horizontal movement). */
   private goalX: number | null = null;
 
+  /** A DOM mutation (PDF page remount, zoom re-render) can disconnect the
+   *  caret's text node while the root itself survives. Instead of tearing the
+   *  whole selection down, drop the stale refs and keep keyboard mode alive -
+   *  the caret is reseated lazily by `seatCaret()`. Only a vanished root is
+   *  fatal (the preview closed). Returns false only when it had to clear. */
+  private recoverKeyboard(): boolean {
+    if (!this.keyboard) return false;
+    if (!this.root?.isConnected) {
+      this.clear();
+      return false;
+    }
+    if (this.anchor && !this.anchor.node.isConnected) this.anchor = null;
+    if (this.focus && !this.focus.node.isConnected) {
+      this.focus = null;
+      this.anchor = null; // a broken selection can't extend across a reseat
+      this.goalX = null;
+    }
+    this.emit();
+    return true;
+  }
+
+  /** Ensure `focus` points at a live text node, reseating at the top of the
+   *  visible area if it was dropped by a remount. Returns false when the root
+   *  has no text yet (e.g. a newly-flipped PDF page still loading) - the caller
+   *  should no-op that keypress and let the next one retry. */
+  private seatCaret(): boolean {
+    if (this.focus?.node.isConnected) return true;
+    if (!this.root?.isConnected) return false;
+    const v = visibleRect(this.root);
+    const caret =
+      caretFromPoint(v.left + 4, v.top + 4, this.root) ??
+      caretFromPoint(v.left + v.width / 2, v.top + v.height / 2, this.root);
+    if (!caret) return false;
+    this.focus = caret;
+    this.anchor = null;
+    this.goalX = null;
+    return true;
+  }
+
   private onKeyboardKey = (e: KeyboardEvent) => {
-    if (!this.keyboard || !this.root?.isConnected || !this.focus?.node.isConnected) {
+    if (!this.keyboard) return;
+    if (!this.root?.isConnected) {
       this.clear();
       return;
+    }
+    // A remount may have disconnected the caret; recover (keeps mode alive)
+    // rather than killing the whole selection.
+    if ((this.anchor && !this.anchor.node.isConnected)
+      || (this.focus && !this.focus.node.isConnected)) {
+      if (!this.recoverKeyboard()) return;
     }
     if (e.key === "Escape") {
       e.preventDefault();
@@ -275,6 +321,13 @@ class SelectionController {
     if (!move || e.altKey || e.metaKey) return;
     e.preventDefault();
     e.stopPropagation();
+
+    // Seat the caret on live text (a remount may have dropped it) and pull it
+    // back on-screen before hit-testing. A manual scroll can push the caret out
+    // of view; the vertical/line steps hit-test against the viewport and would
+    // silently no-op (looking frozen) if the caret is off-screen.
+    if (!this.seatCaret()) return;
+    this.scrollCaretIntoView();
 
     // Shift extends from a fixed anchor; unshifted movement collapses.
     if (e.shiftKey) {
@@ -692,10 +745,17 @@ class SelectionController {
   private observeRoot(root: HTMLElement): void {
     this.disconnectObserver();
     this.observer = new MutationObserver(() => {
-      if (!this.root?.isConnected || (this.anchor && !this.anchor.node.isConnected)
-        || (this.focus && !this.focus.node.isConnected)) {
+      if (!this.root?.isConnected) {
         this.clear();
+        return;
       }
+      const stale = (this.anchor && !this.anchor.node.isConnected)
+        || (this.focus && !this.focus.node.isConnected);
+      if (!stale) return;
+      // Keyboard mode has a live caret we can reseat (PDF page remount); a mouse
+      // selection has nothing to keep, so tear it down as before.
+      if (this.keyboard) this.recoverKeyboard();
+      else this.clear();
     });
     this.observer.observe(root, { childList: true, subtree: true, characterData: true });
     // A layout resize (panel/window) invalidates content-space rects; scroll
