@@ -126,6 +126,36 @@ jobs:
           RUSTFLAGS: "-C link-arg=-Wl,-rpath,$ORIGIN/../lib/portunus/ocrlib"
         run: bun tauri build --config src-tauri/tauri.bundle.conf.json
 
+      - name: Strip bundled Wayland libs from the AppImage
+        # Tauri's AppImage bundler runs linuxdeploy, which bundles libwayland-*.so
+        # (WebKitGTK links libwayland-egl). Wayland/EGL/GL are part of the graphics
+        # driver stack that must come from the *host* - the canonical AppImage
+        # excludelist deliberately drops them - because they talk directly to the
+        # kernel DRM + vendor driver. A bundled libwayland-egl that is older than
+        # the user's compositor/driver fails the EGL handshake with
+        # "Could not create default EGL display: EGL_BAD_PARAMETER. Aborting" and
+        # the window never opens. linuxdeploy bundles them here regardless, so
+        # strip them post-build: extract, delete, repack. The app then loads the
+        # host's own libwayland (present on any Wayland session; unused on X11).
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          shopt -s nullglob
+          for img in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            dir=$(dirname "$img"); base=$(basename "$img")
+            ( cd "$dir"
+              ./"$base" --appimage-extract >/dev/null
+              rm -f squashfs-root/usr/lib/*wayland*so*
+              rm -f "$base"
+              ARCH=x86_64 /tmp/appimagetool squashfs-root "$base"
+              rm -rf squashfs-root )
+            echo "Repacked $base without bundled Wayland libs"
+          done
+
       - name: Upload packages as workflow artifact
         # Runs on every trigger (master/PR/tag) so the built .deb + AppImage are
         # downloadable from the run's Actions page even when no release is cut.
