@@ -93,19 +93,27 @@ export default function ProvidersSection({ config, onChange }: Props) {
         {deps === null ? (
           <div className="settings-dep-empty">Checking…</div>
         ) : (
-          deps.map(d => (
-            <div className="settings-dep-row" key={d.id}>
-              <span className={`settings-dep-dot${d.available ? " ok" : " missing"}`} />
-              <span className="settings-dep-feature">{d.feature}</span>
-              {d.available ? (
-                <span className="settings-dep-tool">{d.label} ✓</span>
-              ) : (
-                <span className="settings-dep-tool settings-dep-tool--missing">
-                  {d.label} missing — <CopyHint text={d.install_hint} />
+          <div className="settings-deps-list">
+            {deps.map(d => (
+              <div className="settings-dep-row" key={d.id}>
+                <span
+                  className={`settings-dep-status${d.available ? " ok" : " missing"}`}
+                  aria-hidden
+                >
+                  {d.available ? "✓" : "○"}
                 </span>
-              )}
-            </div>
-          ))
+                <span className="settings-dep-feature">
+                  {d.feature}
+                  <code className="settings-dep-tool-tag">{d.label}</code>
+                </span>
+                {d.available ? (
+                  <span className="settings-dep-state">Ready</span>
+                ) : (
+                  <CopyHint text={d.install_hint} />
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </SettingsGroup>
     </div>

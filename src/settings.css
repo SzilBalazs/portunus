@@ -821,8 +821,7 @@ a:focus-visible,
   color: var(--danger-fg);
 }
 
-.settings-dep-inline-warn code,
-.settings-dep-tool code {
+.settings-dep-inline-warn code {
   font-family: monospace;
   font-size: 10.5px;
   padding: 1px 4px;
@@ -851,33 +850,67 @@ a:focus-visible,
   margin-bottom: 8px;
 }
 
+.settings-deps-list {
+  margin-top: 4px;
+}
+
 .settings-dep-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 5px 0;
-  font-size: var(--fs-desc);
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
 }
 
-.settings-dep-dot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  transform: translateY(-1px);
+.settings-dep-row + .settings-dep-row {
+  border-top: 1px solid var(--line-soft);
 }
 
-.settings-dep-dot.ok { background: #5fb56f; }
-.settings-dep-dot.missing { background: var(--danger-fg); }
+/* Status chip: calm green check when present, muted ring when absent. Missing
+   an optional tool disables one feature — it is not an error, so no red here
+   (red stays for the enabled-but-broken inline warn). */
+.settings-dep-status {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.settings-dep-status.ok {
+  background: #3fb95022;
+  color: #3fb950;
+}
+
+.settings-dep-status.missing {
+  background: var(--kbd-bg);
+  color: var(--fg-mute);
+}
 
 .settings-dep-feature {
-  flex-shrink: 0;
-  width: 168px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-body);
   color: var(--fg);
 }
 
-.settings-dep-tool {
-  color: var(--fg-desc);
+.settings-dep-tool-tag {
+  flex-shrink: 0;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: var(--fs-micro);
+  color: var(--fg-mute);
+  background: var(--kbd-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.settings-dep-state {
+  font-size: var(--fs-desc);
+  color: var(--fg-mute);
 }
 
 /* ---------- content reindex strip ---------- */
@@ -1243,11 +1276,6 @@ a:focus-visible,
   color: var(--fg-desc);
   padding: 6px 0;
 }
-
-.settings-dep-row:first-child { padding-top: 10px; }
-.settings-dep-row:last-child { padding-bottom: 10px; }
-
-.settings-dep-tool--missing { color: var(--danger-fg); }
 
 .settings-copy-hint {
   display: inline-flex;
