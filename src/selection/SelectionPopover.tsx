@@ -3,7 +3,7 @@
 // Lives inside the portaled overlay, so it scrolls with the selected text.
 // Never steals focus: divs only, mousedown prevented at the container.
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { SelRect } from "./geometry";
 import { selection } from "./controller";
@@ -94,18 +94,29 @@ export default function SelectionPopover({
     selection.clear();
   };
 
+  // Act on mousedown, not click: a drag that crosses elements fires no trailing
+  // `click` (so the controller's suppress-click guard can eat the next one), and
+  // running the action here also dodges any unmount race between down and click.
+  // preventDefault keeps focus on the search input; stopPropagation keeps the
+  // controller's document-level mousedown from treating it as an outside click.
+  const act = (fn: () => void) => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  };
+
   const chip = (() => {
     if (!entity) return null;
     switch (entity.type) {
       case "math":
         return mathResult != null ? (
-          <div className="sel-popover-btn sel-popover-entity" onClick={copyMathResult} title="Copy result">
+          <div className="sel-popover-btn sel-popover-entity" onMouseDown={act(copyMathResult)} title="Copy result">
             = {mathResult}
           </div>
         ) : null;
       case "word":
         return (
-          <div className="sel-popover-btn sel-popover-entity" onClick={() => actions.onDefine(entity.value)}>
+          <div className="sel-popover-btn sel-popover-entity" onMouseDown={act(() => actions.onDefine(entity.value))}>
             Define
           </div>
         );
@@ -114,7 +125,7 @@ export default function SelectionPopover({
         return (
           <div
             className="sel-popover-btn sel-popover-entity"
-            onClick={() => openExternal(entity.type === "email" ? `mailto:${entity.value}` : entity.value)}
+            onMouseDown={act(() => openExternal(entity.type === "email" ? `mailto:${entity.value}` : entity.value))}
           >
             Open
           </div>
@@ -129,8 +140,8 @@ export default function SelectionPopover({
       style={pos ? { left: pos.left, top: pos.top } : { left: anchor.x, top: anchor.y, visibility: "hidden" }}
       onMouseDown={e => e.preventDefault()}
     >
-      <div className="sel-popover-btn" onClick={copySelection}>{copied ? "Copied" : "Copy"}</div>
-      <div className="sel-popover-btn" onClick={() => actions.onSearch(selection.getText())}>Search</div>
+      <div className="sel-popover-btn" onMouseDown={act(copySelection)}>{copied ? "Copied" : "Copy"}</div>
+      <div className="sel-popover-btn" onMouseDown={act(() => actions.onSearch(selection.getText()))}>Search</div>
       {chip}
     </div>
   );

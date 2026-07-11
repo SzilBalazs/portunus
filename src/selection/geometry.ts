@@ -63,7 +63,7 @@ function resolveToText(node: Node, offset: number, backward: boolean): CaretPos 
 /** The character offset in a text node nearest viewport x on the line at y.
  *  Scans each glyph's rect (scroll- and transform-safe, unlike
  *  caretRangeFromPoint) and splits at the glyph midpoint. */
-function offsetAtX(node: Text, x: number, y: number): number {
+export function offsetAtX(node: Text, x: number, y: number): number {
   const r = document.createRange();
   let best = 0;
   let bestDist = Infinity;
