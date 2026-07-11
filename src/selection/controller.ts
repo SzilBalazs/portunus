@@ -196,6 +196,59 @@ class SelectionController {
     return true;
   }
 
+  /** Linear character offset of a caret within its root's text stream. */
+  private linearOffset(pos: CaretPos): number | null {
+    let acc = 0;
+    for (const n of allTextNodes(this.root!)) {
+      if (n === pos.node) return acc + pos.offset;
+      acc += n.data.length;
+    }
+    return null;
+  }
+
+  /** Map a linear character offset back to a caret in `root` (clamped to end). */
+  private caretAtLinear(root: HTMLElement, target: number): CaretPos | null {
+    let acc = 0;
+    let last: Text | null = null;
+    for (const n of allTextNodes(root)) {
+      if (target <= acc + n.data.length) return { node: n, offset: target - acc };
+      acc += n.data.length;
+      last = n;
+    }
+    return last ? { node: last, offset: last.data.length } : null;
+  }
+
+  /** Snapshot the live selection as linear character offsets over the current
+   *  root's text stream, so it can be re-applied to another root that renders
+   *  the same text (side-panel preview ⇄ quicklook). Read this BEFORE the target
+   *  root exists - the source root's text may unmount as the target mounts. */
+  captureLinear(): { anchor: number | null; focus: number } | null {
+    if (!this.root || !this.focus) return null;
+    const focus = this.linearOffset(this.focus);
+    if (focus === null) return null;
+    const anchor = this.anchor ? this.linearOffset(this.anchor) : null;
+    return { anchor, focus };
+  }
+
+  /** Re-apply a captured selection onto `root`, remapping offsets to its text.
+   *  Returns false (leaving the selection untouched) if the target has no text
+   *  yet - async previews populate a frame or two after mount, so the caller
+   *  retries. Keyboard mode is preserved. */
+  applyLinear(root: HTMLElement, cap: { anchor: number | null; focus: number }): boolean {
+    if (allTextNodes(root).length === 0) return false;
+    const newFocus = this.caretAtLinear(root, cap.focus);
+    if (!newFocus) return false;
+    const newAnchor = cap.anchor !== null ? this.caretAtLinear(root, cap.anchor) : null;
+    this.cancelDrag();
+    this.disconnectObserver();
+    this.root = root;
+    this.focus = newFocus;
+    this.anchor = newAnchor;
+    this.observeRoot(root);
+    this.emit();
+    return true;
+  }
+
   private exitKeyboard(): void {
     if (!this.keyboard) return;
     this.keyboard = false;

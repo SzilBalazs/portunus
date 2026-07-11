@@ -959,7 +959,30 @@ export default function App() {
   // controller's MutationObserver clears the now-disconnected selection anyway.
   useEffect(() => {
     selection.clear();
-  }, [mode, selected?.id, quickResult?.id]);
+  }, [mode, selected?.id]);
+
+  // Toggling quicklook swaps the preview between two DOM subtrees that render the
+  // same text (side panel ⇄ overlay). Carry the selection across instead of
+  // dropping it; fall back to clear if the now-visible root has no matching text
+  // yet (e.g. an async preview). Layout effect: the target subtree is committed.
+  useLayoutEffect(() => {
+    if (!selection.hasSelection() && !selection.isKeyboardMode()) return;
+    const cap = selection.captureLinear();
+    if (!cap) { selection.clear(); return; }
+    const sel = quickResult ? ".quicklook-overlay [data-selectable]" : ".card [data-selectable]";
+    // Async previews (md/pdf/png text layers) populate a few frames after mount;
+    // poll until the target has matching text, then remap. Give up after ~1s.
+    let raf = 0;
+    let tries = 0;
+    const attempt = () => {
+      const root = document.querySelector<HTMLElement>(sel);
+      if (root && selection.applyLinear(root, cap)) return;
+      if (++tries > 60) { selection.clear(); return; }
+      raf = requestAnimationFrame(attempt);
+    };
+    attempt();
+    return () => cancelAnimationFrame(raf);
+  }, [quickResult?.id]);
 
   // Dominant icon colour per result (accent bleed). The selected result's colour
   // is hoisted to a card-level var so the preview panel re-hues with the selection.

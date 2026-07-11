@@ -7,7 +7,7 @@
 // overlay's actual painted position is correct either way. A scroll/resize
 // listener recomputes while a selection is live.
 
-import { Fragment, useLayoutEffect, useReducer, useRef, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { selection } from "./controller";
 import { caretRect, rectsForRange, rootScale, type SelRect } from "./geometry";
@@ -20,6 +20,18 @@ export default function SelectionLayer({ actions }: { actions: PopoverActions })
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
   const active = !!snap.root && (!!snap.range || snap.keyboard);
+
+  // Hold the caret solid while it's actively moving (key-repeat) - the blink
+  // makes a moving cursor hard to track. Blink resumes ~500ms after the last move.
+  const [moving, setMoving] = useState(false);
+  const moveTimer = useRef<number>(0);
+  useEffect(() => {
+    if (!snap.keyboard || !snap.focus) return;
+    setMoving(true);
+    clearTimeout(moveTimer.current);
+    moveTimer.current = window.setTimeout(() => setMoving(false), 500);
+    return () => clearTimeout(moveTimer.current);
+  }, [snap.keyboard, snap.focus]);
 
   useLayoutEffect(() => {
     if (!active) return;
@@ -73,7 +85,7 @@ export default function SelectionLayer({ actions }: { actions: PopoverActions })
           <div key={i} className="sel-rect" style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />
         ))}
         {caret && (
-          <div className="sel-caret" style={{ left: caret.x, top: caret.y, height: caret.h }} />
+          <div className="sel-caret" data-moving={moving || undefined} style={{ left: caret.x, top: caret.y, height: caret.h }} />
         )}
       </div>
       {showPopover && (
