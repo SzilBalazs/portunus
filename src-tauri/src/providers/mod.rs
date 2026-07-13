@@ -395,11 +395,23 @@ impl PluginRegistry {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        // Deduplicate by exec: keep highest-scored occurrence (already first after sort).
+        // Deduplicate: keep highest-scored occurrence (already first after sort).
+        // Apps dedup by display title, not exec - GNOME's Evince/Papers split
+        // ships two distinct binaries (`evince` vs `papers`) both named
+        // "Document Viewer", and a second desktop-environment install multiplies
+        // that across prefixes. Identical rows the user can't tell apart collapse
+        // to the best-scored one. Other kinds keep the exec key.
         let mut seen = std::collections::HashSet::new();
-        results.retain(|r| match &r.exec {
-            Some(e) => seen.insert(e.clone()),
-            None => true,
+        results.retain(|r| {
+            let key = if r.kind == "app" {
+                Some(format!("app-title:{}", r.title))
+            } else {
+                r.exec.clone()
+            };
+            match key {
+                Some(k) => seen.insert(k),
+                None => true,
+            }
         });
         results.truncate(self.max_results);
         results
@@ -475,7 +487,32 @@ fn builtin_commands() -> Vec<CommandDescriptor> {
         glyph: Some("settings".to_string()),
         icon_data_uri: None,
         opens_form: false,
-        route: CommandRoute::Invoke { command: "open_settings_window".to_string() },
+        route: CommandRoute::Invoke { command: "open_settings_window".to_string(), args: None },
+    },
+    CommandDescriptor {
+        id: "cmd:reindex".to_string(),
+        title: "Rebuild Content Index".to_string(),
+        chip: "Reindex".to_string(),
+        subtitle: Some("Content search".to_string()),
+        source: CommandSource::Builtin,
+        mode_kind: ModeKind::Action,
+        keywords: vec![
+            "reindex".into(),
+            "rebuild".into(),
+            "index".into(),
+            "content".into(),
+            "refresh".into(),
+        ],
+        placeholder: None,
+        min_query_len: 0,
+        result_kind: "command".to_string(),
+        glyph: Some("refresh".to_string()),
+        icon_data_uri: None,
+        opens_form: false,
+        route: CommandRoute::Invoke {
+            command: "trigger_full_reindex".to_string(),
+            args: Some(serde_json::json!({ "full": false })),
+        },
     }]
 }
 
