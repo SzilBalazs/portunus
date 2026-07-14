@@ -466,3 +466,17 @@
     --hljs-attr: #b4c0a8;
     --hljs-variable: #b8c0b4;
 }
+
+/* ── Global scrollbar default ─────────────────────────────────────────────────
+   WebKitGTK renders a fat native scrollbar for any overflow element unless
+   ::-webkit-scrollbar is styled, and it does NOT reliably honor the standard
+   scrollbar-width/scrollbar-color props (setting those actually overrides these
+   rules) - so every scroll area is styled here, once, for both windows. Thin,
+   transparent until the pointer is over the container. Per-element rules can
+   still bump the width or force an always-visible thumb; they win on specificity.
+   ───────────────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+:hover::-webkit-scrollbar-thumb { background: var(--bg-input); }
+::-webkit-scrollbar-corner { background: transparent; }

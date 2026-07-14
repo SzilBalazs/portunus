@@ -232,7 +232,7 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
       await invoke("save_config", { config: final });
     } catch (e) {
       // Don't mark onboarding done or close - let the user retry. Esc still
-      // dismisses as an escape hatch if saving keeps failing.
+      // hides Portunus (onboarding returns next launch) if saving keeps failing.
       console.error("[onboarding] save_config failed:", e);
       setSaveError(true);
       setFinishing(false);
@@ -245,17 +245,8 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
     onComplete();
   };
 
-  // Esc / dismiss: close without marking onboarding done, so it returns on the
-  // next launch.
-  const dismiss = () => {
-    if (finishing) return;
-    onComplete();
-  };
-
   const commitRef = useRef(commit);
   commitRef.current = commit;
-  const dismissRef = useRef(dismiss);
-  dismissRef.current = dismiss;
 
   const isLast = step === STEPS.length - 1;
 
@@ -294,8 +285,11 @@ export default function OnboardingWizard({ config, onComplete }: Props) {
         e.preventDefault();
         if (isLast) commitRef.current(); else go(step + 1);
       } else if (e.key === "Escape") {
+        // Esc hides Portunus without dismissing onboarding — the wizard stays
+        // mounted and reappears at the same step on the next --show.
         e.preventDefault();
-        dismissRef.current();
+        e.stopImmediatePropagation(); // don't let the launcher's Esc also fire
+        invoke("hide_window");
       }
     };
     window.addEventListener("keydown", onKey);
