@@ -118,13 +118,13 @@ export default function RankingPlayground({ config }: Props) {
           type="text"
           value={query}
           spellCheck={false}
-          placeholder="Test a query — try code or invoice"
+          placeholder="Try a query like code or invoice"
           onChange={e => setQuery(e.target.value)}
         />
-        {active && (
-          <span className="settings-playground-hint">hold Alt for numbers</span>
-        )}
       </div>
+      {active && results.length > 0 && (
+        <div className="settings-playground-hint">hold Alt for numbers</div>
+      )}
       {active && (
         <div className="settings-playground-body">
           {results.length > 0 && (
@@ -187,27 +187,29 @@ function PlaygroundRow({
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
     >
-      <ResultIcon
-        icon_path={result.icon_path}
-        iconDataUri={result.icon_data_uri}
-        glyph={result.command?.glyph}
-        title={result.title}
-        kind={result.kind}
-      />
-      <div className="settings-playground-row-text">
-        <div className="settings-playground-row-title">
-          {result.title}
-          {result.pinned && <span className="settings-playground-pin">★</span>}
+      <div className="settings-playground-row-head">
+        <ResultIcon
+          icon_path={result.icon_path}
+          iconDataUri={result.icon_data_uri}
+          glyph={result.command?.glyph}
+          title={result.title}
+          kind={result.kind}
+        />
+        <div className="settings-playground-row-text">
+          <div className="settings-playground-row-title">
+            {result.title}
+            {result.pinned && <span className="settings-playground-pin">★</span>}
+          </div>
+          {result.subtitle && <div className="settings-playground-row-sub">{result.subtitle}</div>}
         </div>
-        {result.subtitle && <div className="settings-playground-row-sub">{result.subtitle}</div>}
+        <span
+          className={`settings-playground-delta${delta > 0 ? " up" : delta < 0 ? " down" : ""}`}
+          // Re-mount per change so the fade-out animation restarts.
+          key={`${result.id}:${delta}`}
+        >
+          {delta > 0 ? `▲${delta}` : delta < 0 ? `▼${-delta}` : ""}
+        </span>
       </div>
-      <span
-        className={`settings-playground-delta${delta > 0 ? " up" : delta < 0 ? " down" : ""}`}
-        // Re-mount per change so the fade-out animation restarts.
-        key={`${result.id}:${delta}`}
-      >
-        {delta > 0 ? `▲${delta}` : delta < 0 ? `▼${-delta}` : ""}
-      </span>
       {result.breakdown && (
         <div className="settings-playground-score">
           <ScoreBar breakdown={result.breakdown} max={max} showNumbers={showNumbers} />

@@ -1117,6 +1117,30 @@ a:focus-visible,
   margin: 0 auto;
 }
 
+/* Ranking breaks the narrow column to fit knobs + a sticky playground rail. */
+.settings-section-wrap--wide {
+  max-width: 900px;
+}
+
+.ranking-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 28px;
+  /* Cells stretch to the row height (the taller knobs column) so the
+     playground has vertical travel to stick against as knobs scroll. */
+  align-items: stretch;
+}
+
+.ranking-knobs { min-width: 0; }
+.ranking-play { min-width: 0; }
+
+/* Left-cluster the group Reset next to its title. The wide knob column would
+   otherwise fling a space-between action to a far, orphaned right edge. */
+.ranking-knobs .settings-group-title-row {
+  justify-content: flex-start;
+  gap: 12px;
+}
+
 .settings-section {
   animation: settings-section-in 0.22s ease-out;
 }
@@ -1232,6 +1256,84 @@ a:focus-visible,
 .settings-slider-value {
   flex-shrink: 0;
   min-width: 52px;
+  text-align: right;
+  font: 500 12px/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--accent);
+}
+
+/* ---------- tick slider (snaps to labeled stops) ----------
+   Range slider that can only rest on a handful of stops, with a notch marking
+   each stop and the active stop's name read out on the right. */
+
+.tick-slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.tick-slider-track {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.tick-slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  height: 4px;
+  border-radius: 3px;
+  background: linear-gradient(to right,
+    var(--accent) 0, var(--accent) var(--pct, 0%),
+    var(--toggle-bg) var(--pct, 0%), var(--toggle-bg) 100%);
+  outline: none;
+  cursor: pointer;
+}
+
+.tick-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-deep);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.tick-slider-input::-webkit-slider-thumb:hover { transform: scale(1.15); }
+
+/* Notches straddle the track above it; edge stops and the active stop hide
+   their notch (the track ends and the thumb already mark those spots). The
+   hidden slots stay in flow so space-between keeps the rest stop-aligned. */
+.tick-slider-notches {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+}
+
+.tick-slider-notch {
+  width: 2px;
+  height: 8px;
+  border-radius: 1px;
+  /* Dark punch-through gap: reads on both the filled and unfilled track. */
+  background: var(--bg-deep);
+}
+.tick-slider-notch.hidden { visibility: hidden; }
+
+.tick-slider-value {
+  flex-shrink: 0;
+  min-width: 92px;
   text-align: right;
   font: 500 12px/1 "JetBrains Mono", "Fira Code", monospace;
   color: var(--accent);
@@ -1716,6 +1818,107 @@ a:focus-visible,
   white-space: nowrap;
 }
 
+/* ---------- ranking: category ladder ----------
+   Slim, card-less rows read as one ordered ladder (top wins ties) rather than
+   six heavy cards. Scoped to .category-ladder so the shared SortableList stays
+   neutral for any future consumer. */
+
+.category-ladder .settings-sortable-row {
+  gap: 9px;
+  min-height: 34px;
+  padding: 4px 8px;
+  margin-bottom: 1px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+}
+.category-ladder .settings-sortable-row:hover { background: var(--bg-row-hov); }
+.category-ladder .settings-sortable-row.lifted {
+  background: var(--bg-card);
+  border-color: var(--accent-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.category-rank {
+  flex-shrink: 0;
+  width: 15px;
+  text-align: center;
+  font: 600 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.category-glyph {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--icon-fg-mute);
+}
+
+.category-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-sortable-chevron-spacer {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+}
+
+/* ---------- ranking: inline weight picker ---------- */
+
+.weight-picker {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.weight-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-input);
+  border-radius: 5px;
+}
+
+.weight-cell {
+  width: 15px;
+  height: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.weight-cell:hover { background: var(--fg-dim); }
+.weight-cell.on { background: var(--accent); }
+.weight-cell.on.hide { background: var(--danger-fg); }
+.weight-cell:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.weight-readout {
+  min-width: 48px;
+  font: 500 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+}
+.weight-readout.hide { color: var(--danger-fg); }
+
+.category-ladder-note {
+  margin-top: 8px;
+  font-size: var(--fs-desc);
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
 /* ---------- ranking: group reset ---------- */
 
 .settings-group-reset {
@@ -1771,13 +1974,11 @@ a:focus-visible,
 
 .settings-playground {
   position: sticky;
-  bottom: 0;
-  z-index: 4;
-  margin: 28px -36px -32px;
-  padding: 10px 36px 14px;
+  top: 0;
+  padding: 12px 14px 14px;
   background: var(--bg-card);
-  border-top: 1px solid var(--line);
-  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 
 .settings-playground-input-row {
@@ -1801,7 +2002,8 @@ a:focus-visible,
 .settings-playground-hint {
   font-size: var(--fs-micro);
   color: var(--fg-dim);
-  white-space: nowrap;
+  text-align: right;
+  margin-top: 6px;
 }
 
 .settings-playground-body { padding-top: 8px; }
@@ -1831,11 +2033,16 @@ a:focus-visible,
 .settings-playground-legend span[data-seg="pin"]::before { opacity: 1; }
 
 .settings-playground-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 0;
+}
+.settings-playground-row-head {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 34px 170px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 5px 0;
 }
 .settings-playground-row .result-icon,
 .settings-pin-row .result-icon {

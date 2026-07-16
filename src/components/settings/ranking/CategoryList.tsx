@@ -1,9 +1,10 @@
+import { ReactNode } from "react";
 import { Config } from "../../../types";
 import { useExtensionMeta } from "../../../extensions/meta";
 import SortableList from "../SortableList";
-import Slider from "../Slider";
 import Badge from "../Badge";
-import { categoryMeta, mergedOrder, weightLabel } from "./categories";
+import WeightPicker from "./WeightPicker";
+import { categoryMeta, mergedOrder } from "./categories";
 
 interface Props {
   config: Config;
@@ -26,9 +27,40 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
   </svg>
 );
 
+/** A glyph per category, drawn in the app's own icon language so the ladder
+ *  reads like the sidebar and the result icons in the live playground. */
+const svg = (children: ReactNode) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+);
+const CATEGORY_GLYPHS: Record<string, ReactNode> = {
+  calc: svg(<>
+    <rect x="4" y="2" width="16" height="20" rx="2" /><line x1="8" y1="6" x2="16" y2="6" />
+    <line x1="8" y1="11" x2="8.01" y2="11" /><line x1="12" y1="11" x2="12.01" y2="11" /><line x1="16" y1="11" x2="16.01" y2="11" />
+    <line x1="8" y1="16" x2="8.01" y2="16" /><line x1="12" y1="16" x2="12.01" y2="16" /><line x1="16" y1="16" x2="16.01" y2="16" />
+  </>),
+  app: svg(<>
+    <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+    <rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
+  </>),
+  command: svg(<>
+    <rect x="3" y="4" width="18" height="16" rx="2" /><polyline points="7 9 10 12 7 15" /><line x1="13" y1="15" x2="17" y2="15" />
+  </>),
+  extension: svg(
+    <path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z" />
+  ),
+  file: svg(<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />),
+  dict: svg(<>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+  </>),
+};
+
 /**
- * The ranking centerpiece: drag categories into priority order; expand a row
- * to fine-tune its weight (and, for Extensions, each installed extension).
+ * The ranking centerpiece: a slim priority ladder. Drag to reorder (top wins
+ * ties); set each category's weight inline. Extensions expand to reveal a
+ * per-extension weight for every installed extension.
  */
 export default function CategoryList({ config, setRanking }: Props) {
   const ranking = config.ranking;
@@ -42,83 +74,71 @@ export default function CategoryList({ config, setRanking }: Props) {
   const setExtWeight = (name: string, w: number) =>
     setRanking({ extension_weights: { ...ranking.extension_weights, [name]: w } });
 
+  const anyHidden = order.some(k => weightOf(k) === 0);
+
   return (
+    <>
     <SortableList
+      className="category-ladder"
       items={order}
       getKey={k => k}
       ariaLabel="Result category priority"
       onReorder={keys => setRanking({ category_order: keys })}
       renderRow={(key, ctx) => {
         const meta = categoryMeta(key)!;
-        const w = weightOf(key);
+        const expandable = key === "extension";
         return (
           <>
             <span className="settings-sortable-grip" {...ctx.handleProps} aria-label={`Reorder ${meta.label}`}>
               <GripIcon />
             </span>
-            <div className="settings-sortable-text">
-              <div className="settings-sortable-label">{meta.label}</div>
-              <div className="settings-sortable-desc">{meta.desc}</div>
-            </div>
-            {w !== 50 && (
-              <Badge tone={w === 0 ? "error" : "neutral"}>{weightLabel(w)}</Badge>
+            <span className="category-rank" aria-hidden="true">{order.indexOf(key) + 1}</span>
+            <span className="category-glyph" aria-hidden="true">{CATEGORY_GLYPHS[key]}</span>
+            <div className="category-name" title={meta.desc}>{meta.label}</div>
+            <WeightPicker label={meta.label} value={weightOf(key)} onChange={v => setWeight(key, v)} />
+            {expandable ? (
+              <button
+                type="button"
+                className="settings-sortable-chevron"
+                aria-label={`${ctx.expanded ? "Collapse" : "Expand"} per-extension weights`}
+                aria-expanded={ctx.expanded}
+                onClick={ctx.toggleExpand}
+              >
+                <ChevronIcon open={ctx.expanded} />
+              </button>
+            ) : (
+              <span className="settings-sortable-chevron-spacer" aria-hidden="true" />
             )}
-            <button
-              type="button"
-              className="settings-sortable-chevron"
-              aria-label={`${ctx.expanded ? "Collapse" : "Expand"} ${meta.label}`}
-              aria-expanded={ctx.expanded}
-              onClick={ctx.toggleExpand}
-            >
-              <ChevronIcon open={ctx.expanded} />
-            </button>
           </>
         );
       }}
       renderExpanded={key => {
-        const meta = categoryMeta(key)!;
+        if (key !== "extension") return null;
+        if (extensions.length === 0) {
+          return <div className="settings-sortable-detail-body">
+            <div className="settings-sortable-detail-empty">No extensions installed.</div>
+          </div>;
+        }
         return (
           <div className="settings-sortable-detail-body">
-            <div className="settings-sortable-detail-row">
-              <span className="settings-sortable-detail-label">Weight</span>
-              <Slider
-                label={`${meta.label} weight`}
-                value={weightOf(key)}
-                min={0} max={100} step={5}
-                format={weightLabel}
-                onChange={v => setWeight(key, v)}
-              />
-            </div>
-            {key === "extension" && extensions.length > 0 && (
-              <div className="settings-sortable-detail-exts">
-                {extensions.map(ext => (
-                  <div className="settings-sortable-detail-row" key={ext.name}>
-                    <span className="settings-sortable-detail-label">
-                      {ext.name}
-                      {ext.dev && <Badge tone="dev">dev</Badge>}
-                    </span>
-                    <Slider
-                      label={`${ext.name} weight`}
-                      value={extWeightOf(ext.name)}
-                      min={0} max={100} step={5}
-                      format={weightLabel}
-                      onChange={v => setExtWeight(ext.name, v)}
-                    />
-                  </div>
-                ))}
+            {extensions.map(ext => (
+              <div className="settings-sortable-detail-row" key={ext.name}>
+                <span className="settings-sortable-detail-label">
+                  {ext.name}
+                  {ext.dev && <Badge tone="dev">dev</Badge>}
+                </span>
+                <WeightPicker label={ext.name} value={extWeightOf(ext.name)} onChange={v => setExtWeight(ext.name, v)} />
               </div>
-            )}
-            {key === "extension" && extensions.length === 0 && (
-              <div className="settings-sortable-detail-empty">No extensions installed.</div>
-            )}
-            {weightOf(key) === 0 && (
-              <div className="settings-sortable-detail-note">
-                Hidden from search results. {key === "dict" ? "" : "Scoped access still works."}
-              </div>
-            )}
+            ))}
           </div>
         );
       }}
     />
+    {anyHidden && (
+      <div className="category-ladder-note">
+        Hidden categories leave the main results but stay reachable in scoped searches.
+      </div>
+    )}
+    </>
   );
 }

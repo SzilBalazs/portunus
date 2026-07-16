@@ -492,7 +492,7 @@ export default function Settings() {
               </div>
             ) : (
               <DepsProvider>
-                <div className="settings-section-wrap">
+                <div className={`settings-section-wrap${activeSection === "ranking" ? " settings-section-wrap--wide" : ""}`}>
                 {activeSection === "general"   && <GeneralSection   config={config} onChange={setConfig} />}
                 {activeSection === "providers" && <ProvidersSection config={config} onChange={setConfig} />}
                 {activeSection === "clipboard" && <ClipboardSection config={config} onChange={setConfig} />}

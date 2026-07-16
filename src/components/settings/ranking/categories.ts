@@ -55,3 +55,43 @@ export function weightLabel(w: number): string {
   if (w < 100) return "High";
   return "Max";
 }
+
+/** One discrete slider stop: the config value plus its readout label. */
+export interface Stop { value: number; label: string; }
+
+const LEVELS = ["Off", "Low", "Medium", "High", "Max"];
+const levelStops = (values: number[]): Stop[] =>
+  values.map((value, i) => ({ value, label: LEVELS[i] }));
+
+/**
+ * Match-tier boost stops. Same five levels per tier, but each maps to a
+ * magnitude that fits its role, so the defaults in RANKING_DEFAULTS land on a
+ * named stop (exact High, prefix Medium, word-start Low) with no ranking change.
+ */
+export const BOOST_STOPS: Record<"exact" | "prefix" | "word_start", Stop[]> = {
+  exact: levelStops([0, 30, 50, 70, 100]),
+  prefix: levelStops([0, 10, 25, 45, 70]),
+  word_start: levelStops([0, 4, 10, 20, 40]),
+};
+
+/** Match-vs-history balance stops (0 all match, 100 all history). */
+export const BALANCE_STOPS: Stop[] = [
+  { value: 0, label: "Favor match" },
+  { value: 25, label: "Lean match" },
+  { value: 50, label: "Balanced" },
+  { value: 75, label: "Lean history" },
+  { value: 100, label: "Favor history" },
+];
+
+/** Half-life presets, in days. Default 14 = "2 weeks". */
+export const FADE_PRESETS: { days: number; label: string }[] = [
+  { days: 3, label: "3 days" },
+  { days: 7, label: "1 week" },
+  { days: 14, label: "2 weeks" },
+  { days: 30, label: "1 month" },
+  { days: 90, label: "3 months" },
+];
+
+export function fadeLabel(days: number): string {
+  return FADE_PRESETS.find(p => p.days === days)?.label ?? `Custom (${days} days)`;
+}

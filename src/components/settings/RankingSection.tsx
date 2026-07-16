@@ -4,11 +4,18 @@ import Select from "./Select";
 import SectionHeader from "./SectionHeader";
 import SettingsGroup from "./SettingsGroup";
 import SettingsField from "./SettingsField";
-import Slider from "./Slider";
+import TickSlider from "./TickSlider";
 import CategoryList from "./ranking/CategoryList";
 import PinsList from "./ranking/PinsList";
 import RankingPlayground from "./ranking/RankingPlayground";
-import { mergedOrder, RANKING_DEFAULTS } from "./ranking/categories";
+import {
+  mergedOrder,
+  RANKING_DEFAULTS,
+  BOOST_STOPS,
+  BALANCE_STOPS,
+  FADE_PRESETS,
+  fadeLabel,
+} from "./ranking/categories";
 
 interface Props {
   config: Config;
@@ -23,20 +30,6 @@ const STRICTNESS_OPTIONS = [
 
 function strictnessLabel(v: number): string {
   return STRICTNESS_OPTIONS.find(o => Math.abs(o.value - v) < 0.001)?.label ?? `Custom (${v.toFixed(2)})`;
-}
-
-function boostLabel(v: number): string {
-  if (v === 0) return "Off";
-  if (v <= 10) return "Subtle";
-  if (v <= 40) return "Strong";
-  return "Dominant";
-}
-
-function balanceLabel(v: number): string {
-  if (v === 0) return "Match only";
-  if (v === 100) return "History only";
-  if (v === 50) return "Balanced";
-  return v < 50 ? `Match +${50 - v}` : `History +${v - 50}`;
 }
 
 function ResetButton({ onClick }: { onClick: () => void }) {
@@ -73,12 +66,14 @@ export default function RankingSection({ config, onChange }: Props) {
     <div className="settings-section settings-section--ranking">
       <SectionHeader
         title="Ranking"
-        desc="Control what wins: category priority, match quality, history, and pinned results. Test changes live below."
+        desc="Choose what wins when results compete."
       />
 
+      <div className="ranking-layout">
+        <div className="ranking-knobs">
       <SettingsGroup
         title="Category priority"
-        desc="Drag to reorder. Higher categories win; match-quality boosts below can still jump a well-matched result upward."
+        desc="Higher rows win ties. Drag to reorder; set each weight or hide it."
         action={orderDirty ? (
           <ResetButton onClick={() => setRanking({
             category_order: [...RANKING_DEFAULTS.category_order],
@@ -92,7 +87,7 @@ export default function RankingSection({ config, onChange }: Props) {
 
       <SettingsGroup
         title="Match quality"
-        desc="How strongly a result's title matching what you typed lifts it above other categories."
+        desc="How much a matching title lifts a result."
         action={boostsDirty ? (
           <ResetButton onClick={() => {
             setSearch({ min_quality: 0.06 });
@@ -102,7 +97,7 @@ export default function RankingSection({ config, onChange }: Props) {
       >
         <SettingsField
           name="Match strictness"
-          desc="How closely the query must match. Loose shows more results; Strict filters aggressively."
+          desc="How close a match must be. Loose shows more, Strict shows less."
         >
           <Select
             options={STRICTNESS_OPTIONS.map(o => ({ label: o.label }))}
@@ -116,39 +111,36 @@ export default function RankingSection({ config, onChange }: Props) {
 
         <SettingsField
           name="Exact title match"
-          desc="The title equals the query. At Dominant, an exact match beats every category."
+          desc="Title equals your query."
         >
-          <Slider
-            label="Exact match boost"
+          <TickSlider
+            label="Exact match"
+            stops={BOOST_STOPS.exact}
             value={rk.match_boost.exact}
-            min={0} max={100} step={5}
-            format={boostLabel}
             onChange={v => setRanking({ match_boost: { ...rk.match_boost, exact: v } })}
           />
         </SettingsField>
 
         <SettingsField
           name="Title starts with query"
-          desc="Typing the beginning of a name lifts it across nearby categories."
+          desc="Title begins with your query."
         >
-          <Slider
-            label="Prefix match boost"
+          <TickSlider
+            label="Prefix match"
+            stops={BOOST_STOPS.prefix}
             value={rk.match_boost.prefix}
-            min={0} max={100} step={5}
-            format={boostLabel}
             onChange={v => setRanking({ match_boost: { ...rk.match_boost, prefix: v } })}
           />
         </SettingsField>
 
         <SettingsField
           name="Word starts with query"
-          desc="A word inside the title starts with the query — a tiebreaker between neighbors."
+          desc="A word in the title begins with your query."
         >
-          <Slider
-            label="Word-start match boost"
+          <TickSlider
+            label="Word start match"
+            stops={BOOST_STOPS.word_start}
             value={rk.match_boost.word_start}
-            min={0} max={100} step={2}
-            format={boostLabel}
             onChange={v => setRanking({ match_boost: { ...rk.match_boost, word_start: v } })}
           />
         </SettingsField>
@@ -156,7 +148,7 @@ export default function RankingSection({ config, onChange }: Props) {
 
       <SettingsGroup
         title="Launch history"
-        desc="Tracks how often you launch items so they surface faster over time."
+        desc="Surface things you open often."
         action={historyDirty ? (
           <ResetButton onClick={() => {
             setFrecency({ enabled: true, half_life_days: 14 });
@@ -166,46 +158,50 @@ export default function RankingSection({ config, onChange }: Props) {
       >
         <SettingsField
           name="Track launch history"
-          desc="Remember frequently used apps and files and promote them in results."
+          desc="Promote apps and files you open often."
         >
           <Toggle label="Track launch history" checked={fr.enabled} onChange={v => setFrecency({ enabled: v })} />
         </SettingsField>
 
         <SettingsField
           name="Match vs history"
-          desc="What matters more: how well a result matches right now, or how often you've launched it before."
+          desc="Prefer a close match or your usual pick."
         >
-          <Slider
-            label="Match vs history balance"
+          <TickSlider
+            label="Match vs history"
+            stops={BALANCE_STOPS}
             value={rk.match_vs_history}
-            min={0} max={100} step={5}
-            format={balanceLabel}
             onChange={v => setRanking({ match_vs_history: v })}
           />
         </SettingsField>
 
         <SettingsField
-          name="Half-life"
-          desc="History score halves after this many days of non-use. Shorter fades faster; longer remembers longer."
+          name="History fade"
+          desc="How long until an unused item fades away."
         >
-          <Slider
-            label="Half-life (days)"
-            value={fr.half_life_days}
-            min={1} max={365} step={1}
-            format={v => `${Math.round(v)} d`}
-            onChange={v => setFrecency({ half_life_days: v })}
+          <Select
+            options={FADE_PRESETS.map(p => ({ label: p.label }))}
+            value={fadeLabel(fr.half_life_days)}
+            onChange={label => {
+              const p = FADE_PRESETS.find(o => o.label === label);
+              if (p) setFrecency({ half_life_days: p.days });
+            }}
           />
         </SettingsField>
       </SettingsGroup>
 
       <SettingsGroup
         title="Pinned results"
-        desc="Pinned results always rank first while you type toward their query."
+        desc="Always first while you type toward their query."
       >
         <PinsList />
       </SettingsGroup>
+        </div>
 
-      <RankingPlayground config={config} />
+        <aside className="ranking-play">
+          <RankingPlayground config={config} />
+        </aside>
+      </div>
     </div>
   );
 }

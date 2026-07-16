@@ -24,6 +24,8 @@ interface Props<T> {
   /** Presence enables the expandable detail slot under a row. */
   renderExpanded?: (item: T) => ReactNode;
   ariaLabel: string;
+  /** Extra class on the list root, for scoping consumer-specific styling. */
+  className?: string;
 }
 
 interface DragState {
@@ -42,7 +44,7 @@ interface DragState {
  * transform and displaced rows glide by one slot; on drop the transforms are
  * cleared in the same commit that reorders, so nothing snaps.
  */
-export default function SortableList<T>({ items, getKey, onReorder, renderRow, renderExpanded, ariaLabel }: Props<T>) {
+export default function SortableList<T>({ items, getKey, onReorder, renderRow, renderExpanded, ariaLabel, className }: Props<T>) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -116,7 +118,7 @@ export default function SortableList<T>({ items, getKey, onReorder, renderRow, r
   };
 
   return (
-    <div className="settings-sortable" role="list" aria-label={ariaLabel}>
+    <div className={`settings-sortable${className ? ` ${className}` : ""}`} role="list" aria-label={ariaLabel}>
       {items.map((item, i) => {
         const key = getKey(item);
         const lifted = drag?.key === key;
