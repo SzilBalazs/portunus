@@ -181,14 +181,17 @@ pub fn check_consent(m: &manifest::ExtensionManifest) -> Result<(), String> {
         Some(rec) => {
             if rec.permissions.grew_to(&current) {
                 // Dev owns the code, so benign permission growth auto-refreshes
-                // the snapshot silently - EXCEPT a growing `spawn` allowlist.
-                // That is sandbox-breaking, so it must always be re-confirmed
-                // through the Settings reconsent flow, dev origin or not.
+                // the snapshot silently - EXCEPT sandbox-relaxing grants: a
+                // growing `spawn` allowlist or newly gaining any-host network
+                // access ("*"). Those must always be re-confirmed through the
+                // Settings reconsent flow, dev origin or not.
                 let spawn_grew = current
                     .spawn
                     .iter()
                     .any(|c| !rec.permissions.spawn.contains(c));
-                if matches!(rec.origin, Origin::Dev) && !spawn_grew {
+                let network_became_any = current.network.iter().any(|h| h == "*")
+                    && !rec.permissions.network.iter().any(|h| h == "*");
+                if matches!(rec.origin, Origin::Dev) && !spawn_grew && !network_became_any {
                     rec.permissions = current;
                     rec.version = m.version.clone();
                     rec.consented_at = now_unix();

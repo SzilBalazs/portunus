@@ -8,7 +8,7 @@ import Modal from "../Modal";
 import PermissionChips from "./PermissionChips";
 import ExtensionSettingsForm from "./ExtensionSettingsForm";
 import ExtensionLogs from "./ExtensionLogs";
-import SpawnConsentModal from "./SpawnConsentModal";
+import DangerConsentModal from "./DangerConsentModal";
 
 interface Props {
   info: ExtensionInfo;
@@ -35,13 +35,18 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
-  // Which spawn-consent gate is pending, if any. spawn is sandbox-breaking, so
-  // enabling, re-approving, or updating into it must clear the same hard
-  // checkbox the install dialog enforces - not just the passive badge/chips.
-  const [spawnConsent, setSpawnConsent] = useState<null | "enable" | "reconsent" | "update">(null);
-  // A non-spawn permission-growth update opens a plain permission-diff review.
+  // Which danger-consent gate is pending, if any. Sandbox-relaxing grants (a
+  // spawn allowlist, any-host network) must clear the same hard checkbox the
+  // install dialog enforces when enabling, re-approving, or updating into them
+  // - not just the passive badge/chips.
+  const [dangerConsent, setDangerConsent] = useState<null | "enable" | "reconsent" | "update">(null);
+  // A non-danger permission-growth update opens a plain permission-diff review.
   const [permReview, setPermReview] = useState(false);
   const spawnCmds = info.permissions?.spawn ?? [];
+  const netAny = (info.permissions?.network ?? []).includes("*");
+  // On update: the incoming version's grants, and whether "*" is newly gained.
+  const updNetAny = (update?.permissions.network ?? []).includes("*");
+  const netBecameAny = updNetAny && !netAny;
 
   const doUpdate = () => {
     setUpdating(true);
@@ -53,13 +58,13 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
   };
 
   // A marketplace update re-consents to the new grant set, so growth gets the
-  // same review as a fresh install: a grown spawn allowlist requires the hard
-  // spawn acknowledgement, any other growth a permission diff. An update that
-  // grows nothing installs directly.
+  // same review as a fresh install: a grown spawn allowlist or newly-gained
+  // any-host network requires the hard danger acknowledgement, any other growth
+  // a permission diff. An update that grows nothing installs directly.
   const runUpdate = () => {
     if (!update) return doUpdate();
     const spawnGrew = (update.permissions.spawn ?? []).some(c => !spawnCmds.includes(c));
-    if (spawnGrew) { setSpawnConsent("update"); return; }
+    if (spawnGrew || netBecameAny) { setDangerConsent("update"); return; }
     if (update.permissions_grew) { setPermReview(true); return; }
     doUpdate();
   };
@@ -77,14 +82,16 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
       .catch(e => console.error(`[extensions] consent failed: ${e}`));
   };
 
-  // Enabling or re-approving a spawn extension routes through the blocking
-  // consent modal first; everything else applies immediately.
+  // Enabling or re-approving a sandbox-relaxing extension (spawn or any-host
+  // network) routes through the blocking consent modal first; everything else
+  // applies immediately.
+  const needsDangerConsent = spawnCmds.length > 0 || netAny;
   const handleSetEnabled = (v: boolean) => {
-    if (v && spawnCmds.length > 0) { setSpawnConsent("enable"); return; }
+    if (v && needsDangerConsent) { setDangerConsent("enable"); return; }
     onSetEnabled(v);
   };
   const reconsent = () => {
-    if (spawnCmds.length > 0) { setSpawnConsent("reconsent"); return; }
+    if (needsDangerConsent) { setDangerConsent("reconsent"); return; }
     doReconsent();
   };
 
@@ -112,6 +119,9 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
             )}
             {spawnCmds.length > 0 && (
               <Badge tone="danger">runs programs</Badge>
+            )}
+            {netAny && (
+              <Badge tone="danger">any host</Badge>
             )}
             {isNew && !broken && <Badge tone="new">new — review &amp; enable</Badge>}
             {info.needs_reconsent && <Badge tone="update">permissions changed</Badge>}
@@ -202,21 +212,22 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
         </div>
       )}
 
-      {spawnConsent && (
-        <SpawnConsentModal
+      {dangerConsent && (
+        <DangerConsentModal
           title={
-            spawnConsent === "enable"
+            dangerConsent === "enable"
               ? `Enable ${info.name}?`
-              : spawnConsent === "update"
+              : dangerConsent === "update"
                 ? `Update ${info.name}?`
                 : `Allow new permissions for ${info.name}?`
           }
-          commands={spawnConsent === "update" ? update?.permissions.spawn ?? [] : spawnCmds}
-          confirmLabel={spawnConsent === "enable" ? "Enable" : spawnConsent === "update" ? "Update" : "Allow"}
-          onCancel={() => setSpawnConsent(null)}
+          spawnCommands={dangerConsent === "update" ? update?.permissions.spawn ?? [] : spawnCmds}
+          networkAny={dangerConsent === "update" ? netBecameAny : netAny}
+          confirmLabel={dangerConsent === "enable" ? "Enable" : dangerConsent === "update" ? "Update" : "Allow"}
+          onCancel={() => setDangerConsent(null)}
           onConfirm={() => {
-            const which = spawnConsent;
-            setSpawnConsent(null);
+            const which = dangerConsent;
+            setDangerConsent(null);
             if (which === "enable") onSetEnabled(true);
             else if (which === "update") doUpdate();
             else doReconsent();

@@ -23,6 +23,15 @@ export default function PermissionChips({ permissions, backgroundIntervalSecs, d
   const chips: { text: string; grew: boolean; danger?: boolean }[] = [];
   const old = diffAgainst;
   for (const host of permissions.network) {
+    // "*" is sandbox-relaxing (any host) - flag it like a danger grant.
+    if (host === "*") {
+      chips.push({
+        text: "⚠ network: any host",
+        grew: old ? !old.network.includes("*") : false,
+        danger: true,
+      });
+      continue;
+    }
     chips.push({ text: `network: ${host}`, grew: old ? !old.network.includes(host) : false });
   }
   if (permissions.kv) chips.push({ text: "storage", grew: old ? !old.kv : false });

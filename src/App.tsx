@@ -788,6 +788,16 @@ export default function App() {
       setFormBusy(false);
       setActivatePending(false);
       for (const t of resp.toasts) pushToast(t.message, t.level);
+      // Replace the launcher query (e.g. drill-down menuing). The value may
+      // equal the current text (clearing an already-empty box), so setQuery
+      // alone wouldn't re-fire the search effect - sync the ref and force a
+      // requery. Skipped when the window is hiding (resp.hide clears the box
+      // below and wins). requery() already tolerates empty in browse scopes.
+      if (resp.setQuery !== null && !resp.hide) {
+        queryRef.current = resp.setQuery;
+        setQuery(resp.setQuery);
+        requery();
+      }
       if (resp.refreshResults) requery();
       if (resp.form) {
         setExtForm({ id: req.id, ext: req.ext, command: req.command, form: resp.form });

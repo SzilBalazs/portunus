@@ -69,7 +69,7 @@ kind = "ext-emoji"             # optional: per-command result-kind override; mus
 icon = "icon_emoji.b64"        # optional: bundled base64-PNG file (bare filename) shown on the command's entry; else a generic glyph
 
 [permissions]
-network = ["api.github.com"]   # exact hosts only; wildcards are rejected; omit for none
+network = ["api.github.com"]   # exact hosts, or a lone "*" for any host (see below); partial wildcards rejected; omit for none
 kv = true                      # per-extension key-value storage
 clipboard = true               # clipboard_write host fn (NOT needed for CopyText effects)
 open_url = true                # open_url host fn (NOT needed for OpenUrl effects)
@@ -308,6 +308,7 @@ launches an OS program):
 | `hide` | — | hide the launcher after activation (the default; explicit form for clarity) |
 | `keep_open` | — | keep the launcher open (toggle-style actions) |
 | `refresh_results` | — | re-run the current query (after delete/toggle/mark-done actions) |
+| `set_query` | `query` | replace the launcher query text (`""` clears it) and re-run the current scope's search — refreshes even when the text is unchanged (e.g. drill-down menus that reset an already-empty box). Implies the window stays open (pair with `keep_open`); ignored when the activation also hides |
 | `paste` | `text` | copy + synthetic Ctrl+V into the previously focused window; **requires `paste = true` in `[permissions]`**. Clobbers the clipboard; falls back to a "Copied — press Ctrl+V" notification on compositors without the virtual-keyboard protocol (e.g. GNOME) |
 | `spawn_process` | `command`, `args` | ⚠ **sandbox-breaking** — launch an OS program (argv, never a shell), detached and fire-and-forget. `command` must appear verbatim in the `spawn` allowlist in `[permissions]` or the effect is dropped. See [`spawn`](#-spawn--running-os-processes-breaks-the-sandbox) |
 
@@ -615,7 +616,12 @@ SDK wrapper names: `kv_read`, `kv_write`, `kv_keys`, `kv_remove`, `clipboard`,
 
 **HTTP** has no custom host function; use Extism's built-in HTTP
 (`extism_pdk::http::request` in Rust). The host derives the allowlist from
-`[permissions].network`; requests to other hosts fail.
+`[permissions].network`; requests to other hosts fail. List exact hosts
+whenever you can. A lone `network = ["*"]` grants outbound HTTP to **any** host
+— use it only when the set can't be enumerated (rotating CDN pools). Like
+`spawn`, it is **sandbox-relaxing**: it forces re-consent, shows a red danger
+warning the user must acknowledge, and is flagged with an "any host" badge and
+chip. Partial wildcards (`*.example.com`, `api*`) remain rejected.
 
 ## Developer workflow
 

@@ -320,15 +320,7 @@ fn load_impl(dir: &Path, check_dir_name: bool) -> Result<(ExtensionManifest, Pat
     if manifest.entry.contains('/') || manifest.entry.contains("..") {
         return Err("entry may not contain path separators".to_string());
     }
-    // Extism's allowed_hosts accepts glob patterns - a wildcard would grant
-    // unrestricted outbound HTTP while looking innocuous in the permission UI.
-    for host in &manifest.permissions.network {
-        if host.is_empty() || host.contains('*') || host.contains('?') {
-            return Err(format!(
-                "network permission \"{host}\": wildcards are not allowed - list exact hosts"
-            ));
-        }
-    }
+    validate_network(&manifest.permissions.network)?;
     // `spawn` grants real OS-process execution - the wasm sandbox does NOT
     // contain it. The command is matched verbatim against this allowlist at
     // activate time (argv only, never a shell), so keep the list small and each
@@ -389,6 +381,26 @@ fn load_impl(dir: &Path, check_dir_name: bool) -> Result<(ExtensionManifest, Pat
     }
 
     Ok((manifest, canon_wasm))
+}
+
+/// Validates the `[permissions] network` host list. Extism's allowed_hosts
+/// accepts glob patterns. A lone "*" is the explicit any-host escape hatch
+/// (rotating CDN pools that can't be enumerated) - sandbox-relaxing, gated by
+/// re-consent and a danger warning in the UI. Partial wildcards ("*.x.com",
+/// "a*") stay rejected: they'd grant broad outbound HTTP while looking
+/// innocuous in the permission list.
+fn validate_network(hosts: &[String]) -> Result<(), String> {
+    for host in hosts {
+        if host == "*" {
+            continue;
+        }
+        if host.is_empty() || host.contains('*') || host.contains('?') {
+            return Err(format!(
+                "network permission \"{host}\": only exact hosts or a lone \"*\" (any host) are allowed"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_commands(manifest: &ExtensionManifest) -> Result<(), String> {
@@ -628,6 +640,19 @@ mod tests {
         user.insert("api_key".into(), serde_json::Value::String("leaked".into()));
         let out = resolve_settings(&[spec], &user);
         assert!(!out.contains_key("api_key"));
+    }
+
+    #[test]
+    fn network_allows_exact_and_lone_star_rejects_partial() {
+        let s = |v: &str| v.to_string();
+        // Exact hosts and a lone "*" are accepted.
+        assert!(validate_network(&[s("api.example.org"), s("*")]).is_ok());
+        assert!(validate_network(&[]).is_ok());
+        // Partial wildcards and empty entries are rejected.
+        assert!(validate_network(&[s("*.example.org")]).is_err());
+        assert!(validate_network(&[s("api*")]).is_err());
+        assert!(validate_network(&[s("api.?.org")]).is_err());
+        assert!(validate_network(&[s("")]).is_err());
     }
 
     #[test]

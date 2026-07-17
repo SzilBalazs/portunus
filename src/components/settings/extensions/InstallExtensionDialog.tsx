@@ -6,6 +6,7 @@ import Modal from "../Modal";
 import TextInput from "../TextInput";
 import PermissionChips from "./PermissionChips";
 import SpawnDangerNotice from "./SpawnDangerNotice";
+import NetworkDangerNotice from "./NetworkDangerNotice";
 import { useTauriListener } from "../../../hooks/useTauriListener";
 
 interface InstallProgress {
@@ -45,12 +46,14 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
   // Last source probed, so the error phase can offer a Retry.
   const [lastSource, setLastSource] = useState("");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
-  // Sandbox-breaking `spawn` permission needs an explicit acknowledgement
-  // before the confirm button unlocks.
+  // Sandbox-relaxing grants (spawn allowlist, any-host network) each need an
+  // explicit acknowledgement before the confirm button unlocks.
   const [spawnAck, setSpawnAck] = useState(false);
+  const [networkAck, setNetworkAck] = useState(false);
 
   const spawnCmds = phase.step === "consent" ? phase.preview.permissions.spawn : [];
-  const blockedOnSpawnAck = spawnCmds.length > 0 && !spawnAck;
+  const networkAny = phase.step === "consent" && phase.preview.permissions.network.includes("*");
+  const blockedOnAck = (spawnCmds.length > 0 && !spawnAck) || (networkAny && !networkAck);
 
   useTauriListener<InstallProgress>("ext-install-progress", p => {
     if (phase.step === "probing") setProgress(p);
@@ -61,6 +64,7 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
     setLastSource(src.trim());
     setProgress(null);
     setSpawnAck(false);
+    setNetworkAck(false);
     setPhase({ step: "probing" });
     invoke<InstallPreview>("preview_extension_install", {
       source: src.trim(),
@@ -113,8 +117,8 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
             <button
               className="settings-btn-primary"
               onClick={() => confirm(phase.preview)}
-              disabled={blockedOnSpawnAck}
-              title={blockedOnSpawnAck ? "Acknowledge the warning above to continue" : undefined}
+              disabled={blockedOnAck}
+              title={blockedOnAck ? "Acknowledge the warning above to continue" : undefined}
             >
               {phase.preview.replaces ? `Update to v${phase.preview.version}` : "Install & enable"}
             </button>
@@ -183,6 +187,7 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
           )}
           <PermissionChips permissions={phase.preview.permissions} />
           <SpawnDangerNotice commands={spawnCmds} acked={spawnAck} onAckChange={setSpawnAck} />
+          <NetworkDangerNotice any={networkAny} acked={networkAck} onAckChange={setNetworkAck} />
           {phase.preview.replaces && (
             <div className="settings-field-desc">
               Replaces installed v{phase.preview.replaces.old_version}

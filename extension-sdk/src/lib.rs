@@ -191,6 +191,11 @@ impl ActivateOutput {
         Self::single(ActivateEffect::OpenUrl { url: url.into() })
     }
 
+    /// Convenience: replace the launcher query text. Pass "" to clear it.
+    pub fn set_query(query: impl Into<String>) -> Self {
+        Self::single(ActivateEffect::SetQuery { query: query.into() })
+    }
+
     /// Convenience: show a toast at the given level.
     pub fn toast(message: impl Into<String>, level: ToastLevel) -> Self {
         Self::single(ActivateEffect::ShowToast { message: message.into(), level })
@@ -269,6 +274,11 @@ pub enum ActivateEffect {
     /// Re-run the current launcher query after activation - use after
     /// mutating whatever the results reflect (delete, toggle, mark-done).
     RefreshResults {},
+    /// Replace the launcher query text (`""` clears it) and re-run the current
+    /// scope's search - even when the text is unchanged, so a drill-down that
+    /// resets an already-empty box still refreshes. Implies the window stays
+    /// open; pair with `KeepOpen`. No permission needed.
+    SetQuery { query: String },
     /// Put `text` on the clipboard and inject a paste chord (Ctrl+V) into the
     /// previously focused window. Requires `paste = true` in the manifest
     /// permissions. Clobbers the clipboard; falls back to a "Copied - press

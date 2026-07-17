@@ -222,6 +222,7 @@ export interface ActivateResponse {
   form: FormDto | null;
   toasts: ToastDto[];
   refreshResults: boolean;
+  setQuery: string | null;
 }
 
 /** One `[[settings]]` entry from an extension's manifest. */

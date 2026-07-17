@@ -643,6 +643,7 @@ pub struct ActivateResponse {
     pub form: Option<FormPayload>,
     pub toasts: Vec<ToastPayload>,
     pub refresh_results: bool,
+    pub set_query: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -701,6 +702,7 @@ fn run_activate_effects(id: &str, effects: Vec<ActivateEffect>) -> ActivateRespo
     let mut form: Option<FormPayload> = None;
     let mut toasts: Vec<ToastPayload> = Vec::new();
     let mut refresh_results = false;
+    let mut set_query: Option<String> = None;
     let (mut explicit_hide, mut keep_open) = (false, false);
     for effect in effects {
         match effect {
@@ -750,6 +752,9 @@ fn run_activate_effects(id: &str, effects: Vec<ActivateEffect>) -> ActivateRespo
             ActivateEffect::Hide {} => explicit_hide = true,
             ActivateEffect::KeepOpen {} => keep_open = true,
             ActivateEffect::RefreshResults {} => refresh_results = true,
+            // Last set_query wins; the frontend forces a re-search after
+            // applying it (so an unchanged/empty value still refreshes).
+            ActivateEffect::SetQuery { query } => set_query = Some(query),
         }
     }
     if form.is_some() && explicit_hide {
@@ -771,7 +776,7 @@ fn run_activate_effects(id: &str, effects: Vec<ActivateEffect>) -> ActivateRespo
             );
         }
     }
-    ActivateResponse { hide, form, toasts, refresh_results }
+    ActivateResponse { hide, form, toasts, refresh_results, set_query }
 }
 
 /// Extension name from an `ext:<name>:<local>` result id (for log routing).

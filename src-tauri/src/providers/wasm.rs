@@ -652,7 +652,8 @@ impl WasmProvider {
                 | ActivateEffect::ShowToast { .. }
                 | ActivateEffect::Hide {}
                 | ActivateEffect::KeepOpen {}
-                | ActivateEffect::RefreshResults {}) => out.push(effect),
+                | ActivateEffect::RefreshResults {}
+                | ActivateEffect::SetQuery { .. }) => out.push(effect),
             }
         }
         out

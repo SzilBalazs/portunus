@@ -1,4 +1,5 @@
 import { interpretersIn } from "../../../spawn";
+import DangerNotice from "./DangerNotice";
 
 interface Props {
   /** The allowlisted commands the extension may launch (permissions.spawn). */
@@ -28,8 +29,12 @@ export default function SpawnDangerNotice({ commands, acked, onAckChange }: Prop
   if (commands.length === 0) return null;
   const interpreters = interpretersIn(commands);
   return (
-    <div className="settings-ext-danger">
-      <div className="settings-ext-danger-title">⚠ Runs programs outside the sandbox</div>
+    <DangerNotice
+      title="Runs programs outside the sandbox"
+      ackLabel="I understand this extension can run programs outside the sandbox."
+      acked={acked}
+      onAckChange={onAckChange}
+    >
       This extension can launch programs on your computer: <CommandList commands={commands} />.
       Extensions are normally sandboxed and cannot touch your system — this one asks to break out
       of that sandbox, so it runs with your full account access. Only continue if you trust the
@@ -41,10 +46,6 @@ export default function SpawnDangerNotice({ commands, acked, onAckChange }: Prop
           {" "}<strong>any</strong> program, not just itself, so this grants effectively unrestricted access.
         </div>
       )}
-      <label className="settings-ext-danger-ack">
-        <input type="checkbox" checked={acked} onChange={e => onAckChange(e.target.checked)} />
-        I understand this extension can run programs outside the sandbox.
-      </label>
-    </div>
+    </DangerNotice>
   );
 }
