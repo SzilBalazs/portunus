@@ -14,8 +14,17 @@
 
 use std::io::{BufRead, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::extensions::bus;
+
+/// Delay between socket-connect attempts while portunus is not yet up.
+const CONNECT_RETRY: Duration = Duration::from_secs(1);
+/// Cap on stdin frames buffered before the socket connects. The browser sends
+/// nothing until we message it, so this only bounds a misbehaving peer.
+const MAX_PREBUFFER: usize = 64;
 
 /// Entry point for `portunus native-host <args>`. Returns the process exit code.
 pub fn run(args: &[String]) -> i32 {
@@ -31,46 +40,103 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-/// Relays stdio native-messaging frames ↔ the socket's ext-attach channel
-/// until either side closes.
-fn pump(name: &str) -> i32 {
-    let mut socket = match UnixStream::connect(crate::ipc::socket_path()) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("portunus native-host: cannot reach a running portunus: {e}");
-            return 1;
-        }
-    };
-    if socket.write_all(format!("ext-attach:{name}\n").as_bytes()).is_err() {
-        eprintln!("portunus native-host: attach failed");
-        return 1;
-    }
+/// The live socket write half plus frames buffered while disconnected. Shared
+/// between the persistent stdin thread (producer) and the main connect loop
+/// (which swaps the writer on each (re)connect).
+#[derive(Default)]
+struct Conn {
+    /// Write half of the current socket, or `None` while disconnected.
+    writer: Option<UnixStream>,
+    /// Frames read from the browser before/between connections. Normally empty
+    /// (the browser only replies after we message it); bounded regardless.
+    prebuf: Vec<Vec<u8>>,
+}
 
-    // Browser → portunus. Runs on this (main) thread.
-    let to_socket = {
-        let mut socket = match socket.try_clone() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("portunus native-host: {e}");
-                return 1;
-            }
-        };
+/// Relays stdio native-messaging frames ↔ the socket's ext-attach channel.
+///
+/// The browser spawns this process; it may start before portunus is up (login
+/// race) or outlive a portunus restart. So the connect is retried instead of
+/// giving up: staying alive keeps the browser's native port open, which keeps
+/// an MV3 event page from being suspended, so the bridge re-establishes within
+/// [`CONNECT_RETRY`] of portunus appearing. The only clean exit is the browser
+/// closing stdin (`browser_gone`).
+fn pump(name: &str) -> i32 {
+    let browser_gone = Arc::new(AtomicBool::new(false));
+    let conn = Arc::new(std::sync::Mutex::new(Conn::default()));
+
+    // Browser → portunus: one reader thread for the whole process lifetime.
+    // Writes straight to the live socket; buffers if disconnected. On stdin EOF
+    // the browser is gone - flag it and close any live socket so the main
+    // loop's blocking read unblocks and the process exits.
+    {
+        let browser_gone = browser_gone.clone();
+        let conn = conn.clone();
         std::thread::spawn(move || {
             let mut stdin = std::io::stdin().lock();
-            loop {
-                let Some(frame) = read_frame(&mut stdin) else { break };
-                if socket.write_all(&frame).is_err() || socket.write_all(b"\n").is_err() {
-                    break;
+            while let Some(frame) = read_frame(&mut stdin) {
+                let mut c = conn.lock().unwrap();
+                if let Some(w) = c.writer.as_mut() {
+                    let _ = w.write_all(&frame).and_then(|_| w.write_all(b"\n"));
+                } else if c.prebuf.len() < MAX_PREBUFFER {
+                    c.prebuf.push(frame);
+                } else {
+                    eprintln!(
+                        "portunus native-host: dropping stdin frame (over {MAX_PREBUFFER} buffered before connect)"
+                    );
                 }
             }
-            // Stdin closed (browser gone) - close the socket so the other
-            // pump direction unblocks too.
-            let _ = socket.shutdown(std::net::Shutdown::Both);
-        })
-    };
+            browser_gone.store(true, Ordering::Relaxed);
+            if let Some(w) = conn.lock().unwrap().writer.take() {
+                let _ = w.shutdown(std::net::Shutdown::Both);
+            }
+        });
+    }
 
-    // Portunus → browser.
-    let mut reader = std::io::BufReader::new(&mut socket);
+    loop {
+        if browser_gone.load(Ordering::Relaxed) {
+            return 0;
+        }
+        let socket = match UnixStream::connect(crate::ipc::socket_path()) {
+            Ok(s) => s,
+            Err(_) => {
+                // Portunus not up yet. Wait and retry unless the browser left.
+                std::thread::sleep(CONNECT_RETRY);
+                continue;
+            }
+        };
+        // Publish the writer + flush anything buffered while disconnected.
+        {
+            let mut w = match socket.try_clone() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("portunus native-host: {e}");
+                    std::thread::sleep(CONNECT_RETRY);
+                    continue;
+                }
+            };
+            if w.write_all(format!("ext-attach:{name}\n").as_bytes()).is_err() {
+                std::thread::sleep(CONNECT_RETRY);
+                continue;
+            }
+            let mut c = conn.lock().unwrap();
+            for frame in c.prebuf.drain(..) {
+                let _ = w.write_all(&frame).and_then(|_| w.write_all(b"\n"));
+            }
+            c.writer = Some(w);
+        }
+
+        // Portunus → browser, on this thread, until the socket closes. A
+        // portunus-side close (EOF) drops us back to the reconnect loop; a
+        // restarted portunus rebinds and we re-attach.
+        socket_to_stdout(&socket);
+        conn.lock().unwrap().writer = None;
+    }
+}
+
+/// Reads socket NDJSON lines and writes them to the browser as native-messaging
+/// frames until the socket closes or a stdout write fails.
+fn socket_to_stdout(socket: &UnixStream) {
+    let mut reader = std::io::BufReader::new(socket);
     let mut stdout = std::io::stdout().lock();
     let mut buf: Vec<u8> = Vec::new();
     loop {
@@ -92,12 +158,6 @@ fn pump(name: &str) -> i32 {
             break;
         }
     }
-    // Socket closed - unblock the stdin thread by exiting; the browser closes
-    // stdin when it reaps us, and the thread also exits on its own EOF.
-    drop(stdout);
-    let _ = socket.shutdown(std::net::Shutdown::Both);
-    let _ = to_socket.join();
-    0
 }
 
 /// Reads one native-messaging frame: u32 LE length + payload. None on EOF,
