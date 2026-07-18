@@ -42,7 +42,7 @@ pub fn search(input: Json<SearchInput>) -> FnResult<Json<SearchOutput>> {
         },
         subtitle: Some("Enter copies this text".into()),
         relevance: 80.0,
-        actions: vec![Action { id: "copy".into(), label: "Copy text".into(), hint: None, opens_form: false }],
+        actions: vec![Action { id: "copy".into(), label: "Copy text".into(), ..Default::default() }],
         ..Default::default()
     }];
     Ok(Json(SearchOutput { results }))

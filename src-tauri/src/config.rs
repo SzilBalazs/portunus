@@ -24,6 +24,7 @@ pub struct Config {
     pub extensions: ExtensionsConfig,
     pub calc: CalcConfig,
     pub marketplace: MarketplaceConfig,
+    pub keybinds: KeybindsConfig,
 }
 
 impl Default for Config {
@@ -43,6 +44,55 @@ impl Default for Config {
             extensions: ExtensionsConfig::default(),
             calc: CalcConfig::default(),
             marketplace: MarketplaceConfig::default(),
+            keybinds: KeybindsConfig::default(),
+        }
+    }
+}
+
+/// User keybinds (see the commented `[keybinds]` docs in default_config.toml).
+/// Absent key = default binding; empty list (`""`/`[]`) = explicitly cleared.
+/// Chord strings are stored opaquely - the backend never validates them on
+/// load; the Settings UI and launcher own the grammar (`keybinds.rs` clamps
+/// only extension-shipped chords).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct KeybindsConfig {
+    /// Built-in launcher chords by builtin id ("quick-look", "contents", …).
+    pub builtin: std::collections::HashMap<String, ChordList>,
+    /// Command bindings by catalog id ("cmd:settings") - fire anywhere.
+    pub commands: std::collections::HashMap<String, ChordList>,
+    /// Result-action bindings by action id ("ext:ytm:queue_last").
+    pub actions: std::collections::HashMap<String, ChordList>,
+}
+
+/// Chords bound to one keybind target. In TOML the value is a single chord
+/// string or an array; `""` normalizes to the empty list ("cleared").
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ChordList(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for ChordList {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Compat {
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(match Compat::deserialize(d)? {
+            Compat::One(s) if s.is_empty() => ChordList(Vec::new()),
+            Compat::One(s) => ChordList(vec![s]),
+            Compat::Many(v) => ChordList(v),
+        })
+    }
+}
+
+impl serde::Serialize for ChordList {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // A single chord serializes as a plain string to keep config.toml
+        // tidy; zero (cleared) or several round-trip as an array.
+        match self.0.as_slice() {
+            [one] => s.serialize_str(one),
+            many => many.serialize(s),
         }
     }
 }

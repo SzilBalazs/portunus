@@ -82,6 +82,11 @@ pub struct CommandDescriptor {
     pub glyph: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_data_uri: Option<String>,
+    /// Extension-suggested chord that invokes the command from anywhere in
+    /// the launcher (canonical form, already clamped by the host). User
+    /// keybinds override or clear it; built-in commands carry None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_shortcut: Option<String>,
     /// Action commands only: the command opens a form on activation, so the
     /// frontend must not hide the launcher optimistically while it runs.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -172,6 +177,7 @@ mod tests {
             result_kind: "dict".to_string(),
             glyph: None,
             icon_data_uri: None,
+            default_shortcut: None,
             opens_form: false,
             uncapped: false,
             route: CommandRoute::Builtin { provider_id: "dict".to_string() },

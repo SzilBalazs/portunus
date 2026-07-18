@@ -80,6 +80,7 @@ mod tests {
             kind: None,
             icon: None,
             opens_form: false,
+            default_shortcut: None,
         }
     }
 

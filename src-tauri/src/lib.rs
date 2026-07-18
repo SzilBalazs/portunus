@@ -8,6 +8,7 @@ mod de_setup;
 mod extensions;
 mod frecency;
 mod ipc;
+mod keybinds;
 mod layer_shell;
 mod native_host;
 mod office;
@@ -747,6 +748,9 @@ pub fn run() {
     let last_cfg: Arc<Mutex<config::Config>> = Arc::new(Mutex::new(cfg.clone()));
     // config_state is the frontend-visible config (read by get_config, written by save_config).
     let config_state: ConfigState = Arc::new(Mutex::new(cfg.clone()));
+    // The disk-reload paths (config watcher, --reload-config) refresh it too,
+    // so a manual file edit isn't clobbered by the next Settings autosave.
+    let watcher_config_state = Arc::clone(&config_state);
 
     // Populated once the content watcher thread starts; None until then.
     let content_watcher_tx: ContentWatcherTx = Arc::new(Mutex::new(None));
@@ -873,6 +877,15 @@ pub fn run() {
                 let _ = notify_handle.emit("search-invalidated", ());
             });
 
+            // keybinds_cb pushes a changed [keybinds] section to both windows.
+            // The payload carries the section itself so the frontend never has
+            // to re-read a possibly stale config snapshot.
+            let keybinds_handle = app.handle().clone();
+            let keybinds_cb: Arc<dyn Fn(&config::KeybindsConfig) + Send + Sync> =
+                Arc::new(move |kb| {
+                    let _ = keybinds_handle.emit("keybinds-changed", kb.clone());
+                });
+
             // reindex_fn: used by the --reindex socket command. Always called from
             // a spawned thread (socket handler), so blocking on the content lock is fine.
             let reindex_ci = Arc::clone(&content_state);
@@ -913,24 +926,31 @@ pub fn run() {
             let reload_file_watcher_tx = Arc::clone(&file_watcher_tx);
             let reload_ext_kv = Arc::clone(&ext_kv);
             let reload_frecency = frecency_state.clone();
+            let reload_keybinds = Arc::clone(&keybinds_cb);
+            let reload_config_state = Arc::clone(&watcher_config_state);
             let reload_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                 let new_cfg = config::Config::load();
-                let mut last = reload_last.lock().unwrap();
-                provider_reload::rebuild_providers(
-                    &new_cfg,
-                    &last,
-                    &reload_shared,
-                    &reload_registry,
-                    &reload_ci,
-                    &reload_cb,
-                    &reload_watcher_tx,
-                    &reload_notify,
-                    &reload_file_entries,
-                    &reload_file_watcher_tx,
-                    &reload_ext_kv,
-                    &reload_frecency,
-                );
-                *last = new_cfg;
+                {
+                    let mut last = reload_last.lock().unwrap();
+                    provider_reload::rebuild_providers(
+                        &new_cfg,
+                        &last,
+                        &reload_shared,
+                        &reload_registry,
+                        &reload_ci,
+                        &reload_cb,
+                        &reload_watcher_tx,
+                        &reload_notify,
+                        &reload_keybinds,
+                        &reload_file_entries,
+                        &reload_file_watcher_tx,
+                        &reload_ext_kv,
+                        &reload_frecency,
+                    );
+                    *last = new_cfg.clone();
+                }
+                // Keep the frontend-visible config in sync with the file.
+                *reload_config_state.lock().unwrap() = new_cfg;
             });
 
             // --reload-extensions: force-rebuild every loaded extension so a
@@ -1014,10 +1034,12 @@ pub fn run() {
                 Arc::clone(&shared_config),
                 Arc::clone(&bg_registry),
                 Arc::clone(&last_cfg),
+                Arc::clone(&watcher_config_state),
                 Arc::clone(&content_state),
                 Arc::clone(&progress_cb),
                 Arc::clone(&content_watcher_tx),
                 Arc::clone(&notify_cb),
+                Arc::clone(&keybinds_cb),
                 Arc::clone(&file_entries),
                 Arc::clone(&file_watcher_tx),
                 Arc::clone(&ext_kv),
@@ -1223,6 +1245,7 @@ pub fn run() {
             extensions::get_extension_logs,
             extensions::clear_extension_logs,
             extensions::extension_storage_status,
+            extensions::seen_actions::list_extension_actions,
             extensions::install::preview_extension_install,
             extensions::install::confirm_extension_install,
             extensions::install::cancel_extension_install,

@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import type { CommandDescriptor, Config, ExtensionResult, SearchResult, ToastLevel } from '../types';
 import type { ActionDescriptor } from '../actions/types';
 import { matchesShortcut } from '../actions/shortcut';
+import { effectiveActionShortcut, matchesBuiltin } from '../keybinds/store';
 
 export interface LaunchContext {
   setQuery: (q: string) => void;
@@ -37,6 +38,16 @@ export interface PreviewProps {
   quicklook?: boolean;
 }
 
+/** One statically-known bindable action, for the Settings Keybinds catalog. */
+export interface BindableAction {
+  /** Descriptor id ("file:copy-path") - the [keybinds.actions] key. */
+  id: string;
+  title: string;
+  hint?: string;
+  /** Canonical default chord, if the action ships one. */
+  defaultChord?: string;
+}
+
 export interface ProviderPlugin {
   kinds: string[];
   Preview: ComponentType<PreviewProps> | null;
@@ -45,11 +56,14 @@ export interface ProviderPlugin {
    *  sees every result). A descriptor's `shortcut` drives both the chord
    *  dispatch (dispatchShortcut) and the action panel's kbd badge. */
   actions?: (result: SearchResult, ctx: LaunchContext) => ActionDescriptor[];
+  /** Static catalog of this provider's rebindable actions (Settings). */
+  bindableActions?: BindableAction[];
 }
 
-/** The copy chord shared by calc/dict/file providers: Ctrl+C (not Ctrl+Alt+C). */
+/** The copy chord shared by calc/dict/file providers - Ctrl+C by default,
+ *  remappable as the builtin:copy chord family. */
 export const isCopyKey = (e: KeyboardEvent): boolean =>
-  e.ctrlKey && !e.altKey && e.key === 'c';
+  matchesBuiltin(e, 'builtin:copy');
 
 const plugins: ProviderPlugin[] = [];
 
@@ -72,7 +86,10 @@ export function dispatchLaunch(result: SearchResult, ctx: LaunchContext): boolea
   return false;
 }
 
-/** All provider-declared actions for a result, in registration order. */
+/** All provider-declared actions for a result, in registration order, with
+ *  user keybind overrides applied. This is the single chokepoint where
+ *  [keybinds.actions] lands, so dispatchShortcut and the action panel's rows,
+ *  badges and chord matching all reflect remaps for free. */
 export function collectResultActions(
   result: SearchResult | null,
   ctx: LaunchContext,
@@ -82,7 +99,14 @@ export function collectResultActions(
   for (const p of plugins) {
     if (p.actions) out.push(...p.actions(result, ctx));
   }
-  return out;
+  return out.map(a =>
+    a.displayOnly ? a : { ...a, shortcut: effectiveActionShortcut(a.id, a.shortcut) },
+  );
+}
+
+/** Every statically-declared provider action, for the Settings catalog. */
+export function listProviderActionTargets(): BindableAction[] {
+  return plugins.flatMap(p => p.bindableActions ?? []);
 }
 
 /** Runs the first provider action whose shortcut matches the chord.

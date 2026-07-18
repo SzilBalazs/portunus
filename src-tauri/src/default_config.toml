@@ -112,6 +112,28 @@ depth = 3
 # depth      = 4
 # extensions = ["rs", "toml", "md"]   # code only, no PDFs or images
 
+# ── Keybinds ──────────────────────────────────────────────────────────────────
+# Remap built-in launcher chords, bind commands to global chords, and override
+# the shortcuts extensions ship on their result actions. Defaults live in code;
+# an entry here overrides them ("" clears a binding entirely). Prefer editing
+# these in Settings → Keybinds, which validates chords and warns on conflicts.
+#
+# Chord format: "ctrl+alt+shift+<key>" - modifiers in that order, lowercase.
+# Keys: a-z, 0-9, f1-f12, enter tab space comma period slash semicolon quote
+# backquote minus equal bracketleft bracketright backslash. A value is one
+# chord or an array of chords. Enter/Escape/Backspace/arrows, bare or
+# shift-only printables, plain Tab and alt+digit are structural and can't be
+# bound.
+# [keybinds.builtin]
+# quick-look   = "ctrl+space"            # replaces all default chords of that builtin
+# action-panel = ["alt+enter", "ctrl+k"]
+# contents     = ""                      # disable the Tab scope toggle
+# [keybinds.commands]
+# "cmd:settings" = "ctrl+comma"          # fires anywhere in the launcher
+# [keybinds.actions]
+# "ext:ytm:queue_last" = "ctrl+q"
+# "ext:ytm:play_next"  = ""              # clears the extension-shipped default
+
 # ── Marketplace ───────────────────────────────────────────────────────────────
 # Official extension index. Override only to test a local or forked index;
 # file:// paths are honored for custom URLs.

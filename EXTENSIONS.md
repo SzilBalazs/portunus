@@ -233,6 +233,12 @@ per keystroke, so reserve it for provider-style extensions (e.g. a live unit
 converter) where an entered scope genuinely doesn't fit. `always` does not apply
 to `action` commands.
 
+**`default_shortcut`** on a `[[commands]]` entry suggests a launcher-wide
+chord for the command (`default_shortcut = "ctrl+e"` fires it from anywhere in
+the launcher — entering a scope, or running an `action` command one-shot).
+Same canonical chord form and host validation as result-action `shortcut`s;
+users override or clear it in Settings → Keybinds (`[keybinds.commands]`).
+
 **Multiple commands** share one wasm module; dispatch on the wire's `command`
 field (the `[[commands]]` entry's `name`) in `search`/`activate`/`preview`/
 `query`. See the `gh` extension in the
@@ -264,7 +270,7 @@ you can hit the network without blocking the launcher.
     "relevance": 87.5,            // 0-100, higher = better
     "actions": [                  // optional; first = default on Enter,
       { "id": "copy", "label": "Copy emoji" },              // rest via Alt+Enter picker
-      { "id": "copy-name", "label": "Copy name", "hint": "as :shortcode:" },
+      { "id": "copy-name", "label": "Copy name", "hint": "as :shortcode:", "shortcut": "ctrl+n" },
       { "id": "report", "label": "New Issue…", "opens_form": true }  // keeps the window up while activate runs
     ],
     "badge": "beta",              // optional small chip on the result row
@@ -282,6 +288,13 @@ you can hit the network without blocking the launcher.
 - Icons are validated host-side: png/jpeg/gif/webp, at most 32 KB base64. An
   invalid icon is dropped (the result keeps the default glyph) and the error
   surfaces in Settings.
+- `shortcut` suggests a default chord for the action (canonical form:
+  `ctrl`/`alt`/`shift` in that order plus one key, e.g. `"ctrl+q"`,
+  `"ctrl+shift+comma"`). Users can override or clear it in Settings → Keybinds
+  (`[keybinds.actions] "ext:<name>:<action-id>"`). Invalid or reserved chords
+  (bare printables, plain enter/tab, alt+digit, nav keys, anything with
+  meta) are dropped by the host and logged. The shortcut on the first
+  (default) action is ignored — Enter is its chord.
 
 ### `query` (optional) — async & streaming search
 

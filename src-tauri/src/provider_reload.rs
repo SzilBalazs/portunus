@@ -37,6 +37,7 @@ pub fn rebuild_providers(
     progress_cb: &Arc<dyn Fn(usize, usize) + Send + Sync>,
     content_watcher_tx: &ContentWatcherTx,
     notify_cb: &Arc<dyn Fn() + Send + Sync>,
+    keybinds_cb: &Arc<dyn Fn(&config::KeybindsConfig) + Send + Sync>,
     file_entries: &SharedFileEntries,
     file_watcher_tx: &FileWatcherTx,
     ext_kv: &Arc<ExtensionKv>,
@@ -44,6 +45,12 @@ pub fn rebuild_providers(
 ) {
     // Update per-search scalars instantly (no rebuild needed).
     shared.write().unwrap().update_from(new_cfg);
+
+    // Keybinds are dispatched frontend-side: push the new section as-is, no
+    // provider rebuild for a keybinds-only edit.
+    if new_cfg.keybinds != old_cfg.keybinds {
+        keybinds_cb(&new_cfg.keybinds);
+    }
 
     // Update registry-level settings (max_results) and resolve the ranking
     // weights - every `[ranking]` knob applies on the next keystroke.

@@ -3,6 +3,8 @@ import { SearchResult } from "../types";
 import { EnterIcon, DeleteIcon } from "../icons";
 import { isPreviewable } from "../utils";
 import { selection } from "../selection/controller";
+import { shortcutParts, type Shortcut } from "../actions/shortcut";
+import { effectiveActionShortcut, useKeybinds } from "../keybinds/store";
 
 interface Props {
   selected: SearchResult | null;
@@ -16,19 +18,32 @@ interface Props {
   smartPaste?: boolean;
   /** The clipboard list is unfiltered + unsearched (idle), so show the Tab hint. */
   clipboardIdle?: boolean;
-  /** Whether PDF term-highlighting is on (Ctrl+H); drives the Contents-mode hint. */
+  /** Whether PDF term-highlighting is on; drives the Contents-mode hint. */
   pdfHighlight?: boolean;
   /** The action panel is open; it owns the keys. */
   actionPanelOpen?: boolean;
 }
+
+/** Effective built-in chord lookup - the bar renders remapped chords, never
+ *  the shipped defaults, so it can't lie after a [keybinds] edit. */
+type ChordOf = (builtinId: string) => Shortcut | undefined;
+
+const kbdToken = (t: string, i: number) => (
+  <kbd key={i}>
+    {t === "enter" ? <EnterIcon /> : t.length === 1 ? t.toUpperCase() : t === "tab" ? "Tab" : t}
+  </kbd>
+);
+
+/** One hint atom: the chord's kbd badges + label. Hidden when the chord is
+ *  cleared - a disabled binding must not advertise itself. */
+const Hint = ({ s, children }: { s: Shortcut | undefined; children: ReactNode }) =>
+  s ? <span className="hint">{shortcutParts(s).map(kbdToken)} {children}</span> : null;
 
 // Reusable hint atoms. The bar shows only the selected result's actions -
 // navigation, Esc and Alt+1..9 are learned once and stay off the bar (Alt-held
 // badges surface the jump shortcuts in place).
 const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
-const Peek = () => <span className="hint"><kbd>shift</kbd><kbd><EnterIcon /></kbd> peek</span>;
-const Actions = () => <span className="hint"><kbd>alt</kbd><kbd><EnterIcon /></kbd> actions</span>;
 
 function hints(
   selected: SearchResult | null,
@@ -41,6 +56,7 @@ function hints(
   actionPanelOpen: boolean,
   hasSelection: boolean,
   selectMode: boolean,
+  chord: ChordOf,
 ): ReactNode {
   const k = selected?.kind;
 
@@ -53,26 +69,27 @@ function hints(
   if (selectMode) return <>
     <span className="hint"><kbd>←→↑↓</kbd> move</span>
     <span className="hint"><kbd>shift</kbd> extend</span>
-    <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy</span>
+    <Hint s={chord("builtin:copy")}>copy</Hint>
     <span className="hint"><kbd>Esc</kbd> done</span>
   </>;
   if (hasSelection) return <>
-    <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy</span>
-    <span className="hint"><kbd>ctrl</kbd><kbd>F</kbd> search</span>
+    <Hint s={chord("builtin:copy")}>copy</Hint>
+    <Hint s={chord("builtin:search-selection")}>search</Hint>
     <span className="hint"><kbd>Esc</kbd> dismiss</span>
   </>;
   const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
-  const Highlight = () => (
-    <span className="hint"><kbd>ctrl</kbd><kbd>H</kbd> highlight {pdfHighlight ? "off" : "on"}</span>
-  );
+  const Peek = () =>
+    selected && isPreviewable(selected)
+      ? <Hint s={chord("builtin:quick-look")}>peek</Hint>
+      : null;
 
   // Full-text "Contents" mode: reuses the file row.
   if (contentMode) {
     return <>
       <Open />
       {isPdf && <PdfPageNav />}
-      {isPdf && <Highlight />}
-      {selected && isPreviewable(selected) && <Peek />}
+      {isPdf && <Hint s={chord("builtin:highlight")}>highlight {pdfHighlight ? "off" : "on"}</Hint>}
+      <Peek />
     </>;
   }
 
@@ -94,21 +111,23 @@ function hints(
 
   if (k === "command") return <Open />;
 
-  if (k === "calc") return <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy value</span>;
+  if (k === "calc") return <Hint s={effectiveActionShortcut("calc:copy", undefined)}>copy value</Hint>;
 
   if (k === "dict-hint") return <span className="hint"><kbd>|</kbd> start typing</span>;
-  if (k === "dict") return <span className="hint"><kbd>ctrl</kbd><kbd>C</kbd> copy definition</span>;
+  if (k === "dict") return <Hint s={effectiveActionShortcut("dict:copy", undefined)}>copy definition</Hint>;
 
   if (k === "ext-error") return <span className="hint"><kbd><EnterIcon /></kbd> open logs</span>;
   if (k === "content-disabled") return <span className="hint"><kbd><EnterIcon /></kbd> open settings</span>;
-  if (k === "content-hint") return <span className="hint"><kbd>Tab</kbd> search contents</span>;
+  if (k === "content-hint") return <Hint s={chord("builtin:contents")}>search contents</Hint>;
 
   if (k === "file" || k === "folder") {
     return (
       <><Open />
-        {k === "file" && <span className="hint"><kbd>ctrl</kbd><kbd><EnterIcon /></kbd> reveal</span>}
+        {k === "file" && (
+          <Hint s={effectiveActionShortcut("file:reveal", { ctrl: true, key: "enter" })}>reveal</Hint>
+        )}
         {isPdf && <PdfPageNav />}
-        {selected && isPreviewable(selected) && <Peek />}
+        <Peek />
       </>
     );
   }
@@ -130,6 +149,8 @@ export default function FooterHints({ selected, quicklookOpen = false, clipboard
   // Subscribed here (not prop-drilled): the selection is orthogonal to what
   // App knows about, and the bar must react in clipboard mode too.
   const sel = useSyncExternalStore(selection.subscribe, selection.getSnapshot);
+  const kb = useKeybinds();
+  const chord: ChordOf = id => kb.builtinShortcuts.get(id)?.[0];
   const hasSelection = sel.range != null;
   const selectMode = sel.keyboard;
   // The action panel is reachable from any normal result state, so advertise
@@ -138,8 +159,8 @@ export default function FooterHints({ selected, quicklookOpen = false, clipboard
   const showActions = !clipboardMode && !actionPanelOpen && !selectMode && !hasSelection;
   return (
     <div className="hints">
-      {hints(selected, quicklookOpen, clipboardMode, contentMode, smartPaste, clipboardIdle, pdfHighlight, actionPanelOpen, hasSelection, selectMode)}
-      {showActions && <Actions />}
+      {hints(selected, quicklookOpen, clipboardMode, contentMode, smartPaste, clipboardIdle, pdfHighlight, actionPanelOpen, hasSelection, selectMode, chord)}
+      {showActions && <Hint s={chord("builtin:action-panel")}>actions</Hint>}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { registerProvider } from './registry';
 import type { ExtensionResult } from '../types';
+import { parseChord } from '../keybinds/chord';
 
 // Launch routing for WASM extension results. They carry no `exec` - Enter goes
 // through the extension's own `activate` export via the shared activation
@@ -24,16 +25,21 @@ registerProvider({
 
   // The extension's declared actions, default (first) action first. The Enter
   // shortcut on the default is badge-only: the plain-Enter launch fallback
-  // (handleLaunch above) already runs it.
+  // (handleLaunch above) already runs it. Non-default actions carry the
+  // extension's shipped chord (host-validated), keyed `ext:<name>:<action>`
+  // so [keybinds.actions] overrides scope per extension.
   actions: (result, ctx) => {
     if (!result.id.startsWith('ext:') || !result.ext) return [];
     const ext: ExtensionResult = result.ext;
+    const extName = result.id.split(':')[1];
     return (ext.actions ?? []).map((a, i) => ({
-      id: `ext:${a.id}`,
+      id: `ext:${extName}:${a.id}`,
       title: a.label,
       hint: a.hint,
       section: 'result' as const,
-      shortcut: i === 0 ? { key: 'enter' } : undefined,
+      shortcut: i === 0
+        ? { key: 'enter' }
+        : a.shortcut ? parseChord(a.shortcut) ?? undefined : undefined,
       displayOnly: i === 0,
       run: () => ctx.activateExtension({
         id: result.id,

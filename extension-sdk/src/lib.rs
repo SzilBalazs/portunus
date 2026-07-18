@@ -81,6 +81,14 @@ pub struct Action {
     /// so the form doesn't flash the window hidden-then-shown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub opens_form: bool,
+    /// Suggested keyboard shortcut in canonical chord form
+    /// (`ctrl+alt+shift+<key>`, e.g. `"ctrl+q"`) - the user can run the
+    /// action directly on a selected result without opening the action
+    /// picker, and can override or clear it in Settings. The host drops
+    /// invalid or reserved chords, and it is ignored on the first (Enter
+    /// default) action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut: Option<String>,
 }
 
 /// Small inline icon for a search result. Same mime allowlist as image

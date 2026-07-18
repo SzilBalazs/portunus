@@ -14,6 +14,7 @@ pub mod manifest;
 pub mod marketplace;
 pub mod query;
 pub mod secrets;
+pub mod seen_actions;
 pub mod trigger;
 
 use std::collections::HashMap;

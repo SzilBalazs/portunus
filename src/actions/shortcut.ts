@@ -8,13 +8,24 @@ export interface Shortcut {
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
-  /** Match e.code instead of e.key (WebKitGTK remaps e.g. Ctrl+H to an
-   *  editing command, but e.code stays "KeyH"). */
+  /** Physical-position fallback for when WebKitGTK mangles e.key into a
+   *  control-code name (Ctrl+H→Backspace, Ctrl+M→Enter). e.code stays "KeyH".
+   *  The layout-produced e.key is still preferred when it is printable, so
+   *  QWERTZ/AZERTY letters and digits match by the char the user actually typed. */
   code?: string;
 }
 
+/** Prefer the layout char (e.key) when printable; fall back to physical e.code
+ *  only for the mangled control-code combos and for punctuation/space (whose
+ *  s.code is set from NAMED_CODE and whose e.key is never [a-z0-9]). */
+const matchesKey = (e: KeyboardEvent, s: Shortcut): boolean => {
+  const k = e.key.toLowerCase();
+  if (s.code && !/^[a-z0-9]$/.test(k)) return e.code === s.code;
+  return k === s.key;
+};
+
 export const matchesShortcut = (e: KeyboardEvent, s: Shortcut): boolean =>
-  (s.code ? e.code === s.code : e.key.toLowerCase() === s.key) &&
+  matchesKey(e, s) &&
   e.ctrlKey === !!s.ctrl &&
   e.altKey === !!s.alt &&
   e.shiftKey === !!s.shift &&

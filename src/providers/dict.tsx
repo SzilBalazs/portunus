@@ -6,6 +6,10 @@ registerProvider({
   Preview: DictPreview,
   handleLaunch: () => false,
 
+  bindableActions: [
+    { id: 'dict:copy', title: 'Copy Definition', hint: 'Dictionary', defaultChord: 'ctrl+c' },
+  ],
+
   actions: (result, ctx) => {
     if (result.kind !== 'dict') return [];
     const copyDefinition = ctx.config?.dict.copy_definition ?? true;

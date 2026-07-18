@@ -72,6 +72,17 @@ export function useCommands(): CommandDescriptor[] {
   return useSyncExternalStore(subscribe, () => cache);
 }
 
+/** Imperative catalog snapshot for module-level consumers (keybinds store). */
+export function getCommands(): CommandDescriptor[] {
+  ensureStarted();
+  return cache;
+}
+
+/** Module-level subscription (non-hook counterpart of useCommands). */
+export function subscribeCommands(cb: () => void): () => void {
+  return subscribe(cb);
+}
+
 /** Sync lookup with built-in fallbacks for the two takeover/Tab paths. */
 export function commandById(id: string): CommandDescriptor | undefined {
   ensureStarted();

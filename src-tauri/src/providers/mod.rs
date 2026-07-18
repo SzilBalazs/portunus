@@ -592,6 +592,7 @@ fn builtin_commands() -> Vec<CommandDescriptor> {
         result_kind: "command".to_string(),
         glyph: Some("settings".to_string()),
         icon_data_uri: None,
+        default_shortcut: None,
         opens_form: false,
         uncapped: false,
         route: CommandRoute::Invoke { command: "open_settings_window".to_string(), args: None },
@@ -615,6 +616,7 @@ fn builtin_commands() -> Vec<CommandDescriptor> {
         result_kind: "command".to_string(),
         glyph: Some("refresh".to_string()),
         icon_data_uri: None,
+        default_shortcut: None,
         opens_form: false,
         uncapped: false,
         route: CommandRoute::Invoke {

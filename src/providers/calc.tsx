@@ -4,6 +4,10 @@ registerProvider({
   kinds: [],
   Preview: null,
 
+  bindableActions: [
+    { id: 'calc:copy', title: 'Copy Result', hint: 'Calculator', defaultChord: 'ctrl+c' },
+  ],
+
   actions: result => {
     if (result.kind !== 'calc') return [];
     return [{

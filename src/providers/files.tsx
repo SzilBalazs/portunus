@@ -11,6 +11,11 @@ registerProvider({
   kinds: ['file', 'folder'],
   Preview: FilePreviewWrapper,
 
+  bindableActions: [
+    { id: 'file:copy-path', title: 'Copy Path', hint: 'Files and folders', defaultChord: 'ctrl+c' },
+    { id: 'file:reveal', title: 'Reveal in File Manager', hint: 'Files', defaultChord: 'ctrl+enter' },
+  ],
+
   actions: (result, ctx) => {
     if (result.kind !== 'file' && result.kind !== 'folder') return [];
     const path = result.subtitle ? `${result.subtitle}/${result.title}` : result.title;

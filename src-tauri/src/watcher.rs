@@ -139,10 +139,12 @@ pub fn start_config_watcher(
     shared: config::SharedConfig,
     registry: Registry,
     last_cfg: Arc<Mutex<config::Config>>,
+    config_state: crate::ConfigState,
     content_state: Arc<Mutex<Option<Arc<content_index::ContentIndex>>>>,
     progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync>,
     content_watcher_tx: ContentWatcherTx,
     notify_cb: Arc<dyn Fn() + Send + Sync>,
+    keybinds_cb: Arc<dyn Fn(&config::KeybindsConfig) + Send + Sync>,
     file_entries: SharedFileEntries,
     file_watcher_tx: FileWatcherTx,
     ext_kv: Arc<crate::extensions::kv::ExtensionKv>,
@@ -216,22 +218,29 @@ pub fn start_config_watcher(
 
             eprintln!("[config] change detected, reloading…");
             let new_cfg = config::Config::load();
-            let mut last = last_cfg.lock().unwrap();
-            provider_reload::rebuild_providers(
-                &new_cfg,
-                &last,
-                &shared,
-                &registry,
-                &content_state,
-                &progress_cb,
-                &content_watcher_tx,
-                &notify_cb,
-                &file_entries,
-                &file_watcher_tx,
-                &ext_kv,
-                &frecency,
-            );
-            *last = new_cfg;
+            {
+                let mut last = last_cfg.lock().unwrap();
+                provider_reload::rebuild_providers(
+                    &new_cfg,
+                    &last,
+                    &shared,
+                    &registry,
+                    &content_state,
+                    &progress_cb,
+                    &content_watcher_tx,
+                    &notify_cb,
+                    &keybinds_cb,
+                    &file_entries,
+                    &file_watcher_tx,
+                    &ext_kv,
+                    &frecency,
+                );
+                *last = new_cfg.clone();
+            }
+            // Also refresh the frontend-visible config (get_config reads it,
+            // save_config writes it back wholesale) - otherwise a manual file
+            // edit is silently clobbered by the next Settings autosave.
+            *config_state.lock().unwrap() = new_cfg;
         }
     });
 }

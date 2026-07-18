@@ -2260,3 +2260,178 @@ a:focus-visible,
   border-radius: 3px;
   padding: 1px 5px;
 }
+
+/* ---------- keybinds ---------- */
+
+.settings-keybind-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-card);
+  padding: 2px 0 10px;
+}
+.settings-keybind-search .settings-text-input { width: 100%; }
+
+.settings-keybind-list { display: flex; flex-direction: column; }
+
+.settings-keybind-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 7px 14px;
+}
+.settings-keybind-row + .settings-keybind-row { border-top: 1px solid var(--line-soft); }
+.settings-keybind-row:hover { background: var(--bg-row-hov); }
+.settings-keybind-row--fixed .settings-keybind-title { color: var(--fg-mute); }
+.settings-keybind-row--missing { opacity: 0.6; }
+
+.settings-keybind-text { flex: 1; min-width: 0; }
+.settings-keybind-title {
+  font-size: var(--fs-body);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-keybind-id {
+  font: 500 var(--fs-micro)/1.4 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-mute);
+}
+.settings-keybind-hint {
+  font-size: var(--fs-micro);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-keybind-hint--note { color: var(--accent); }
+.settings-keybind-hintline { color: var(--fg-dim); }
+
+.settings-keybind-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-keybind-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.settings-keybind-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.settings-keybind-row:hover .settings-keybind-reset,
+.settings-keybind-row:focus-within .settings-keybind-reset { opacity: 1; }
+.settings-keybind-reset:hover { color: var(--fg); border-color: var(--border); }
+.settings-keybind-trash:hover { color: var(--danger-fg); }
+
+.settings-keybind-conflict {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.settings-keybind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 4px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.settings-keybind-chip:hover { border-color: var(--border-raised); }
+.settings-keybind-chip--fixed { cursor: default; opacity: 0.55; }
+.settings-keybind-chip--fixed:hover { border-color: transparent; }
+.settings-keybind-chord { display: inline-flex; gap: 3px; }
+.settings-keybind-chord + .settings-keybind-chord { margin-left: 4px; }
+
+.settings-keybind-chip kbd,
+.settings-keybind-recorder kbd {
+  display: inline-flex;
+  align-items: center;
+  font: 500 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  background: var(--kbd-bg);
+  color: var(--kbd-fg);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+.settings-keybind-chip kbd svg { width: 10px; height: 10px; }
+
+.settings-keybind-chip--none .settings-keybind-none {
+  background: none;
+  border: 1px dashed var(--border);
+  color: var(--fg-dim);
+}
+
+.settings-keybind-lock { color: var(--fg-dim); margin-left: 2px; }
+
+@keyframes keybind-commit {
+  0% { border-color: var(--accent-border); }
+  100% { border-color: transparent; }
+}
+.settings-keybind-chip--flash { animation: keybind-commit 0.4s ease-out; }
+
+@keyframes keybind-pulse {
+  0%, 100% { border-color: var(--accent-border); }
+  50% { border-color: var(--accent); }
+}
+.settings-keybind-recorder {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  animation: keybind-pulse 1.2s ease-in-out infinite;
+}
+.settings-keybind-recorder.invalid {
+  border-color: var(--danger-fg);
+  animation: none;
+}
+.settings-keybind-recorder-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-micro);
+}
+.settings-keybind-recorder-prompt { color: var(--fg-desc); font-style: italic; }
+.settings-keybind-recorder-ellipsis { color: var(--accent); }
+.settings-keybind-recorder-reason { color: var(--danger-fg); }
+
+.settings-keybind-resetall {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: var(--fs-micro);
+  color: var(--fg-mute);
+  cursor: pointer;
+}
+.settings-keybind-resetall:hover { border-color: var(--accent); color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-keybind-chip--flash,
+  .settings-keybind-recorder { animation: none; }
+}

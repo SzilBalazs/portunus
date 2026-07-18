@@ -14,12 +14,13 @@ import ContentSection from "./components/settings/ContentSection";
 import DebugSection from "./components/settings/DebugSection";
 import AppearanceSection from "./components/settings/AppearanceSection";
 import ExtensionsSection from "./components/settings/ExtensionsSection";
+import KeybindsSection from "./components/settings/keybinds/KeybindsSection";
 import { DepsProvider } from "./components/settings/DepsContext";
 import { applyTheme } from "./theme";
 import "./settings.css";
 import "./themes.css";
 
-type Section = "general" | "providers" | "clipboard" | "extensions" | "dict" | "files" | "ranking" | "content" | "debug" | "appearance";
+type Section = "general" | "keybinds" | "providers" | "clipboard" | "extensions" | "dict" | "files" | "ranking" | "content" | "debug" | "appearance";
 
 interface NavItem {
   id: Section;
@@ -35,6 +36,16 @@ const NAV: NavItem[] = [
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
         <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+    ),
+  },
+  {
+    id: "keybinds",
+    label: "Keybinds",
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="6" width="20" height="12" rx="2"/>
+        <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>
       </svg>
     ),
   },
@@ -128,7 +139,7 @@ const NAV: NavItem[] = [
 // so the nav scans as intent ("what do I want to change?") instead of a flat list.
 // A blank label renders no divider (the top group).
 const NAV_GROUPS: { label: string; ids: Section[] }[] = [
-  { label: "",               ids: ["general"] },
+  { label: "",               ids: ["general", "keybinds"] },
   { label: "Search sources", ids: ["providers", "files", "content", "clipboard", "dict", "extensions"] },
   { label: "Ranking",        ids: ["ranking"] },
   { label: "Appearance",     ids: ["appearance"] },
@@ -322,6 +333,16 @@ export default function Settings() {
     }
   }, [config?.appearance]);
 
+  // Broadcast keybind edits to the launcher immediately (the config watcher
+  // re-emits after the autosave lands on disk; the payload event makes the
+  // remap feel instant). Reference check skips the initial disk load.
+  useEffect(() => {
+    if (!config?.keybinds) return;
+    if (diskConfigRef.current && config.keybinds !== diskConfigRef.current.keybinds) {
+      emit("keybinds-changed", config.keybinds);
+    }
+  }, [config?.keybinds]);
+
   // Auto-save: fires 800ms after the last config change, skips on initial load.
   // Heavy content edits are stripped out so only cheap changes hit disk; the
   // heavy ones stay staged until the user clicks "Apply & Reindex".
@@ -508,6 +529,7 @@ export default function Settings() {
               <DepsProvider>
                 <div className={`settings-section-wrap${activeSection === "ranking" ? " settings-section-wrap--wide" : ""}`}>
                 {activeSection === "general"   && <GeneralSection   config={config} onChange={setConfig} />}
+                {activeSection === "keybinds"  && <KeybindsSection  config={config} onChange={setConfig} />}
                 {activeSection === "providers" && <ProvidersSection config={config} onChange={setConfig} />}
                 {activeSection === "clipboard" && <ClipboardSection config={config} onChange={setConfig} />}
                 {activeSection === "extensions" && <ExtensionsSection config={config} onChange={setConfig} />}

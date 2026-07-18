@@ -61,6 +61,9 @@ function startInstall(m: MarketplaceResult, ctx: LaunchContext) {
 registerProvider({
   kinds: ["marketplace", "marketplace-msg"],
   Preview: MarketplacePreview,
+  bindableActions: [
+    { id: "market:uninstall", title: "Uninstall Extension", hint: "Marketplace" },
+  ],
   handleLaunch: (result, ctx) => {
     if (result.kind === "marketplace-msg") return true; // inert info row
     if (result.kind !== "marketplace" || !result.market) return false;

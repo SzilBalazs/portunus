@@ -84,6 +84,7 @@ export interface Config {
     slide_selection: boolean;
     grain: number;
   };
+  keybinds: KeybindsConfig;
   /** Per-extension state keyed by name. Absent = disabled. */
   extensions: Record<string, ExtensionConfigEntry>;
   marketplace: {
@@ -96,6 +97,21 @@ export interface ExtensionConfigEntry {
   enabled: boolean;
   /** Values for the extension's declared settings schema. */
   settings: Record<string, unknown>;
+}
+
+/** One or more canonical chord strings ("ctrl+shift+q"). `""`/`[]` = cleared. */
+export type ChordList = string | string[];
+
+/** `[keybinds]` config - mirrors `KeybindsConfig` in config.rs. Keys absent =
+ *  default; present with an empty value = chord disabled; present = override. */
+export interface KeybindsConfig {
+  /** Built-in launcher chords, keyed by bare name ("quick-look", "pin"). */
+  builtin: Record<string, ChordList>;
+  /** Command-catalog bindings keyed by command id; fire anywhere in the launcher. */
+  commands: Record<string, ChordList>;
+  /** Result-action bindings keyed by action id ("file:copy-path",
+   *  "ext:ytm:queue_last"); matched only against the selected result. */
+  actions: Record<string, ChordList>;
 }
 
 /** `[ranking]` config - mirrors `RankingConfig` in config.rs. */
@@ -149,6 +165,18 @@ export interface ExtAction {
   hint?: string;
   /** Running this action opens a form - don't hide the launcher optimistically. */
   opens_form?: boolean;
+  /** Host-validated canonical default chord the extension shipped
+   *  ("ctrl+q"); user-overridable via [keybinds.actions]. */
+  shortcut?: string;
+}
+
+/** One remembered extension action, from `list_extension_actions` - the
+ *  bounded "seen actions" catalog the Keybinds settings section lists. */
+export interface SeenExtAction {
+  id: string;
+  label: string;
+  hint?: string;
+  shortcut?: string;
 }
 
 /** Wire DTO an extension returned for a result; round-tripped on activate/preview. */
@@ -377,6 +405,8 @@ export interface CommandDescriptor {
   /** Scope results are shown in full, not truncated to max_results (browse
    *  scopes like the marketplace). */
   uncapped?: boolean;
+  /** Manifest-declared default chord (extensions); user-overridable. */
+  default_shortcut?: string;
   route: CommandRoute;
 }
 

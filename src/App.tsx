@@ -17,6 +17,8 @@ import { pdfView } from "./components/FilePreview";
 import { isPreviewable } from "./utils";
 import { ColoredIconsContext } from "./coloredIcons";
 import { dispatchLaunch, dispatchShortcut, collectResultActions, isCopyKey, type LaunchContext } from "./providers/registry";
+import { getKeybinds, matchesBuiltin, useKeybinds } from "./keybinds/store";
+import { eventToChord } from "./keybinds/chord";
 import type { ActionDescriptor } from "./actions/types";
 import SelectionLayer from "./selection/SelectionLayer";
 import { selection } from "./selection/controller";
@@ -876,6 +878,45 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Remappable built-in chords, dispatched by effective chord (defaults
+    // overlaid with [keybinds.builtin]). A handler returns false to fall
+    // through - e.g. the highlight chord outside Contents mode must reach
+    // WebKitGTK's native editing commands untouched.
+    const builtinHandlers: Record<string, () => boolean> = {
+      "builtin:quick-look": () => {
+        // Quicklook: pin & expand the selected file/folder preview to fill
+        // the card. Enter alone still opens (fixed launch fallback).
+        toggleQuickLook(displayResults[selectedIndex] ?? null);
+        return true;
+      },
+      "builtin:action-panel": () => {
+        // Available for every result kind (and with nothing selected, where
+        // it shows just the global section).
+        setActionPanel({ result: quickResult ?? displayResults[selectedIndex] ?? null });
+        return true;
+      },
+      "builtin:contents": () => {
+        // Toggles the full-text "Contents" mode, keeping the query for an
+        // in-place re-search; inert inside other modes.
+        if (modeRef.current?.command.id === "cmd:contents") { exitMode(); return true; }
+        if (!modeRef.current) { enterContentMode(); return true; }
+        return false;
+      },
+      "builtin:pin": () => {
+        // Pin/unpin the selected result for the typed query. Swallow the
+        // chord regardless so WebKitGTK's print shortcut never fires.
+        const target = quickResult ?? selected;
+        if (target && canPin(target)) togglePin(target);
+        return true;
+      },
+      "builtin:highlight": () => {
+        // Toggle PDF search-term highlighting. Only meaningful in Contents
+        // mode (where there are terms to highlight); otherwise fall through.
+        if (modeRef.current?.command.id !== "cmd:contents") return false;
+        setHighlight(h => !h);
+        return true;
+      },
+    };
     const onKey = (e: KeyboardEvent) => {
       // While the onboarding wizard is open it owns all input.
       if (showOnboardingRef.current) return;
@@ -896,17 +937,16 @@ export default function App() {
       )) {
         return;
       }
-      // Preview text selection wins Ctrl+C; without one the chord falls
+      // Preview text selection wins the copy chord; without one it falls
       // through to the provider handlers (copy path / calc result / …).
       if (isCopyKey(e) && selection.hasSelection()) {
         e.preventDefault();
         selection.copy();
         return;
       }
-      // Ctrl+F throws the selected text back into the search bar as a fresh
-      // query - select a word in a preview, instantly search it.
-      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "f" || e.key === "F")
-          && selection.hasSelection()) {
+      // Search-selection throws the selected text back into the search bar as
+      // a fresh query - select a word in a preview, instantly search it.
+      if (matchesBuiltin(e, "builtin:search-selection") && selection.hasSelection()) {
         e.preventDefault();
         searchFromSelection(selection.getText());
         return;
@@ -917,8 +957,8 @@ export default function App() {
           && (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End")) {
         return;
       }
-      // Ctrl+S enters keyboard select mode in the visible preview.
-      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "s" || e.key === "S")) {
+      // Select-mode chord enters keyboard text selection in the visible preview.
+      if (matchesBuiltin(e, "builtin:select-mode")) {
         const root = document.querySelector<HTMLElement>(
           quickResult ? ".quicklook-overlay [data-selectable]" : ".card [data-selectable]",
         );
@@ -943,28 +983,12 @@ export default function App() {
           selectedIdRef.current = displayResults[n]?.id ?? null;
           return n;
         });
-      } else if (e.shiftKey && e.key === "Enter") {
-        // Quicklook: pin & expand the selected file/folder preview to fill the card.
-        // Placed before the plain-Enter launch so Enter alone still opens.
-        e.preventDefault();
-        toggleQuickLook(displayResults[selectedIndex] ?? null);
-      } else if ((e.altKey && e.key === "Enter") || (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "k" || e.key === "K"))) {
-        // Action panel: available for every result kind (and with nothing
-        // selected, where it shows just the global section).
-        e.preventDefault();
-        setActionPanel({ result: quickResult ?? displayResults[selectedIndex] ?? null });
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const target = launchableResults[parseInt(e.key) - 1];
         if (!target) return;
         setSelectedIndex(displayResults.indexOf(target));
         launch(target);
-      } else if (e.key === "Tab") {
-        // Tab toggles the full-text "Contents" mode, keeping the query for an
-        // in-place re-search.
-        e.preventDefault();
-        if (modeRef.current?.command.id === "cmd:contents") exitMode();
-        else if (!modeRef.current) enterContentMode();
       } else if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey
                  && modeRef.current && !queryRef.current) {
         // Empty-query Backspace drops the mode chip, back to normal search.
@@ -988,35 +1012,41 @@ export default function App() {
         setQuery("");
         setResults([]);
         invoke("hide_window");
-      } else if (e.ctrlKey && !e.altKey && !e.metaKey
-                 && (e.code === "KeyH" || e.key === "h" || e.key === "H")) {
-        // Toggle PDF search-term highlighting. Only meaningful in Contents mode
-        // (where there are terms to highlight); otherwise let the key fall through.
-        // Gate on the physical H key (e.code stays "KeyH" even though WebKitGTK
-        // remaps Ctrl+H to its "delete backward" editing command). We must NOT
-        // match Backspace here: Ctrl+Backspace (code "Backspace") is delete-word
-        // and has to fall through to the input's native editing.
-        if (modeRef.current?.command.id !== "cmd:contents") return;
-        e.preventDefault();
-        setHighlight(h => !h);
-      } else if (e.ctrlKey && !e.altKey && !e.metaKey
-                 && (e.code === "KeyP" || e.key === "p" || e.key === "P")) {
-        // Pin/unpin the selected result for the typed query. Gate on the
-        // physical P key like Ctrl+H above; swallow the chord regardless so
-        // WebKitGTK's print shortcut never fires.
-        e.preventDefault();
-        const target = quickResult ?? selected;
-        if (target && canPin(target)) togglePin(target);
       } else {
+        // ── layered chord dispatch: result actions → global command bindings
+        // → (remappable) built-ins → plain-Enter launch. Effective shortcuts
+        // (user overrides from [keybinds]) are applied inside the registry.
+        //
+        // Plain Tab never moves focus out of the search input, whether it is
+        // still bound to Contents mode or remapped away.
+        if (e.key === "Tab" && !e.ctrlKey && !e.altKey) e.preventDefault();
         const ctx = makeCtx();
         // While Quicklook is open, key actions target the pinned result, not
         // whatever the (hidden) selection drifted to.
         const target = quickResult ?? selected;
-        if (!dispatchShortcut(e, target, ctx)) {
-          if (e.key === "Enter") {
-            launch(target ?? undefined);
-            if (quickResult) setQuickResult(null);
+        // Key repeat is suppressed for actions/commands (holding a queue
+        // chord must not fire five times); built-ins are harmless toggles.
+        if (!e.repeat && dispatchShortcut(e, target, ctx)) return;
+        const chord = eventToChord(e);
+        if (chord && !e.repeat) {
+          const cmdId = getKeybinds().commandChords.get(chord);
+          const cmd = cmdId ? commandById(cmdId) : undefined;
+          if (cmd) {
+            e.preventDefault();
+            runCommand(cmd);
+            return;
           }
+        }
+        if (chord) {
+          const bId = getKeybinds().builtinChords.get(chord);
+          if (bId && builtinHandlers[bId]?.()) {
+            e.preventDefault();
+            return;
+          }
+        }
+        if (e.key === "Enter") {
+          launch(target ?? undefined);
+          if (quickResult) setQuickResult(null);
         }
       }
     };
@@ -1094,12 +1124,15 @@ export default function App() {
   };
 
   // Everything the action panel shows for the pinned result: the generic
-  // default row, badge-only rows mirroring the bespoke chords (Quick Look,
+  // default row, badge-only rows mirroring the built-in chords (Quick Look,
   // match highlight), provider-declared actions, then the global command
-  // catalog. Descriptors are the single source for both rows and badges.
+  // catalog. Descriptors are the single source for both rows and badges;
+  // built-in badges come from the effective (possibly remapped) chords.
+  const keybindSnap = useKeybinds();
   const panelActions = useMemo<ActionDescriptor[]>(() => {
     if (!actionPanel) return [];
     const result = actionPanel.result;
+    const builtinBadge = (id: string) => keybindSnap.builtinShortcuts.get(id)?.[0];
     const acts: ActionDescriptor[] = [];
     if (result) {
       const pinAction: ActionDescriptor | null = canPin(result)
@@ -1109,7 +1142,7 @@ export default function App() {
               ? `Unpin from “${queryRef.current.trim()}”`
               : `Pin for “${queryRef.current.trim()}”`,
             section: "result",
-            shortcut: { ctrl: true, key: "p", code: "KeyP" },
+            shortcut: builtinBadge("builtin:pin"),
             displayOnly: true,
             run: () => togglePin(result),
           }
@@ -1136,7 +1169,7 @@ export default function App() {
             id: "app:quicklook",
             title: quickResult ? "Close Quick Look" : "Quick Look",
             section: "result",
-            shortcut: { shift: true, key: "enter" },
+            shortcut: builtinBadge("builtin:quick-look"),
             displayOnly: true,
             run: () => toggleQuickLook(result),
           });
@@ -1146,7 +1179,7 @@ export default function App() {
             id: "app:highlight",
             title: highlight ? "Hide Match Highlights" : "Show Match Highlights",
             section: "result",
-            shortcut: { ctrl: true, key: "h", code: "KeyH" },
+            shortcut: builtinBadge("builtin:highlight"),
             displayOnly: true,
             run: () => setHighlight(h => !h),
           });
@@ -1156,7 +1189,7 @@ export default function App() {
       }
     }
     return acts;
-  }, [actionPanel, quickResult, highlight, inContents]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [actionPanel, quickResult, highlight, inContents, keybindSnap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const calcResult = results.find(r => r.kind === "calc");
   // Whether there's an actual term to search (drives the empty state). Content

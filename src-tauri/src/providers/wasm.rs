@@ -205,12 +205,35 @@ impl WasmProvider {
     /// Compiles the module - call from a background thread, never under the
     /// registry write lock.
     pub fn load(
-        manifest: ExtensionManifest,
+        mut manifest: ExtensionManifest,
         wasm_path: PathBuf,
         kv: Arc<ExtensionKv>,
         settings: std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<Self, String> {
         let limits = manifest.limits.clamped();
+
+        // Manifest-suggested command chords get the same clamp as result-action
+        // shortcuts, once at load, so the command catalog only ever carries
+        // canonical chords.
+        for c in &mut manifest.commands {
+            if let Some(raw) = c.default_shortcut.take() {
+                match crate::keybinds::canonical(&raw) {
+                    Some(canon) => c.default_shortcut = Some(canon),
+                    None => {
+                        let mut shown = raw;
+                        crate::util::truncate_char_boundary(&mut shown, 64);
+                        crate::extensions::logs::log(
+                            &manifest.name,
+                            crate::extensions::logs::LogLevel::Error,
+                            &format!(
+                                "command \"{}\": default_shortcut \"{shown}\" is invalid or reserved - ignored",
+                                c.name
+                            ),
+                        );
+                    }
+                }
+            }
+        }
 
         let mut wasm_manifest = WasmManifest::new([Wasm::file(&wasm_path)])
             .with_memory_max(MEMORY_MAX_PAGES);
@@ -489,6 +512,28 @@ impl WasmProvider {
             (0.0, Some(p))
         };
         dto.badge = dto.badge.take().map(clamp_field);
+        for a in &mut dto.actions {
+            a.label = clamp_field(std::mem::take(&mut a.label));
+            a.hint = a.hint.take().map(clamp_field);
+            // Untrusted chord suggestion: parse + reserved-set + size clamp,
+            // normalized to canonical form. Invalid → dropped with a note.
+            if let Some(raw) = a.shortcut.take() {
+                match crate::keybinds::canonical(&raw) {
+                    Some(canon) => a.shortcut = Some(canon),
+                    None => {
+                        let mut shown = raw;
+                        crate::util::truncate_char_boundary(&mut shown, 64);
+                        self.note_error(&format!(
+                            "action \"{}\": shortcut \"{shown}\" is invalid or reserved - dropped",
+                            a.id
+                        ));
+                    }
+                }
+            }
+        }
+        // Feed the Settings keybinds catalog (post-clamp, so it only ever
+        // holds host-validated chords).
+        crate::extensions::seen_actions::record(&self.name, &dto.actions);
         SearchResult {
             id: format!("ext:{}:{}", self.name, dto.id),
             title: clamp_field(dto.title.clone()),
@@ -934,6 +979,7 @@ impl WasmProvider {
                 result_kind: c.kind.clone().unwrap_or_else(|| self.kind.clone()),
                 glyph: None,
                 icon_data_uri: self.command_icons.get(&c.name).cloned(),
+                default_shortcut: c.default_shortcut.clone(),
                 opens_form: c.opens_form,
                 uncapped: false,
                 route: CommandRoute::Extension {

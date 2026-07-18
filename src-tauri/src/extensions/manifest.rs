@@ -106,6 +106,11 @@ pub struct CommandSpec {
     /// optimistically, so the form doesn't flash the window hidden-then-shown.
     #[serde(default)]
     pub opens_form: bool,
+    /// Suggested chord that invokes this command from anywhere in the
+    /// launcher (canonical `ctrl+alt+shift+<key>` form, user-overridable).
+    /// Invalid or reserved chords are dropped at load with a log note.
+    #[serde(default)]
+    pub default_shortcut: Option<String>,
 }
 
 fn default_command_mode() -> String {

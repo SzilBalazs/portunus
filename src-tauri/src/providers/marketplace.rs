@@ -131,6 +131,7 @@ impl Provider for MarketplaceProvider {
             result_kind: "marketplace".to_string(),
             glyph: Some("store".to_string()),
             icon_data_uri: None,
+            default_shortcut: None,
             opens_form: false,
             // Browse scope: show the whole catalog, never truncated to max_results.
             uncapped: true,
