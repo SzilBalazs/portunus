@@ -185,6 +185,9 @@ export interface ExtensionPermissions {
   /** Allowlist of OS commands the extension may spawn. Non-empty ⇒ the
    *  extension can run programs outside the wasm sandbox (sandbox-breaking). */
   spawn: string[];
+  /** May exchange messages with an unsandboxed companion process over the
+   *  portunus socket (message bus). */
+  bus: boolean;
   /** Declares at least one `type = "secret"` setting (stored in the keyring). */
   has_secrets: boolean;
 }

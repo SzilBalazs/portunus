@@ -42,7 +42,7 @@ arrive enabled. Dropping a folder never runs code.
 ## manifest.toml
 
 ```toml
-api = 4                        # REQUIRED: wire API major; unknown majors are rejected
+api = 5                        # REQUIRED: wire API major; unknown majors are rejected
 name = "emoji"                 # must match the directory name; [a-zA-Z0-9_-] only
 version = "0.2.0"
 description = "Search and copy emoji"
@@ -75,6 +75,7 @@ clipboard = true               # clipboard_write host fn (NOT needed for CopyTex
 open_url = true                # open_url host fn (NOT needed for OpenUrl effects)
 paste = true                   # Paste activate effect (synthetic Ctrl+V into other apps)
 spawn = ["notify-send"]        # ⚠ SANDBOX-BREAKING - allowlist of OS commands (see below)
+bus = true                     # ⚠ message channel to an unsandboxed companion process (see below)
 
 [limits]
 search_timeout_ms = 100        # clamped to [10, 500]
@@ -151,6 +152,52 @@ spawn = ["notify-send", "wmctrl"]
   for your extension, allowlist an absolute path (`/usr/bin/notify-send`); the
   `SpawnProcess` effect's `command` must then match that absolute path verbatim.
 - Keep the list short (max 32 commands, each ≤256 bytes).
+
+### ⚠ `bus` — the companion message channel
+
+Some extensions need a helper that a wasm sandbox can never be: a browser
+extension living inside a logged-in tab, an editor plugin, a daemon watching
+hardware. `bus = true` gives the extension a **message channel to one such
+companion process** — the extension stays sandboxed, but what it sends leaves
+the sandbox, and the companion acts with the user's full authority. The
+consent dialog shows a red warning with a required acknowledgement, like
+`spawn`.
+
+How it connects: the companion opens the portunus socket
+(`$XDG_RUNTIME_DIR/portunus.sock`), writes `ext-attach:<extension-name>\n`,
+and the connection becomes a persistent newline-delimited-JSON channel. One
+companion per extension — a new attach replaces the old one (so a restarted
+companion just reconnects). The socket lives in the user-only runtime dir;
+any process attaching already runs as the user, the same trust boundary as
+`portunus --reload-*`.
+
+Wire format (host ↔ companion, one JSON object per line):
+- request (host → companion): `{"id": 7, "payload": <your JSON>}` — the
+  companion **must** reply `{"id": 7, "payload": <reply JSON>}` echoing the id.
+- notify (host → companion): `{"payload": <your JSON>}` — no id, no reply.
+- The companion never initiates messages; unsolicited lines are dropped.
+- Lines are capped at 256 KB in both directions; exceeding it disconnects.
+
+Guest API (SDK wrappers):
+```rust
+if guest::bus_attached()? {                       // never errors when detached
+    let reply = guest::bus_call(json!({"op": "search", "q": q}), 8000)?; // request/response
+    guest::bus_send(json!({"op": "ping"}))?;      // fire-and-forget
+}
+```
+`bus_call` blocks for up to `timeout_ms` (host cap 30 s) and errors on
+timeout, detachment, or cancellation of the surrounding `query` — always
+handle the error with a fallback (degrade to a direct-HTTP path, an
+`OpenUrl` effect, or an explanatory toast). At most 16 requests may be in
+flight at once.
+
+**Browser companions** get a ready-made bridge: `portunus native-host
+install <name> --ff-ext-id <id@domain>` writes a Firefox native-messaging
+manifest (plus wrapper script) so the browser itself spawns
+`portunus native-host <name>`, which relays native-messaging stdio frames to
+`ext-attach:<name>` verbatim. The browser extension then talks straight to
+your wasm extension via `runtime.connectNative("portunus_<name>")`. See
+`companions/firefox-ytm` in the marketplace repo for a complete example.
 
 ## Commands
 
@@ -609,10 +656,13 @@ Importable from the `extism:host/user` namespace; the Rust SDK wraps them:
 | `settings_get(key) -> Option<Value>` | none | your `[[settings]]` values, defaults applied |
 | `emit_results(batch) -> {cancelled}` | none | stream partial results; valid only inside `query` |
 | `emit_preview(content) -> {cancelled}` | none | stream a preview update; valid only inside `preview` |
+| `bus_status() -> bool` | `bus`* | companion attached? (*returns `false` instead of erroring) |
+| `bus_request(envelope) -> Value` | `bus` | request/response with the companion; see the `bus` section |
+| `bus_notify(payload)` | `bus` | fire-and-forget to the companion |
 
 SDK wrapper names: `kv_read`, `kv_write`, `kv_keys`, `kv_remove`, `clipboard`,
 `now`, `open`, `debug`, `setting` / `setting_str` / `setting_bool` / `setting_num`,
-`emit`, `emit_preview_update`.
+`emit`, `emit_preview_update`, `bus_attached`, `bus_call`, `bus_send`.
 
 **HTTP** has no custom host function; use Extism's built-in HTTP
 (`extism_pdk::http::request` in Rust). The host derives the allowlist from
@@ -721,7 +771,12 @@ history and logs.
 `api` in the manifest is the wire-contract major. The host refuses to load
 extensions targeting a different major and shows why. Additive changes (new
 optional fields, new preview types, new effects) do not bump the major; field
-removals or semantic changes do. The effects added within v4 (`show_form`,
+removals or semantic changes do. **v5 added the companion message bus**: the
+`bus` permission, the `bus_status`/`bus_request`/`bus_notify` host functions,
+the `ext-attach:<name>` socket channel, and the `portunus native-host`
+browser shim. The bump is a clean-rejection guard: a v5 manifest on an older
+host fails at install with a clear version error instead of half-loading and
+trapping on a missing host import. The effects added within v4 (`show_form`,
 `show_toast.level`, `hide`/`keep_open`/`refresh_results`/`paste`) are
 additive: older extensions keep working unchanged, but an extension returning
 the new effects needs a Portunus build that knows them. **v4 broke from v3:** removed `[trigger]` in

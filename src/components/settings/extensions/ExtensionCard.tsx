@@ -44,9 +44,11 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
   const [permReview, setPermReview] = useState(false);
   const spawnCmds = info.permissions?.spawn ?? [];
   const netAny = (info.permissions?.network ?? []).includes("*");
+  const busGrant = info.permissions?.bus ?? false;
   // On update: the incoming version's grants, and whether "*" is newly gained.
   const updNetAny = (update?.permissions.network ?? []).includes("*");
   const netBecameAny = updNetAny && !netAny;
+  const busBecameGranted = (update?.permissions.bus ?? false) && !busGrant;
 
   const doUpdate = () => {
     setUpdating(true);
@@ -64,7 +66,7 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
   const runUpdate = () => {
     if (!update) return doUpdate();
     const spawnGrew = (update.permissions.spawn ?? []).some(c => !spawnCmds.includes(c));
-    if (spawnGrew || netBecameAny) { setDangerConsent("update"); return; }
+    if (spawnGrew || netBecameAny || busBecameGranted) { setDangerConsent("update"); return; }
     if (update.permissions_grew) { setPermReview(true); return; }
     doUpdate();
   };
@@ -85,7 +87,7 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
   // Enabling or re-approving a sandbox-relaxing extension (spawn or any-host
   // network) routes through the blocking consent modal first; everything else
   // applies immediately.
-  const needsDangerConsent = spawnCmds.length > 0 || netAny;
+  const needsDangerConsent = spawnCmds.length > 0 || netAny || busGrant;
   const handleSetEnabled = (v: boolean) => {
     if (v && needsDangerConsent) { setDangerConsent("enable"); return; }
     onSetEnabled(v);
@@ -122,6 +124,9 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
             )}
             {netAny && (
               <Badge tone="danger">any host</Badge>
+            )}
+            {busGrant && (
+              <Badge tone="danger">companion app</Badge>
             )}
             {isNew && !broken && <Badge tone="new">new — review &amp; enable</Badge>}
             {info.needs_reconsent && <Badge tone="update">permissions changed</Badge>}
@@ -223,6 +228,7 @@ export default function ExtensionCard({ info, enabled, isNew, secretsAvailable, 
           }
           spawnCommands={dangerConsent === "update" ? update?.permissions.spawn ?? [] : spawnCmds}
           networkAny={dangerConsent === "update" ? netBecameAny : netAny}
+          bus={dangerConsent === "update" ? busBecameGranted : busGrant}
           confirmLabel={dangerConsent === "enable" ? "Enable" : dangerConsent === "update" ? "Update" : "Allow"}
           onCancel={() => setDangerConsent(null)}
           onConfirm={() => {

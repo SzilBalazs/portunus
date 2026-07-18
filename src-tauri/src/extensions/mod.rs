@@ -5,6 +5,7 @@
 //! extension shows up disabled in Settings and only runs once the user has
 //! reviewed its permissions and enabled it.
 
+pub mod bus;
 pub mod hostfns;
 pub mod install;
 pub mod kv;
@@ -326,6 +327,8 @@ pub struct PermissionsInfo {
     paste: bool,
     /// Allowlist of OS commands the extension may spawn (sandbox-breaking).
     spawn: Vec<String>,
+    /// May exchange messages with an unsandboxed companion process.
+    bus: bool,
     /// Derived: the settings schema declares at least one `type = "secret"`.
     has_secrets: bool,
 }
@@ -426,6 +429,7 @@ pub fn list_extensions(
                     open_url: m.permissions.open_url,
                     paste: m.permissions.paste,
                     spawn: m.permissions.spawn.clone(),
+                    bus: m.permissions.bus,
                     has_secrets: m.settings_schema.iter().any(|s| s.kind == "secret"),
                 }),
                 enabled,

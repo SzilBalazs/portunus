@@ -2,6 +2,7 @@ import { useState } from "react";
 import Modal from "../Modal";
 import SpawnDangerNotice from "./SpawnDangerNotice";
 import NetworkDangerNotice from "./NetworkDangerNotice";
+import BusDangerNotice from "./BusDangerNotice";
 
 interface Props {
   title: string;
@@ -9,6 +10,8 @@ interface Props {
   spawnCommands?: string[];
   /** Whether to warn about newly-granted any-host network access. */
   networkAny?: boolean;
+  /** Whether to warn about the companion message-bus grant. */
+  bus?: boolean;
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -26,13 +29,16 @@ export default function DangerConsentModal({
   title,
   spawnCommands = [],
   networkAny = false,
+  bus = false,
   confirmLabel,
   onConfirm,
   onCancel,
 }: Props) {
   const [spawnAck, setSpawnAck] = useState(false);
   const [networkAck, setNetworkAck] = useState(false);
-  const blocked = (spawnCommands.length > 0 && !spawnAck) || (networkAny && !networkAck);
+  const [busAck, setBusAck] = useState(false);
+  const blocked =
+    (spawnCommands.length > 0 && !spawnAck) || (networkAny && !networkAck) || (bus && !busAck);
   return (
     <Modal
       title={title}
@@ -54,6 +60,7 @@ export default function DangerConsentModal({
     >
       <SpawnDangerNotice commands={spawnCommands} acked={spawnAck} onAckChange={setSpawnAck} />
       <NetworkDangerNotice any={networkAny} acked={networkAck} onAckChange={setNetworkAck} />
+      <BusDangerNotice enabled={bus} acked={busAck} onAckChange={setBusAck} />
     </Modal>
   );
 }

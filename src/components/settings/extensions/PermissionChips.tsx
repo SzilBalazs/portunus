@@ -48,6 +48,10 @@ export default function PermissionChips({ permissions, backgroundIntervalSecs, d
       danger: true,
     });
   }
+  // The companion process runs outside the sandbox - flag like spawn.
+  if (permissions.bus) {
+    chips.push({ text: "⚠ companion process channel", grew: old ? !old.bus : false, danger: true });
+  }
   if (permissions.has_secrets) chips.push({ text: "secrets (keyring)", grew: old ? !old.has_secrets : false });
   if (chips.length === 0) chips.push({ text: "no permissions", grew: false });
   if (backgroundIntervalSecs != null) {

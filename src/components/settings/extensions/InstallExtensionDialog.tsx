@@ -7,6 +7,7 @@ import TextInput from "../TextInput";
 import PermissionChips from "./PermissionChips";
 import SpawnDangerNotice from "./SpawnDangerNotice";
 import NetworkDangerNotice from "./NetworkDangerNotice";
+import BusDangerNotice from "./BusDangerNotice";
 import { useTauriListener } from "../../../hooks/useTauriListener";
 
 interface InstallProgress {
@@ -50,10 +51,13 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
   // explicit acknowledgement before the confirm button unlocks.
   const [spawnAck, setSpawnAck] = useState(false);
   const [networkAck, setNetworkAck] = useState(false);
+  const [busAck, setBusAck] = useState(false);
 
   const spawnCmds = phase.step === "consent" ? phase.preview.permissions.spawn : [];
   const networkAny = phase.step === "consent" && phase.preview.permissions.network.includes("*");
-  const blockedOnAck = (spawnCmds.length > 0 && !spawnAck) || (networkAny && !networkAck);
+  const busGrant = phase.step === "consent" && phase.preview.permissions.bus;
+  const blockedOnAck =
+    (spawnCmds.length > 0 && !spawnAck) || (networkAny && !networkAck) || (busGrant && !busAck);
 
   useTauriListener<InstallProgress>("ext-install-progress", p => {
     if (phase.step === "probing") setProgress(p);
@@ -188,6 +192,7 @@ export default function InstallExtensionDialog({ onClose, onInstalled }: Props) 
           <PermissionChips permissions={phase.preview.permissions} />
           <SpawnDangerNotice commands={spawnCmds} acked={spawnAck} onAckChange={setSpawnAck} />
           <NetworkDangerNotice any={networkAny} acked={networkAck} onAckChange={setNetworkAck} />
+          <BusDangerNotice enabled={busGrant} acked={busAck} onAckChange={setBusAck} />
           {phase.preview.replaces && (
             <div className="settings-field-desc">
               Replaces installed v{phase.preview.replaces.old_version}

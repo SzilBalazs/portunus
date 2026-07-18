@@ -57,6 +57,9 @@ pub struct ConsentPermissions {
     /// Allowlist of OS commands the extension may spawn - a sandbox-breaking
     /// grant. Any command added past this snapshot forces re-consent.
     pub spawn: Vec<String>,
+    /// May exchange messages with an unsandboxed companion process over the
+    /// portunus socket (see `extensions::bus`).
+    pub bus: bool,
     /// Derived from the settings schema: any `type = "secret"` setting means
     /// the extension stores secrets in the keyring - consent-relevant,
     /// especially paired with `network`.
@@ -76,6 +79,7 @@ impl ConsentPermissions {
             open_url: m.permissions.open_url,
             paste: m.permissions.paste,
             spawn,
+            bus: m.permissions.bus,
             has_secrets: m.settings_schema.iter().any(|s| s.kind == "secret"),
         }
     }
@@ -87,6 +91,7 @@ impl ConsentPermissions {
             || (!self.clipboard && other.clipboard)
             || (!self.open_url && other.open_url)
             || (!self.paste && other.paste)
+            || (!self.bus && other.bus)
             || (!self.has_secrets && other.has_secrets)
             || other.network.iter().any(|h| !self.network.contains(h))
             || other.spawn.iter().any(|c| !self.spawn.contains(c))
@@ -191,7 +196,12 @@ pub fn check_consent(m: &manifest::ExtensionManifest) -> Result<(), String> {
                     .any(|c| !rec.permissions.spawn.contains(c));
                 let network_became_any = current.network.iter().any(|h| h == "*")
                     && !rec.permissions.network.iter().any(|h| h == "*");
-                if matches!(rec.origin, Origin::Dev) && !spawn_grew && !network_became_any {
+                let bus_became_granted = current.bus && !rec.permissions.bus;
+                if matches!(rec.origin, Origin::Dev)
+                    && !spawn_grew
+                    && !network_became_any
+                    && !bus_became_granted
+                {
                     rec.permissions = current;
                     rec.version = m.version.clone();
                     rec.consented_at = now_unix();
@@ -774,6 +784,7 @@ mod tests {
             open_url: false,
             paste: false,
             spawn: vec!["notify-send".into()],
+            bus: false,
             has_secrets: false,
         };
         // Same or narrower: no growth.
@@ -784,6 +795,8 @@ mod tests {
         assert!(base.grew_to(&ConsentPermissions { clipboard: true, ..base.clone() }));
         assert!(base.grew_to(&ConsentPermissions { has_secrets: true, ..base.clone() }));
         assert!(base.grew_to(&ConsentPermissions { paste: true, ..base.clone() }));
+        // A new companion-process channel is growth (unsandboxed peer).
+        assert!(base.grew_to(&ConsentPermissions { bus: true, ..base.clone() }));
         assert!(base.grew_to(&ConsentPermissions {
             network: vec!["a.com".into(), "b.com".into()],
             ..base.clone()

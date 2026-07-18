@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Wire-contract major version. Bumped only on breaking changes.
-pub const API_VERSION: u32 = 4;
+pub const API_VERSION: u32 = 5;
 
 /// Input to the extension's exported `search` function.
 ///
@@ -448,6 +448,17 @@ pub struct SectionItem {
     pub rows: Vec<Vec<String>>,
 }
 
+/// Envelope of the `bus_request` host function: how long to wait for the
+/// companion's reply, plus the request payload it receives verbatim.
+/// Requires `bus = true` in the manifest permissions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusRequest {
+    /// Reply wait in milliseconds; the host caps it at 30 000.
+    pub timeout_ms: u64,
+    /// Arbitrary JSON handed to the companion.
+    pub payload: serde_json::Value,
+}
+
 /// Guest-side helpers: safe wrappers around the Portunus host functions.
 /// Available to extensions compiled for wasm (`guest` feature, on by default).
 #[cfg(feature = "guest")]
@@ -470,6 +481,9 @@ pub mod guest {
         fn settings_get(key: String) -> Json<Option<serde_json::Value>>;
         fn emit_results(batch: Json<super::EmitBatch>) -> Json<super::EmitAck>;
         fn emit_preview(content: Json<super::PreviewContent>) -> Json<super::EmitAck>;
+        fn bus_status() -> Json<bool>;
+        fn bus_request(envelope: Json<super::BusRequest>) -> String;
+        fn bus_notify(payload: String);
     }
 
     /// Read a value from this extension's key-value store.
@@ -552,6 +566,32 @@ pub mod guest {
     pub fn emit(results: Vec<super::ExtensionResult>) -> Result<bool, extism_pdk::Error> {
         let Json(ack) = unsafe { emit_results(Json(super::EmitBatch { results }))? };
         Ok(!ack.cancelled)
+    }
+
+    /// Whether a companion process is attached to this extension's message
+    /// bus (`ext-attach:<name>` on the portunus socket). Returns `false`
+    /// (never an error) when nothing is attached or the `bus` permission is
+    /// missing - branch to a fallback path on it.
+    pub fn bus_attached() -> Result<bool, extism_pdk::Error> {
+        let Json(v) = unsafe { bus_status()? };
+        Ok(v)
+    }
+
+    /// Send a request to the attached companion and block for its reply (up
+    /// to `timeout_ms`, host-capped at 30 s). Errors on timeout, detachment,
+    /// or cancellation of the surrounding `query`. Requires `bus = true`.
+    pub fn bus_call(
+        payload: serde_json::Value,
+        timeout_ms: u64,
+    ) -> Result<serde_json::Value, extism_pdk::Error> {
+        let raw = unsafe { bus_request(Json(super::BusRequest { timeout_ms, payload }))? };
+        Ok(serde_json::from_str(&raw)?)
+    }
+
+    /// Send a fire-and-forget message to the attached companion.
+    /// Requires `bus = true`.
+    pub fn bus_send(payload: serde_json::Value) -> Result<(), extism_pdk::Error> {
+        unsafe { bus_notify(serde_json::to_string(&payload)?) }
     }
 
     /// Replace the rendered preview from inside the exported `preview`

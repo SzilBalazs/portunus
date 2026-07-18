@@ -41,9 +41,22 @@ pub fn start_socket_listener(
                 use std::io::BufRead;
                 // Prevent a stalled client from blocking this handler forever.
                 let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                let Ok(writer) = stream.try_clone() else { return };
+                let mut reader = std::io::BufReader::new(stream);
                 let mut line = String::new();
-                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                let _ = reader.read_line(&mut line);
                 let cmd = line.trim();
+                if let Some(name) = cmd.strip_prefix("ext-attach:") {
+                    // Persistent companion channel (see extensions::bus). The
+                    // connection outlives this line: lift the accept-time read
+                    // timeout and hand the thread to the bus reader loop.
+                    let name = name.trim();
+                    if crate::extensions::bus::valid_name(name) {
+                        let _ = reader.get_ref().set_read_timeout(None);
+                        crate::extensions::bus::attach(name, reader, writer);
+                    }
+                    return;
+                }
                 if cmd == "show" || cmd.starts_with("show:") {
                     let initial_query = cmd.strip_prefix("show:").map(str::to_string);
                     if let Some(window) = app.get_webview_window("main") {

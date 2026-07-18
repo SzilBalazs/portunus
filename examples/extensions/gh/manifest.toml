@@ -1,4 +1,4 @@
-api = 4
+api = 5
 name = "gh"
 version = "0.3.0"
 description = "GitHub launcher - search repos/issues/PRs/code/users and browse your PRs, issues, repos, stars and notifications"

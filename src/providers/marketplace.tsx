@@ -131,6 +131,7 @@ function permissionLines(m: MarketplaceResult): string[] {
   if (p.kv) lines.push("Store data locally");
   if (p.open_url) lines.push("Open links in your browser");
   if (p.paste) lines.push("Paste into other applications");
+  if (p.bus) lines.push("⚠ Talks to a companion app outside the sandbox");
   if (p.has_secrets) lines.push("Store secrets in the system keyring");
   return lines;
 }

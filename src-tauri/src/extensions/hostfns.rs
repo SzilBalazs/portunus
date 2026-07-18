@@ -49,6 +49,7 @@ pub struct ExtensionCtx {
     pub kv_enabled: bool,
     pub clipboard_enabled: bool,
     pub open_url_enabled: bool,
+    pub bus_enabled: bool,
     pub kv: Arc<ExtensionKv>,
     /// Immutable snapshot of the extension's resolved settings (schema
     /// defaults overlaid with user values). A settings change reloads the
@@ -74,6 +75,7 @@ impl ExtensionCtx {
             kv_enabled: permissions.kv,
             clipboard_enabled: permissions.clipboard,
             open_url_enabled: permissions.open_url,
+            bus_enabled: permissions.bus,
             kv,
             settings,
             query_emit: None,
@@ -179,6 +181,75 @@ pub fn spawn_process(command: &str, args: &[String]) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("{command}: {e}"))
 }
+
+// ── Message bus (see extensions::bus) ─────────────────────────────────────────
+
+// Whether a companion process is attached. Permission-gated like the other
+// bus calls, but reports `false` instead of erroring so guests can branch to
+// a fallback path without error handling.
+host_fn!(bus_status(ctx: ExtensionCtx;) -> Json<bool> {
+    let ctx = ctx.get()?;
+    let ctx = ctx.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(Json(ctx.bus_enabled && crate::extensions::bus::BUS.attached(&ctx.name)))
+});
+
+// Request/response with the companion. `payload` is a BusRequest envelope
+// (timeout + arbitrary JSON). The blocking wait runs OUTSIDE the ctx lock -
+// one UserData is shared by every instance slot of the extension, and a
+// 30 s wait under the lock would freeze the other slots' host calls.
+host_fn!(bus_request(ctx: ExtensionCtx; payload: String) -> String {
+    if payload.len() > super::bus::MAX_LINE_BYTES {
+        return Err(extism::Error::msg(format!(
+            "bus_request payload exceeds {} bytes", super::bus::MAX_LINE_BYTES
+        )));
+    }
+    let req: portunus_ext_sdk::BusRequest = serde_json::from_str(&payload)
+        .map_err(|e| extism::Error::msg(format!("bus_request: invalid envelope: {e}")))?;
+    // Snapshot what the wait needs, then release the lock.
+    let (name, cancel_gate) = {
+        let ctx = ctx.get()?;
+        let ctx = ctx.lock().unwrap_or_else(|e| e.into_inner());
+        if !ctx.bus_enabled {
+            return Err(extism::Error::msg("bus permission not granted"));
+        }
+        // During `query`, cancellation is the emit slot's generation gate -
+        // reuse it so a stale query stops waiting on a slow companion.
+        let gate = ctx
+            .query_emit
+            .as_ref()
+            .map(|s| (s.generation, s.current.clone()));
+        (ctx.name.clone(), gate)
+    };
+    let cancelled = move || {
+        cancel_gate
+            .as_ref()
+            .is_some_and(|(generation, current)| *generation != current.load(Ordering::Relaxed))
+    };
+    let reply = crate::extensions::bus::BUS
+        .request(&name, req.payload, req.timeout_ms, cancelled)
+        .map_err(extism::Error::msg)?;
+    Ok(serde_json::to_string(&reply).map_err(|e| extism::Error::msg(e.to_string()))?)
+});
+
+// Fire-and-forget message to the companion.
+host_fn!(bus_notify(ctx: ExtensionCtx; payload: String) {
+    if payload.len() > super::bus::MAX_LINE_BYTES {
+        return Err(extism::Error::msg(format!(
+            "bus_notify payload exceeds {} bytes", super::bus::MAX_LINE_BYTES
+        )));
+    }
+    let name = {
+        let ctx = ctx.get()?;
+        let ctx = ctx.lock().unwrap_or_else(|e| e.into_inner());
+        if !ctx.bus_enabled {
+            return Err(extism::Error::msg("bus permission not granted"));
+        }
+        ctx.name.clone()
+    };
+    let value: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|e| extism::Error::msg(format!("bus_notify: invalid json: {e}")))?;
+    crate::extensions::bus::BUS.notify(&name, value).map_err(extism::Error::msg)
+});
 
 host_fn!(log_message(ctx: ExtensionCtx; message: String) {
     let ctx = ctx.get()?;
@@ -348,6 +419,9 @@ pub fn build(ctx: ExtensionCtx) -> (Vec<Function>, UserData<ExtensionCtx>) {
         Function::new("clipboard_write", [PTR], [], data.clone(), clipboard_write),
         Function::new("emit_results", [PTR], [PTR], data.clone(), emit_results),
         Function::new("emit_preview", [PTR], [PTR], data.clone(), emit_preview),
+        Function::new("bus_status", [], [PTR], data.clone(), bus_status),
+        Function::new("bus_request", [PTR], [PTR], data.clone(), bus_request),
+        Function::new("bus_notify", [PTR], [], data.clone(), bus_notify),
     ];
     (functions, data)
 }

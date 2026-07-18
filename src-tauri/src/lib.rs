@@ -9,6 +9,7 @@ mod extensions;
 mod frecency;
 mod ipc;
 mod layer_shell;
+mod native_host;
 mod office;
 mod paths;
 mod preview;

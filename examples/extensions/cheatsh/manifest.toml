@@ -1,4 +1,4 @@
-api = 4
+api = 5
 name = "cheatsh"
 version = "0.3.0"
 description = "Look up command cheat sheets from cheat.sh"

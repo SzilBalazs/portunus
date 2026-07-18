@@ -11,6 +11,12 @@ pub fn handle_cli_args() -> bool {
         std::process::exit(crate::cli_ext::run(&args[2..]));
     }
 
+    // `portunus native-host …` - browser native-messaging shim for the
+    // extension message bus (spawned by the browser, or `install` by the user).
+    if args.get(1).map(String::as_str) == Some("native-host") {
+        std::process::exit(crate::native_host::run(&args[2..]));
+    }
+
     // --reload-extension <name>: targeted hot-reload of one extension.
     if let Some(pos) = args.iter().position(|a| a == "--reload-extension") {
         let Some(name) = args.get(pos + 1) else {
@@ -51,7 +57,11 @@ SUBCOMMANDS:
   ext new <name>      Scaffold a new extension project
   ext dev <dir>       Link a working dir into Portunus + auto-reload on rebuild
   ext validate <dir>  Check an extension's manifest and wasm exports
-  ext pack <dir>      Build a distributable .portext archive", env!("CARGO_PKG_VERSION"));
+  ext pack <dir>      Build a distributable .portext archive
+  native-host <name>  Relay browser native messaging to the extension message
+                      bus (normally spawned by the browser, not by hand)
+  native-host install <name> --ff-ext-id <id@domain>
+                      Write the wrapper script + Firefox manifest for <name>", env!("CARGO_PKG_VERSION"));
         return true;
     }
 

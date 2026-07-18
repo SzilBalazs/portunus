@@ -211,6 +211,11 @@ pub struct Permissions {
     /// May use the `Paste` activate effect (clipboard write + synthetic
     /// Ctrl+V into the previously focused window).
     pub paste: bool,
+    /// May exchange messages with an external companion process over the
+    /// portunus socket (`ext-attach:<name>`, see `extensions::bus`). The
+    /// companion runs unsandboxed with the user's authority - consent-relevant
+    /// like `spawn`, though the extension itself still can't execute anything.
+    pub bus: bool,
     /// Allowlist of OS commands the extension may launch via the
     /// `SpawnProcess` activate effect. **This bypasses the wasm sandbox** - a
     /// spawned process runs with the user's full authority. Empty/absent means
