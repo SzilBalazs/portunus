@@ -459,15 +459,6 @@ async fn install_inner(
     kv: Arc<super::kv::ExtensionKv>,
     name: String,
 ) -> Result<String, String> {
-    let entry = store()
-        .entry(&name)
-        .ok_or_else(|| format!("{name} is not in the marketplace index"))?;
-    if entry.api != manifest::SUPPORTED_API {
-        return Err(format!(
-            "{name} requires extension API v{} - update Portunus first",
-            entry.api
-        ));
-    }
     let dir = extensions_dir().join(&name);
     if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_symlink()) {
         return Err(format!(
@@ -475,17 +466,63 @@ async fn install_inner(
         ));
     }
 
-    let fetch_app = app.clone();
-    let url = entry.download_url.clone();
-    let sha = entry.sha256.clone();
-    let preview = tauri::async_runtime::spawn_blocking(move || {
-        install::preview_install_blocking(Some(&fetch_app), &url, Some(sha))
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    // Stage from the cached index entry. A stale cache serves moved shas (a
+    // republished package), pulled download URLs (a version bump) or a version
+    // that disagrees with the package - all of which surface only here. On any
+    // of those, force-refresh the index once and retry against the fresh entry
+    // before giving up, so the user isn't dead-ended on a recoverable staleness.
+    let mut refreshed = false;
+    let (entry, preview) = loop {
+        let entry = store()
+            .entry(&name)
+            .ok_or_else(|| format!("{name} is not in the marketplace index"))?;
+        if entry.api != manifest::SUPPORTED_API {
+            return Err(format!(
+                "{name} requires extension API v{} - update Portunus first",
+                entry.api
+            ));
+        }
 
-    // Staged truth must match the consent surface (the index entry). Any
-    // mismatch aborts and cleans the staging dir.
+        let fetch_app = app.clone();
+        let url = entry.download_url.clone();
+        let sha = entry.sha256.clone();
+        let staged = tauri::async_runtime::spawn_blocking(move || {
+            install::preview_install_blocking(Some(&fetch_app), &url, Some(sha))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        match staged {
+            // Index and package agree: proceed to the (fatal) consent checks.
+            Ok(preview) if preview.version == entry.version => break (entry, preview),
+            // Version drift is a stale-index symptom; heal and retry.
+            Ok(preview) => {
+                let _ = install::cancel_extension_install(preview.staging_token);
+                if refreshed {
+                    return Err("index and package are out of sync - try again shortly".to_string());
+                }
+            }
+            // Download / sha failures: heal and retry, else surface the error.
+            Err(e) => {
+                if refreshed {
+                    return Err(e);
+                }
+            }
+        }
+
+        refreshed = true;
+        let changed = tauri::async_runtime::spawn_blocking(|| store().refresh(true))
+            .await
+            .map_err(|e| e.to_string())??;
+        if changed {
+            use tauri::Emitter;
+            let _ = app.emit("search-invalidated", ());
+            let _ = app.emit("marketplace-index-updated", ());
+        }
+    };
+
+    // Consent-surface checks are fatal - a refresh can't make a wrong-name or
+    // over-asking package safe to install. Aborts and cleans the staging dir.
     let fail = |token: String, msg: String| -> Result<String, String> {
         let _ = install::cancel_extension_install(token);
         Err(msg)
@@ -494,12 +531,6 @@ async fn install_inner(
         return fail(
             preview.staging_token,
             format!("package serves \"{}\", not \"{name}\"", preview.name),
-        );
-    }
-    if preview.version != entry.version {
-        return fail(
-            preview.staging_token,
-            "index and package are out of sync - try again shortly".to_string(),
         );
     }
     if entry.permissions.grew_to(&preview.permissions) {

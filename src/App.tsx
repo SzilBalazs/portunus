@@ -725,11 +725,14 @@ export default function App() {
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); setColoredIcons(cfg.files.colored_icons); configRef.current = cfg; });
   });
 
-  // Entering the marketplace scope refreshes the index if stale (>1h). A
-  // changed index emits search-invalidated, which re-runs the scoped query.
+  // Entering the marketplace scope force-refreshes the index so the browse list
+  // reflects the live catalog before the user can act (a stale cache serves
+  // moved shas / pulled versions that only fail at install). Cheap: the ETag
+  // makes an unchanged index a 304 with no re-download; a changed index emits
+  // marketplace-index-updated + search-invalidated, which re-runs the query.
   useEffect(() => {
     if (mode?.command.id === "cmd:marketplace") {
-      invoke("marketplace_refresh", { force: false }).catch(() => {});
+      invoke("marketplace_refresh", { force: true }).catch(() => {});
     }
   }, [mode?.command.id]);
 
