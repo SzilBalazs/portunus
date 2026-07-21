@@ -65,9 +65,6 @@ export default function KeybindRow(p: KeybindRowProps) {
             {note ?? p.hint}
           </div>
         )}
-        {p.recording && !note && (
-          <div className="settings-keybind-hint settings-keybind-hintline">Esc cancel · ⌫ clear</div>
-        )}
       </div>
       <div className="settings-keybind-controls">
         {p.conflict && (

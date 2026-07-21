@@ -270,7 +270,10 @@ a:focus-visible,
 /* ---------- content ---------- */
 
 .settings-content {
-  overflow-y: auto;
+  /* Always reserve the scrollbar track (thumb is transparent until hover, so
+     it stays invisible) - otherwise it appears/disappears as content height
+     changes and shifts the whole column sideways. */
+  overflow-y: scroll;
   padding: 32px 36px;
   scroll-padding-top: 32px;
 }
@@ -1217,8 +1220,11 @@ a:focus-visible,
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Clears the row's taller controls (30px buttons) from whatever follows -
+     bordered cards or the keybind list - so they don't visually touch. */
+  margin-bottom: 8px;
 }
-.settings-group-title-row .settings-group-title { margin-bottom: 2px; }
+.settings-group-title-row .settings-group-title { margin-bottom: 0; }
 
 .settings-group-desc {
   font-size: var(--fs-desc);
@@ -1378,15 +1384,9 @@ a:focus-visible,
   transition: opacity 0.15s;
 }
 
-/* ---------- keyboard chip ---------- */
-
-.settings-kbd {
-  font: 500 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 4px;
-  padding: 2px 5px;
-}
+/* ---------- keyboard chip ----------
+   .settings-kbd shares the tactile keycap treatment in the keybinds block
+   (neutral kbd tokens + bevel) so every key in Settings reads as one set. */
 
 /* ---------- dependency panel extras ---------- */
 
@@ -1586,13 +1586,15 @@ a:focus-visible,
 .settings-ext-commands { display: flex; flex-direction: column; gap: 4px; }
 .settings-ext-command-title { font-size: var(--fs-desc); color: var(--fg-mute); }
 .settings-ext-triggers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* Trigger words are metadata, not state - neutral keycap tokens keep the one
+   accent reserved for the SCOPE badge and live indicators. */
 .settings-ext-triggers code {
   font-family: ui-monospace, "JetBrains Mono", monospace;
   font-size: var(--fs-micro);
   padding: 1px 5px;
   border-radius: 3px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--kbd-bg);
+  color: var(--fg-mute);
 }
 .settings-ext-triggers-hint { font-size: var(--fs-micro); color: var(--fg-dim); }
 
@@ -2266,9 +2268,10 @@ a:focus-visible,
 .settings-keybind-search {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 5;
   background: var(--bg-card);
-  padding: 2px 0 10px;
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--line-soft);
 }
 .settings-keybind-search .settings-text-input { width: 100%; }
 
@@ -2366,22 +2369,32 @@ a:focus-visible,
 .settings-keybind-chord { display: inline-flex; gap: 3px; }
 .settings-keybind-chord + .settings-keybind-chord { margin-left: 4px; }
 
+/* Tactile keycap: top-lit bevel via box-shadow (not a border - borders here
+   mean "interactive"). Shared by every <kbd> in Settings so caps read as one
+   physical set across the window. */
 .settings-keybind-chip kbd,
-.settings-keybind-recorder kbd {
+.settings-keybind-recorder kbd,
+.settings-kbd {
   display: inline-flex;
   align-items: center;
   font: 500 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
   background: var(--kbd-bg);
   color: var(--kbd-fg);
   border-radius: 4px;
-  padding: 3px 6px;
+  padding: 3px 6px 4px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--kbd-fg) 22%, transparent),
+    0 1px 1px rgba(0, 0, 0, 0.28);
 }
 .settings-keybind-chip kbd svg { width: 10px; height: 10px; }
 
+/* Absence, not a key - flat dashed outline, no bevel, same footprint as a cap. */
 .settings-keybind-chip--none .settings-keybind-none {
   background: none;
   border: 1px dashed var(--border);
   color: var(--fg-dim);
+  box-shadow: none;
+  padding: 2px 6px 3px;
 }
 
 .settings-keybind-lock { color: var(--fg-dim); margin-left: 2px; }
@@ -2392,10 +2405,8 @@ a:focus-visible,
 }
 .settings-keybind-chip--flash { animation: keybind-commit 0.4s ease-out; }
 
-@keyframes keybind-pulse {
-  0%, 100% { border-color: var(--accent-border); }
-  50% { border-color: var(--accent); }
-}
+/* Steady accent ring signals "recording" - calm, no perpetual motion. The
+   only movement is the shake on an invalid chord (driven from JS). */
 .settings-keybind-recorder {
   display: inline-flex;
   align-items: center;
@@ -2404,11 +2415,11 @@ a:focus-visible,
   border-radius: 6px;
   padding: 2px 8px;
   background: var(--accent-soft);
-  animation: keybind-pulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .settings-keybind-recorder.invalid {
   border-color: var(--danger-fg);
-  animation: none;
+  box-shadow: 0 0 0 3px var(--danger-bg-dim);
 }
 .settings-keybind-recorder-label {
   display: inline-flex;
@@ -2416,7 +2427,7 @@ a:focus-visible,
   gap: 3px;
   font-size: var(--fs-micro);
 }
-.settings-keybind-recorder-prompt { color: var(--fg-desc); font-style: italic; }
+.settings-keybind-recorder-prompt { color: var(--fg-desc); }
 .settings-keybind-recorder-ellipsis { color: var(--accent); }
 .settings-keybind-recorder-reason { color: var(--danger-fg); }
 
@@ -2432,6 +2443,5 @@ a:focus-visible,
 .settings-keybind-resetall:hover { border-color: var(--accent); color: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-keybind-chip--flash,
-  .settings-keybind-recorder { animation: none; }
+  .settings-keybind-chip--flash { animation: none; }
 }
