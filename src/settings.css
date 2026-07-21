@@ -2263,6 +2263,86 @@ a:focus-visible,
   padding: 1px 5px;
 }
 
+/* ---------- settings group card (bordered group w/ header bar) ---------- */
+
+.settings-gcard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-card);
+  margin-bottom: 16px;
+}
+.settings-gcard:last-child { margin-bottom: 0; }
+
+.settings-gcard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 14px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+}
+.settings-gcard-headmain {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+.settings-gcard-label {
+  font: 600 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.settings-gcard-sub {
+  font: 500 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+.settings-gcard-count {
+  font-size: var(--fs-micro);
+  color: var(--fg-dim);
+}
+
+/* ---------- filter chips ---------- */
+
+.settings-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+.settings-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg-mute);
+  font: 500 var(--fs-desc)/1 -apple-system, sans-serif;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.settings-filter-chip:hover { border-color: var(--border-raised); }
+.settings-filter-chip--active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.settings-filter-chip-count {
+  font: 600 var(--fs-micro)/1 "JetBrains Mono", "Fira Code", monospace;
+  color: var(--fg-dim);
+}
+.settings-filter-chip--active .settings-filter-chip-count { color: var(--accent); }
+
 /* ---------- keybinds ---------- */
 
 .settings-keybind-search {
@@ -2281,13 +2361,16 @@ a:focus-visible,
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 7px 14px;
+  min-height: 46px;
+  padding: 8px 14px;
+  /* Reserved rail: modified rows fill it accent, so bound/unbound don't shift. */
+  border-left: 2px solid transparent;
 }
 .settings-keybind-row + .settings-keybind-row { border-top: 1px solid var(--line-soft); }
 .settings-keybind-row:hover { background: var(--bg-row-hov); }
 .settings-keybind-row--fixed .settings-keybind-title { color: var(--fg-mute); }
 .settings-keybind-row--missing { opacity: 0.6; }
+.settings-keybind-row--modified { border-left-color: var(--accent); }
 
 .settings-keybind-text { flex: 1; min-width: 0; }
 .settings-keybind-title {
@@ -2318,14 +2401,6 @@ a:focus-visible,
   flex-shrink: 0;
 }
 
-.settings-keybind-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-}
-
 .settings-keybind-reset {
   display: flex;
   align-items: center;
@@ -2345,11 +2420,42 @@ a:focus-visible,
 .settings-keybind-reset:hover { color: var(--fg); border-color: var(--border); }
 .settings-keybind-trash:hover { color: var(--danger-fg); }
 
+/* Labeled reset: a modified row's undo affordance, always legible (not hover-gated). */
+.settings-keybind-reset--text {
+  width: auto;
+  gap: 4px;
+  padding: 3px 8px;
+  font: 500 var(--fs-micro)/1 -apple-system, sans-serif;
+  color: var(--fg-mute);
+  opacity: 1;
+}
+.settings-keybind-reset--text:hover { color: var(--accent); border-color: transparent; }
+
+/* Conflict / shared marker: a legible button, not a flat badge. Red = a hard
+   same-context clash; accent = a soft, by-design shared chord. */
 .settings-keybind-conflict {
-  background: none;
-  border: none;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 9px 3px 7px;
+  font: 600 var(--fs-micro)/1 -apple-system, sans-serif;
   cursor: pointer;
+  transition: filter 0.12s;
+}
+.settings-keybind-conflict:hover { filter: brightness(1.18); }
+.settings-keybind-conflict-icon { display: flex; }
+.settings-keybind-conflict-note { font-weight: 400; opacity: 0.8; }
+.settings-keybind-conflict--error {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg-dim);
+  color: var(--danger-fg);
+}
+.settings-keybind-conflict--shared {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .settings-keybind-chip {
@@ -2388,14 +2494,20 @@ a:focus-visible,
 }
 .settings-keybind-chip kbd svg { width: 10px; height: 10px; }
 
-/* Absence, not a key - flat dashed outline, no bevel, same footprint as a cap. */
-.settings-keybind-chip--none .settings-keybind-none {
-  background: none;
+/* Absence as an invitation: a dashed "Add shortcut" affordance, not a dead label. */
+.settings-keybind-chip--none {
   border: 1px dashed var(--border);
-  color: var(--fg-dim);
-  box-shadow: none;
-  padding: 2px 6px 3px;
+  padding: 4px 11px;
 }
+.settings-keybind-chip--none:hover { border-color: var(--accent); }
+.settings-keybind-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-mute);
+  font: 500 var(--fs-desc)/1 -apple-system, sans-serif;
+}
+.settings-keybind-chip--none:hover .settings-keybind-add { color: var(--accent); }
 
 .settings-keybind-lock { color: var(--fg-dim); margin-left: 2px; }
 

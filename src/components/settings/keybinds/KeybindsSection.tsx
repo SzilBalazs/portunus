@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { Config, ChordList, KeybindsConfig, SeenExtAction } from "../../../types";
 import { useTauriListener } from "../../../hooks/useTauriListener";
 import SectionHeader from "../SectionHeader";
-import SettingsGroup from "../SettingsGroup";
+import SettingsCard from "../SettingsCard";
+import FilterChips from "../FilterChips";
 import TextInput from "../TextInput";
 import Modal from "../Modal";
 import KeybindRow from "./KeybindRow";
@@ -22,6 +23,7 @@ interface Props {
 }
 
 type Table = keyof KeybindsConfig;
+type ChipKey = "all" | "modified" | "conflicts" | "unbound";
 
 interface Target {
   /** Full target id ("builtin:pin", "cmd:settings", "ext:ytm:queue_last"). */
@@ -56,6 +58,7 @@ export default function KeybindsSection({ config, onChange }: Props) {
   const kb = config.keybinds ?? EMPTY_KEYBINDS;
   const commands = useCommands();
   const [filter, setFilter] = useState("");
+  const [chip, setChip] = useState<ChipKey>("all");
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [resetGroup, setResetGroup] = useState<Group | null>(null);
 
@@ -186,6 +189,31 @@ export default function KeybindsSection({ config, onChange }: Props) {
     setResetGroup(null);
   };
 
+  const isUnbound = useCallback(
+    (t: Target): boolean => !t.fixed && !t.missing && effective(t).length === 0,
+    [effective],
+  );
+
+  // Chip counts span every target, independent of the search needle.
+  const counts = useMemo(() => {
+    const all = groups.flatMap(g => g.targets);
+    return {
+      all: all.length,
+      modified: all.filter(isModified).length,
+      conflicts: all.filter(t => conflicts.has(t.id)).length,
+      unbound: all.filter(isUnbound).length,
+    };
+  }, [groups, isModified, conflicts, isUnbound]);
+
+  const chipMatches = (t: Target): boolean => {
+    switch (chip) {
+      case "modified": return isModified(t);
+      case "conflicts": return conflicts.has(t.id);
+      case "unbound": return isUnbound(t);
+      default: return true;
+    }
+  };
+
   const needle = filter.trim().toLowerCase();
   const matches = (g: Group, t: Target): boolean => {
     if (!needle) return true;
@@ -201,8 +229,15 @@ export default function KeybindsSection({ config, onChange }: Props) {
   };
 
   const visible = groups
-    .map(g => ({ ...g, targets: g.targets.filter(t => matches(g, t)) }))
+    .map(g => ({ ...g, targets: g.targets.filter(t => chipMatches(t) && matches(g, t)) }))
     .filter(g => g.targets.length > 0);
+
+  const chips = [
+    { key: "all", label: "All", count: counts.all },
+    { key: "modified", label: "Modified", count: counts.modified },
+    { key: "conflicts", label: "Conflicts", count: counts.conflicts },
+    { key: "unbound", label: "Unbound", count: counts.unbound },
+  ];
 
   // A recorder on a row that just got filtered out must not keep eating keys.
   useEffect(() => {
@@ -226,16 +261,22 @@ export default function KeybindsSection({ config, onChange }: Props) {
         />
       </div>
 
+      <FilterChips chips={chips} value={chip} onChange={k => setChip(k as ChipKey)} />
+
       {visible.length === 0 && (
-        <div className="settings-pin-empty">No bindings match “{filter.trim()}”.</div>
+        <div className="settings-pin-empty">
+          {needle ? <>No bindings match “{filter.trim()}”.</> : "No bindings in this filter."}
+        </div>
       )}
 
       {visible.map(g => {
         const modifiedCount = g.key === "missing" ? 0 : g.targets.filter(isModified).length;
         return (
-          <SettingsGroup
+          <SettingsCard
             key={g.key}
-            title={g.label}
+            label={g.label}
+            sub={g.key.startsWith("ext-") ? "Extension" : undefined}
+            count={g.targets.length}
             action={modifiedCount > 0 ? (
               <button className="settings-keybind-resetall" onClick={() => setResetGroup(g)}>
                 Reset all
@@ -261,11 +302,11 @@ export default function KeybindsSection({ config, onChange }: Props) {
                   onCancelRecord={() => setRecordingId(null)}
                   onReset={() => set(t, undefined)}
                   onDelete={() => set(t, undefined)}
-                  onConflictClick={chord => setFilter(chord)}
+                  onConflictClick={() => setChip("conflicts")}
                 />
               ))}
             </div>
-          </SettingsGroup>
+          </SettingsCard>
         );
       })}
 
