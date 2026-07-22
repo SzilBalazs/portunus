@@ -1416,7 +1416,6 @@ a:focus-visible,
 /* ---------- extension rows ---------- */
 
 .settings-ext-version { font-size: var(--fs-micro); font-weight: 400; color: var(--fg-dim); }
-.settings-ext-new { font-size: var(--fs-micro); font-weight: 500; color: var(--accent); }
 
 .settings-ext-perms {
   display: flex;
@@ -1544,6 +1543,49 @@ a:focus-visible,
   padding: 12px 18px 16px;
 }
 
+/* ---------- extension toolbar ---------- */
+
+.settings-ext-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.settings-ext-toolbar .settings-btn-primary,
+.settings-ext-toolbar .settings-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+/* Toolbar-button glyphs ride the button's text color at a small fixed size. */
+.settings-ext-toolbar .settings-btn-primary svg,
+.settings-ext-toolbar .settings-btn-secondary svg { width: 13px; height: 13px; }
+
+.settings-ext-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 11px;
+  max-width: 300px;
+  flex: 1;
+  background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.settings-ext-filter:focus-within { border-color: var(--accent); }
+.settings-ext-filter svg { width: 14px; height: 14px; color: var(--fg-dim); flex-shrink: 0; }
+.settings-ext-filter input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--fg);
+  font: 400 var(--fs-desc)/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.settings-ext-filter input::placeholder { color: var(--fg-dim); }
+
 /* ---------- extension cards ---------- */
 
 .settings-ext-cards { display: flex; flex-direction: column; gap: 8px; }
@@ -1551,12 +1593,23 @@ a:focus-visible,
 .settings-ext-card {
   /* Interactive containers - the one thing that still earns a border in this
      window. Raised a step off the page (--bg-card body) so the cards read as
-     distinct surfaces instead of dissolving into the background. */
+     distinct surfaces instead of dissolving into the background. A status rail
+     runs down the left edge, so the card itself is a flex row. */
+  display: flex;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
+
+/* Left status rail: at-a-glance health. accent = live & healthy, red = needs
+   attention (error / benched / re-consent), muted = disabled. */
+.settings-ext-rail { width: 4px; flex-shrink: 0; align-self: stretch; }
+.settings-ext-rail[data-state="on"] { background: var(--accent); }
+.settings-ext-rail[data-state="issue"] { background: var(--danger-fg); }
+.settings-ext-rail[data-state="off"] { background: var(--border-raised); }
+
+.settings-ext-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .settings-ext-card-header {
   display: flex;
@@ -1568,70 +1621,175 @@ a:focus-visible,
 }
 
 .settings-ext-chevron { color: var(--fg-mute); transition: transform 0.12s; flex-shrink: 0; }
-.settings-ext-card.expanded > .settings-ext-card-header .settings-ext-chevron { transform: rotate(90deg); }
+.settings-ext-card.expanded .settings-ext-card-header .settings-ext-chevron { transform: rotate(90deg); }
 
-.settings-ext-card-name { font: 600 var(--fs-body)/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); }
+.settings-ext-card-name { font: 600 var(--fs-body)/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); flex-shrink: 0; }
 .settings-ext-card-spacer { flex: 1; }
 
-.settings-ext-card-body {
+.settings-ext-onoff {
+  font: 600 var(--fs-micro)/1 ui-monospace, "JetBrains Mono", monospace;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.settings-ext-onoff[data-on="true"] { color: var(--accent); }
+.settings-ext-onoff[data-on="false"] { color: var(--fg-dim); }
+
+/* ---------- in-card tabs ---------- */
+
+.settings-ext-tabs {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 4px 14px 14px 32px;
+  gap: 20px;
+  padding: 0 15px;
+  border-bottom: 1px solid var(--line);
 }
-
-/* Compact identity block: triggers, permissions, origin. */
-.settings-ext-meta { display: flex; flex-direction: column; gap: 6px; }
-
-.settings-ext-commands { display: flex; flex-direction: column; gap: 4px; }
-.settings-ext-command-title { font-size: var(--fs-desc); color: var(--fg-mute); }
-.settings-ext-triggers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-/* Trigger words are metadata, not state - neutral keycap tokens keep the one
-   accent reserved for the SCOPE badge and live indicators. */
-.settings-ext-triggers code {
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: var(--fs-micro);
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--kbd-bg);
-  color: var(--fg-mute);
-}
-.settings-ext-triggers-hint { font-size: var(--fs-micro); color: var(--fg-dim); }
-
-/* Labeled zone (Settings, Logs) - the eyebrow + body gap does the zoning. */
-.settings-ext-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.settings-ext-eyebrow {
-  font: 600 var(--fs-micro)/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-mute);
-}
-
-.settings-ext-disclosure {
-  display: flex;
+.settings-ext-tab {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0;
-  margin: -2px 0;
+  gap: 5px;
+  padding: 9px 0;
+  margin-bottom: -1px;
   background: none;
   border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-mute);
+  font: 500 var(--fs-desc)/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   cursor: pointer;
-  user-select: none;
+  transition: color 0.12s, border-color 0.12s;
 }
-.settings-ext-disclosure:hover .settings-ext-eyebrow,
-.settings-ext-disclosure:hover .settings-ext-chevron { color: var(--fg); }
-.settings-ext-disclosure[aria-expanded="true"] .settings-ext-chevron { transform: rotate(90deg); }
+.settings-ext-tab:hover { color: var(--fg); }
+.settings-ext-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.settings-ext-tab-count { font: 400 var(--fs-micro)/1 ui-monospace, "JetBrains Mono", monospace; color: var(--fg-dim); }
+.settings-ext-tab-alert { font: 600 var(--fs-micro)/1 ui-monospace, monospace; color: var(--danger-fg); }
 
-.settings-ext-origin { font-size: var(--fs-micro); color: var(--fg-dim); overflow-wrap: anywhere; }
-.settings-ext-origin code, .settings-ext-origin-url { font-size: var(--fs-micro); word-break: break-all; }
-.settings-ext-origin a { color: var(--fg-mute); }
+.settings-ext-tabpanel { padding: 16px 15px; }
+.settings-ext-tab-empty { font-size: var(--fs-desc); color: var(--fg-dim); }
 
-.settings-ext-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+/* ---------- overview tab ---------- */
+
+.settings-ext-overview { display: flex; flex-direction: column; gap: 14px; }
+.settings-ext-ov-desc {
+  margin: 0;
+  font-size: var(--fs-desc);
+  line-height: 1.55;
+  color: var(--fg-desc);
+  max-width: 64ch;
+}
+.settings-ext-ov-rows { display: flex; flex-direction: column; }
+.settings-ext-ov-row {
+  display: flex;
+  gap: 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.settings-ext-ov-label { width: 104px; flex-shrink: 0; font-size: var(--fs-desc); color: var(--fg-mute); }
+.settings-ext-ov-value { flex: 1; min-width: 0; font-size: var(--fs-body); color: var(--fg); overflow-wrap: anywhere; }
+.settings-ext-ov-inline { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-ext-ov-inline code { font-size: var(--fs-micro); }
+.settings-ext-ov-value a { color: var(--fg-mute); }
+
+/* ---------- commands tab ---------- */
+
+.settings-ext-cmd-list { display: flex; flex-direction: column; }
+/* Three columns: title, a fixed-width mode column, then the trigger chips.
+   Giving the SCOPE/ACTION badge its own column lines both the badges AND the
+   first alias into one vertical edge - the badge text width no longer shifts
+   the chips row-to-row. */
+.settings-ext-cmd-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.settings-ext-cmd-row:first-child { border-top: none; padding-top: 0; }
+.settings-ext-cmd-title {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-body);
+  color: var(--fg);
+}
+.settings-ext-cmd-mode { display: inline-flex; }
+.settings-ext-cmd-triggers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-ext-cmd-always { font: 400 var(--fs-micro)/1 ui-monospace, "JetBrains Mono", monospace; color: var(--fg-dim); white-space: nowrap; }
+/* Trigger keywords are metadata, not state - neutral keycap tokens keep the one
+   accent reserved for the SCOPE badge and live indicators. */
+.settings-ext-cmd-row code {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: var(--fs-micro);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+
+/* ---------- permissions tab ---------- */
+
+.settings-ext-perm-tab { display: flex; flex-direction: column; gap: 12px; }
+.settings-ext-perm-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--danger-bg-dim);
+  border: 1px solid var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: var(--fs-desc);
+  line-height: 1.4;
+}
+.settings-ext-perm-banner svg { flex-shrink: 0; }
+.settings-ext-perm-rows { display: flex; flex-direction: column; }
+/* icon | body grid. The body carries the name/detail line and, for rows with
+   many named values (network hosts), a wrapping chip row underneath so a long
+   list reads left-aligned instead of crushed into the right column. */
+.settings-ext-perm-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-soft);
+  color: var(--fg-mute);
+}
+.settings-ext-perm-row:first-child { border-top: none; padding-top: 0; }
+.settings-ext-perm-row.danger { color: var(--danger-fg); }
+.settings-ext-perm-ico { display: inline-flex; flex-shrink: 0; align-items: center; height: calc(var(--fs-body) * 1.4); }
+.settings-ext-perm-body { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.settings-ext-perm-line { display: flex; align-items: baseline; gap: 10px; }
+.settings-ext-perm-name { flex-shrink: 0; font-size: var(--fs-body); color: var(--fg); }
+.settings-ext-perm-row.danger .settings-ext-perm-name { color: var(--danger-fg); }
+.settings-ext-perm-detail {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font: 400 var(--fs-micro)/1.4 ui-monospace, "JetBrains Mono", monospace;
+  color: var(--fg-mute);
+  overflow-wrap: anywhere;
+}
+.settings-ext-perm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-ext-perm-chips code {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: var(--fs-micro);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+
+/* ---------- footer actions ---------- */
+
+.settings-ext-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 15px;
+  border-top: 1px solid var(--line);
+}
+.settings-ext-footer-warn { margin: 0 15px; }
 
 .settings-ext-form { display: flex; flex-direction: column; }
 .settings-ext-form .settings-field { padding: 8px 0; }
@@ -1644,58 +1802,106 @@ a:focus-visible,
 
 /* ---------- install/consent danger gate (spawn permission) ---------- */
 
+/* Sandbox-relaxing consent notice. Danger is signalled with restraint - a
+   single left rail plus the red title and tick - over a calm raised surface,
+   rather than a saturated red flood that reads as alarming rather than
+   serious. Matches the extension card's status-rail language. */
 .settings-ext-danger {
   margin: 4px 0 2px;
-  padding: 9px 11px;
-  border: 1px solid var(--danger-fg);
-  border-radius: 6px;
-  background: var(--danger-bg-dim);
+  padding: 14px 16px 14px 15px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger-fg);
+  border-radius: 8px;
+  background: var(--bg-input);
   color: var(--fg);
   font-size: var(--fs-desc);
-  line-height: 1.45;
+  line-height: 1.55;
 }
 
 .settings-ext-danger-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-weight: 600;
+  font-size: var(--fs-body);
   color: var(--danger-fg);
-  margin-bottom: 4px;
+  margin-bottom: 7px;
 }
 
 .settings-ext-danger code {
-  font-family: monospace;
-  font-size: 10.5px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
   background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
 }
 
 /* Escalation shown when an allowlisted command is a shell/interpreter - a
    stronger warning than the generic notice, since it means arbitrary code. */
 .settings-ext-danger-escalate {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--danger-fg);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--danger-fg);
   font-weight: 500;
 }
 
+/* The mandatory acknowledgement is the commitment the user makes. It sits in a
+   quiet inset well (recessed below the notice surface) with a neutral box that
+   only turns red once ticked - the confirmation of danger, not another alarm.
+   The whole row is the click target. */
 .settings-ext-danger-ack {
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin-top: 8px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-card);
   cursor: pointer;
   font-size: var(--fs-desc);
+  line-height: 1.45;
+  color: var(--fg);
+  transition: border-color 0.12s;
 }
+.settings-ext-danger-ack:hover { border-color: var(--border-raised); }
+.settings-ext-danger-ack:has(input:checked) { border-color: var(--danger-fg); }
 
 .settings-ext-danger-ack input {
-  margin-top: 2px;
+  -webkit-appearance: none;
+  appearance: none;
   flex: none;
+  position: relative;
+  width: 19px;
+  height: 19px;
+  margin: 0;
+  border: 1.5px solid var(--border-raised);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
 }
-
-.settings-ext-reconsent { margin-top: 2px; }
+.settings-ext-danger-ack:hover input { border-color: var(--fg-mute); }
+.settings-ext-danger-ack input:checked { background: var(--danger-fg); border-color: var(--danger-fg); }
+/* Tick: a rotated open corner, drawn in the dark surface color for contrast. */
+.settings-ext-danger-ack input:checked::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 4px;
+  height: 9px;
+  border: solid var(--bg-card);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.settings-ext-danger-ack input:focus-visible {
+  outline: 2px solid var(--danger-fg);
+  outline-offset: 2px;
+}
 
 /* Secret setting input (masked, keyring-backed). */
 .settings-ext-secret { display: flex; flex-direction: column; gap: 4px; }
@@ -1771,19 +1977,6 @@ a:focus-visible,
   word-break: break-all;
   user-select: all;
 }
-
-/* Card header title block: name row + one-line status/description subline. */
-.settings-ext-card-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.settings-ext-card-titlerow { display: flex; align-items: center; gap: 8px; }
-.settings-ext-card-sub {
-  font-size: var(--fs-desc);
-  color: var(--fg-desc);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 480px;
-}
-.settings-ext-card-sub.is-error { color: #e5534b; }
 
 /* ---------- ranking: sortable category list ---------- */
 

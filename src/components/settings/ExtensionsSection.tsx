@@ -3,22 +3,30 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriListener } from "../../hooks/useTauriListener";
 import { Config, ExtensionInfo, MarketplaceUpdateInfo } from "../../types";
+import { SearchIcon, RefreshIcon } from "../../icons";
 import SectionHeader from "./SectionHeader";
-import SettingsGroup from "./SettingsGroup";
-import SettingsField from "./SettingsField";
 import ExtensionCard from "./extensions/ExtensionCard";
 import InstallExtensionDialog from "./extensions/InstallExtensionDialog";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
+  /** Deep-link: name of an extension to surface on open (from the launcher's
+   *  marketplace "Open in Settings"). Pre-fills the filter to that card. */
+  focusExtension?: string | null;
 }
 
-export default function ExtensionsSection({ config, onChange }: Props) {
+export default function ExtensionsSection({ config, onChange, focusExtension }: Props) {
   const [exts, setExts] = useState<ExtensionInfo[] | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [storageDegraded, setStorageDegraded] = useState<string | null>(null);
   const [secretsAvailable, setSecretsAvailable] = useState(true);
+  const [filter, setFilter] = useState("");
+
+  // Surface the requested card when arriving via a deep-link.
+  useEffect(() => {
+    if (focusExtension) setFilter(focusExtension);
+  }, [focusExtension]);
 
   useEffect(() => {
     invoke<string | null>("extension_storage_status")
@@ -88,6 +96,10 @@ export default function ExtensionsSection({ config, onChange }: Props) {
 
   // Dev-linked extensions sort first: they're the ones being actively worked on.
   const sorted = exts ? [...exts].sort((a, b) => Number(b.dev) - Number(a.dev) || a.name.localeCompare(b.name)) : null;
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? sorted?.filter(e => e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q))
+    : sorted;
 
   return (
     <div className="settings-section">
@@ -102,60 +114,58 @@ export default function ExtensionsSection({ config, onChange }: Props) {
         </div>
       )}
 
-      <SettingsGroup>
-        <SettingsField
-          name="Install from file"
-          desc="Sideload a downloaded .portext file. Shows permissions and the archive hash before anything is installed."
-        >
-          <button className="settings-btn-primary" onClick={() => setInstallOpen(true)}>Install…</button>
-        </SettingsField>
-      </SettingsGroup>
+      {/* One toolbar for the whole section: filter, plus the three global
+          actions (check-for-updates / install / rescan) that used to be
+          scattered across separate rows. */}
+      <div className="settings-ext-toolbar">
+        <div className="settings-ext-filter">
+          <SearchIcon />
+          <input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="Filter extensions…"
+            spellCheck={false}
+          />
+        </div>
+        <span className="settings-ext-card-spacer" />
+        <button className="settings-btn-secondary" onClick={checkForUpdates} disabled={checking} title="Check the marketplace for updates">
+          <RefreshIcon />{checking ? "Checking…" : checkMsg ?? "Updates"}
+        </button>
+        <button className="settings-btn-primary" onClick={() => setInstallOpen(true)} title="Sideload a .portext file — shows permissions and hash first">
+          Install…
+        </button>
+        <button className="settings-btn-secondary" onClick={rescan} title="Re-discover the extensions directory and reload wasm files">
+          Rescan
+        </button>
+      </div>
 
       {sorted === null && <div className="settings-dep-empty">Scanning…</div>}
       {sorted?.length === 0 && (
-        <SettingsGroup>
-          <div className="settings-dep-empty">
-            No extensions installed yet. Install one above, or scaffold your own with <code>portunus ext new</code>.
-          </div>
-        </SettingsGroup>
-      )}
-
-      {sorted && sorted.length > 0 && (
-        // Deliberately NOT a SettingsGroup: the cards are containers already,
-        // nesting them in the group card reads as a weird double box.
-        <div className="settings-group-block">
-          <div className="settings-group-title-row">
-            <div className="settings-group-title">Installed</div>
-            <button className="settings-btn-secondary" onClick={checkForUpdates} disabled={checking}>
-              {checking ? "Checking…" : checkMsg ?? "Check for updates"}
-            </button>
-          </div>
-          <div className="settings-ext-cards">
-            {sorted.map(info => (
-              <ExtensionCard
-                key={info.name}
-                info={info}
-                // Live toggle state comes from config; `info` is a backend snapshot.
-                enabled={config.extensions[info.name]?.enabled ?? false}
-                isNew={!(info.name in config.extensions)}
-                secretsAvailable={secretsAvailable}
-                update={updates.find(u => u.name === info.name)}
-                onSetEnabled={v => setEnabled(info.name, v)}
-                onChanged={refresh}
-              />
-            ))}
-          </div>
+        <div className="settings-dep-empty">
+          No extensions installed yet. Install one above, or scaffold your own with <code>portunus ext new</code>.
         </div>
       )}
+      {sorted && sorted.length > 0 && visible?.length === 0 && (
+        <div className="settings-dep-empty">No extensions match “{filter.trim()}”.</div>
+      )}
 
-      <SettingsGroup>
-        <SettingsField
-          name="Rescan"
-          desc={<>Re-discover the extensions directory and reload wasm files (also: <code>portunus --reload-extensions</code>).</>}
-        >
-          <button className="settings-btn-secondary" onClick={rescan}>Rescan</button>
-        </SettingsField>
-      </SettingsGroup>
+      {visible && visible.length > 0 && (
+        <div className="settings-ext-cards">
+          {visible.map(info => (
+            <ExtensionCard
+              key={info.name}
+              info={info}
+              // Live toggle state comes from config; `info` is a backend snapshot.
+              enabled={config.extensions[info.name]?.enabled ?? false}
+              isNew={!(info.name in config.extensions)}
+              secretsAvailable={secretsAvailable}
+              update={updates.find(u => u.name === info.name)}
+              onSetEnabled={v => setEnabled(info.name, v)}
+              onChanged={refresh}
+            />
+          ))}
+        </div>
+      )}
 
       {installOpen && (
         <InstallExtensionDialog onClose={() => setInstallOpen(false)} onInstalled={refresh} />

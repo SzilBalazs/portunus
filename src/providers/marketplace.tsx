@@ -4,6 +4,7 @@ import { registerProvider, type LaunchContext, type PreviewProps } from "./regis
 import { useTauriListener } from "../hooks/useTauriListener";
 import { formatBytes } from "../utils";
 import { interpretersIn } from "../spawn";
+import { NetIcon, StoreIcon, LinkIcon, ClipIcon, PasteIcon, KeyIcon } from "../components/settings/extensions/permGlyphs";
 import type { MarketplaceResult } from "../types";
 
 // Launch routing + preview for marketplace catalog rows. The preview panel is
@@ -74,7 +75,9 @@ registerProvider({
       return true;
     }
     if (m.state === "installed") {
-      ctx.pushToast(`${m.name} is already installed`, "info");
+      // Already installed — Enter jumps to its card in Settings.
+      invoke("open_settings_window", { section: `extensions:${m.name}` })
+        .catch(e => ctx.pushToast(String(e), "error"));
       return true;
     }
     if (m.state === "incompatible") {
@@ -97,6 +100,20 @@ registerProvider({
         shortcut: { key: "enter" },
         displayOnly: true, // plain Enter already routes through handleLaunch
         run: () => startInstall(m, ctx),
+      });
+    }
+    if (m.state === "installed" || m.state === "update") {
+      out.push({
+        id: "market:settings",
+        title: "Open in Settings",
+        section: "result" as const,
+        // Opaque `extensions:<name>` section string: Settings selects the
+        // Extensions pane and pre-filters to this card. Backend just forwards
+        // the string, so no Rust change.
+        run: () => {
+          invoke("open_settings_window", { section: `extensions:${m.name}` })
+            .catch(e => ctx.pushToast(String(e), "error"));
+        },
       });
     }
     if (!m.dev_conflict && (m.state === "installed" || m.state === "update")) {
@@ -126,17 +143,59 @@ const STATE_BADGE: Record<string, { label: string; tone: string }> = {
   incompatible: { label: "Needs newer Portunus", tone: "warn" },
 };
 
-function permissionLines(m: MarketplaceResult): string[] {
+interface Pill {
+  icon: React.ReactNode;
+  label: string;
+}
+
+/** Benign grants shown as glyphed pills. Sandbox-relaxing grants (any-host
+ *  network, spawn, bus) are deliberately excluded — they get the loud callout
+ *  below, never a quiet pill. */
+function permissionPills(m: MarketplaceResult): Pill[] {
   const p = m.permissions;
-  const lines: string[] = [];
-  if (p.network.length > 0) lines.push(`Network access: ${p.network.join(", ")}`);
-  if (p.clipboard) lines.push("Read the clipboard");
-  if (p.kv) lines.push("Store data locally");
-  if (p.open_url) lines.push("Open links in your browser");
-  if (p.paste) lines.push("Paste into other applications");
-  if (p.bus) lines.push("⚠ Talks to a companion app outside the sandbox");
-  if (p.has_secrets) lines.push("Store secrets in the system keyring");
-  return lines;
+  const pills: Pill[] = [];
+  for (const host of p.network.filter(h => h !== "*")) {
+    pills.push({ icon: <NetIcon />, label: host });
+  }
+  if (p.kv) pills.push({ icon: <StoreIcon />, label: "Storage" });
+  if (p.open_url) pills.push({ icon: <LinkIcon />, label: "Open links" });
+  if (p.clipboard) pills.push({ icon: <ClipIcon />, label: "Clipboard" });
+  if (p.paste) pills.push({ icon: <PasteIcon />, label: "Paste" });
+  if (p.has_secrets) pills.push({ icon: <KeyIcon />, label: "Keyring" });
+  return pills;
+}
+
+/** Rounded icon tile from the index entry's inline icon, with a store-glyph
+ *  fallback when an extension ships none. */
+function IconTile({ src }: { src?: string | null }) {
+  if (src) return <img className="market-icon" src={src} alt="" draggable={false} />;
+  return (
+    <div className="market-icon market-icon-fallback">
+      <StoreIcon />
+    </div>
+  );
+}
+
+const WarnGlyph = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" />
+    <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
+
+/** One sandbox-relaxing grant, rendered as the loud callout — icon rail, bold
+ *  title, muted body. Armed state (pending confirm-Enter) shifts the accent. */
+function DangerBox({ armed, title, children }: { armed: boolean; title: string; children: React.ReactNode }) {
+  return (
+    <div className={`market-danger${armed ? " armed" : ""}`}>
+      <span className="market-danger-ico"><WarnGlyph /></span>
+      <div className="market-danger-body">
+        <span className="market-danger-title">{title}</span>
+        <span className="market-danger-text">{children}</span>
+      </div>
+    </div>
+  );
 }
 
 function MarketplacePreview({ result }: PreviewProps) {
@@ -153,10 +212,10 @@ function MarketplacePreview({ result }: PreviewProps) {
   }
   const m = result.market;
   if (!m) return null;
-  return <EntryView m={m} />;
+  return <EntryView m={m} icon={result.icon_data_uri} />;
 }
 
-function EntryView({ m }: { m: MarketplaceResult }) {
+function EntryView({ m, icon }: { m: MarketplaceResult; icon?: string | null }) {
   // Disarm when the selection leaves this row or the marketplace scope, so a
   // stale arm can't turn a later single Enter into an unconfirmed install.
   useEffect(
@@ -172,39 +231,47 @@ function EntryView({ m }: { m: MarketplaceResult }) {
   const busy = installing.has(m.name);
   const isArmed = armed === m.name;
   const badge = STATE_BADGE[m.state];
-  const lines = permissionLines(m);
+  const pills = permissionPills(m);
   const spawn = m.permissions.spawn;
+  const netAny = m.permissions.network.includes("*");
+  const bus = m.permissions.bus;
   const interpreters = interpretersIn(spawn);
+  const hasDanger = spawn.length > 0 || netAny || bus;
 
   let hint: string | null;
   if (busy) hint = null;
   else if (m.dev_conflict) hint = "Dev-linked — unlink to install from the marketplace";
   else if (isArmed) hint = "Press Enter again to confirm";
-  else if (m.state === "not_installed") hint = "Press Enter to install";
-  else if (m.state === "update") hint = "Press Enter to update";
+  else if (m.state === "not_installed") hint = "↵ Install";
+  else if (m.state === "update") hint = "↵ Update";
+  else if (m.state === "installed") hint = "↵ Open in Settings";
   else hint = null;
 
   return (
     <div className="market-preview">
       <div className="market-header">
-        <div className="market-title-row">
-          <span className="market-name">{m.name}</span>
-          {m.state === "update" ? (
-            <span className="market-version">
-              v{m.installed_version} <span className="market-version-arrow">→</span> v{m.version}
-            </span>
-          ) : (
-            <span className="market-version">v{m.version}</span>
-          )}
-        </div>
-        <div className="market-meta-row">
-          {m.author && <span>{m.author}</span>}
-          {m.size_bytes > 0 && <span>{formatBytes(m.size_bytes)}</span>}
-          {badge && <span className={`market-badge ${badge.tone}`}>{badge.label}</span>}
+        <IconTile src={icon} />
+        <div className="market-head-body">
+          <div className="market-title-row">
+            <span className="market-name">{m.name}</span>
+            {m.state === "update" ? (
+              <span className="market-version">
+                v{m.installed_version} <span className="market-version-arrow">→</span> v{m.version}
+              </span>
+            ) : (
+              <span className="market-version">v{m.version}</span>
+            )}
+            {badge && <span className={`market-badge ${badge.tone}`}>{badge.label}</span>}
+          </div>
+          {m.description && <div className="market-desc">{m.description}</div>}
+          <div className="market-meta-row">
+            <span>Marketplace</span>
+            {m.homepage && <span className="market-meta-home">{prettyHost(m.homepage)}</span>}
+            {m.size_bytes > 0 && <span>{formatBytes(m.size_bytes)}</span>}
+            {m.author && <span>by {m.author}</span>}
+          </div>
         </div>
       </div>
-
-      {m.description && <div className="market-desc">{m.description}</div>}
 
       <div className="market-perms">
         <div className="market-perms-label">
@@ -212,39 +279,73 @@ function EntryView({ m }: { m: MarketplaceResult }) {
             ? "Permissions — this update requests new ones"
             : "Permissions"}
         </div>
-        {lines.length === 0 && spawn.length === 0 ? (
-          <div className="market-perm-line none">No permissions — runs fully sandboxed</div>
+        {pills.length === 0 && !hasDanger ? (
+          <div className="market-perm-none">No permissions — runs fully sandboxed</div>
         ) : (
           <>
-            {lines.map(l => (
-              <div className="market-perm-line" key={l}>{l}</div>
-            ))}
+            {pills.length > 0 && (
+              <div className="market-pills">
+                {pills.map(p => (
+                  <span className="market-pill" key={p.label}>
+                    <span className="market-pill-ico">{p.icon}</span>
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            {netAny && (
+              <DangerBox armed={isArmed} title="Reaches any host on the network">
+                Connects to any server, not a fixed allowlist.
+              </DangerBox>
+            )}
             {spawn.length > 0 && (
-              <div className={`market-spawn${isArmed ? " armed" : ""}`}>
-                <div className="market-spawn-title">Runs programs outside the sandbox</div>
-                <div className="market-spawn-cmds">{spawn.join(", ")}</div>
+              <DangerBox armed={isArmed} title="Runs programs outside the sandbox">
+                <span className="market-danger-cmds">{spawn.join(", ")}</span>
                 {interpreters.length > 0 && (
-                  <div className="market-spawn-escalate">
+                  <>
+                    {" — "}
                     {interpreters.join(", ")}{" "}
                     {interpreters.length === 1
-                      ? "is a command interpreter — it can"
-                      : "are command interpreters — they can"}{" "}
+                      ? "is a command interpreter and can"
+                      : "are command interpreters and can"}{" "}
                     run <strong>any</strong> program, granting effectively unrestricted access.
-                  </div>
+                  </>
                 )}
-              </div>
+              </DangerBox>
+            )}
+            {bus && (
+              <DangerBox armed={isArmed} title="Talks to a companion app">
+                Exchanges messages with a separately-installed program outside the sandbox.
+              </DangerBox>
             )}
           </>
         )}
       </div>
 
+      {m.keywords.length > 0 && (
+        <div className="market-keywords">
+          {m.keywords.map(k => <code key={k}>{k}</code>)}
+        </div>
+      )}
+
       {busy ? (
         <InstallProgress name={m.name} />
       ) : (
-        hint && <div className={`market-hint${isArmed ? " armed" : ""}`}>{hint}</div>
+        <div className="market-footer">
+          {hint && <span className={`market-hint${isArmed ? " armed" : ""}`}>{hint}</span>}
+        </div>
       )}
     </div>
   );
+}
+
+/** Bare host for the meta line — "github.com" from "https://github.com/…". */
+function prettyHost(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
 }
 
 function InstallProgress({ name }: { name: string }) {
@@ -280,10 +381,10 @@ function InstallProgress({ name }: { name: string }) {
 
 const STYLES = `
 .market-preview {
-  padding: 16px 18px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -294,19 +395,39 @@ const STYLES = `
 
 .market-header {
   display: flex;
+  gap: 13px;
+  align-items: flex-start;
+}
+.market-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: var(--bg-input);
+}
+.market-icon-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-mute);
+}
+.market-icon-fallback svg { width: 22px; height: 22px; }
+.market-head-body {
+  min-width: 0;
+  display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
+  gap: 5px;
 }
 .market-title-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 .market-name {
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--fg);
   letter-spacing: -0.02em;
@@ -323,18 +444,32 @@ const STYLES = `
 .market-meta-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 5px 8px;
   font-size: 11px;
   color: var(--fg-mute);
 }
+.market-meta-row > span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  color: var(--fg-dim);
+}
+.market-meta-home { color: var(--accent); }
 .market-badge {
-  font-size: 10px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
   padding: 2px 7px;
   border-radius: 99px;
   background: var(--accent-soft);
   color: var(--accent);
+  align-self: center;
 }
-.market-badge.warn { opacity: 0.75; }
+.market-badge.warn {
+  background: var(--danger-bg-dim);
+  color: var(--danger-fg);
+}
 
 .market-desc {
   font-size: 12.5px;
@@ -345,68 +480,104 @@ const STYLES = `
 .market-perms {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 .market-perms-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--fg-mute);
-  margin-bottom: 2px;
 }
-.market-perm-line {
+.market-perm-none {
   font-size: 12px;
-  color: var(--fg-desc);
-  padding-left: 10px;
-  position: relative;
+  color: var(--fg-dim);
 }
-.market-perm-line::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 7px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--fg-dim);
+.market-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.market-perm-line.none { color: var(--fg-dim); padding-left: 0; }
-.market-perm-line.none::before { display: none; }
-
-.market-spawn {
-  margin-top: 4px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
+.market-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 99px;
   border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg-card) 85%, var(--accent) 15%);
-}
-.market-spawn.armed { border-color: var(--accent); }
-.market-spawn-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg);
-  margin-bottom: 3px;
-}
-.market-spawn-cmds {
-  font: 400 11px/1.4 "JetBrains Mono","Fira Code",monospace;
+  background: var(--bg-card);
+  font-size: 11.5px;
   color: var(--fg-desc);
+  max-width: 100%;
+}
+.market-pill-ico {
+  display: inline-flex;
+  color: var(--fg-mute);
+}
+.market-pill-ico svg { width: 13px; height: 13px; }
+
+.market-danger {
+  display: flex;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--danger-bg);
+  background: var(--danger-bg-dim);
+}
+.market-danger.armed { border-color: var(--accent); }
+.market-danger-ico {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--danger-fg);
+}
+.market-danger-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.market-danger-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger-fg);
+}
+.market-danger-text {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--danger-fg);
+  opacity: 0.82;
   word-break: break-word;
 }
-.market-spawn-escalate {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--line);
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--fg-desc);
+.market-danger-text strong { opacity: 1; font-weight: 600; }
+.market-danger-cmds {
+  font: 400 11px/1.4 "JetBrains Mono","Fira Code",monospace;
 }
-.market-spawn-escalate strong { color: var(--fg); }
 
-.market-hint {
-  margin-top: auto;
-  font-size: 11px;
+.market-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.market-keywords code {
+  font: 400 10.5px/1 "JetBrains Mono","Fira Code",monospace;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--bg-input);
   color: var(--fg-mute);
-  padding-top: 8px;
+}
+
+.market-footer {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+}
+.market-hint {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 .market-hint.armed { color: var(--accent); }
 

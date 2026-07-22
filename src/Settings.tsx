@@ -210,6 +210,9 @@ function stripHeavy(cur: Config, base: Config, indexEmpty: boolean): Config {
 export default function Settings() {
   const [config, setConfig] = useState<Config | null>(null);
   const [activeSection, setActiveSection] = useState<Section>("general");
+  // Deep-link target from a `section:target` navigate payload (e.g. the
+  // marketplace preview's "Open in Settings" → focus one extension card).
+  const [sectionTarget, setSectionTarget] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -309,7 +312,10 @@ export default function Settings() {
 
   // Jump to a specific section when the launcher opens settings with a target.
   useTauriListener<string>("navigate-to-section", payload => {
-    setActiveSection(payload as Section);
+    // Payload may carry a deep-link target after a colon: "extensions:gh".
+    const [section, ...rest] = payload.split(":");
+    setActiveSection(section as Section);
+    setSectionTarget(rest.length ? rest.join(":") : null);
   });
 
   // Marketplace update count for the Extensions nav badge.
@@ -532,7 +538,7 @@ export default function Settings() {
                 {activeSection === "keybinds"  && <KeybindsSection  config={config} onChange={setConfig} />}
                 {activeSection === "providers" && <ProvidersSection config={config} onChange={setConfig} />}
                 {activeSection === "clipboard" && <ClipboardSection config={config} onChange={setConfig} />}
-                {activeSection === "extensions" && <ExtensionsSection config={config} onChange={setConfig} />}
+                {activeSection === "extensions" && <ExtensionsSection config={config} onChange={setConfig} focusExtension={sectionTarget} />}
                 {activeSection === "dict"      && <DictSection      config={config} onChange={setConfig} />}
                 {activeSection === "files"     && <FilesSection     config={config} onChange={setConfig} />}
                 {activeSection === "ranking"   && <RankingSection   config={config} onChange={setConfig} />}
