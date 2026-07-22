@@ -166,6 +166,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 bun x tsc --noEmit
 ```
 
+With Nix, the repo's flake provides all of the above: `nix develop` enters a
+dev shell with the full toolchain, and `nix build` produces the package in
+`result/` (see `flake.nix` and `packaging/nix/`).
+
 ## CLI flags
 
 ```
