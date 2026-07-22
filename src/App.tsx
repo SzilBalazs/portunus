@@ -1133,10 +1133,29 @@ export default function App() {
         setSelectedIndex(displayResults.indexOf(target));
         launch(target);
       } else if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey
-                 && modeRef.current && !queryRef.current) {
-        // Empty-query Backspace drops the mode chip, back to normal search.
-        e.preventDefault();
-        exitMode();
+                 && ((modeRef.current && !queryRef.current)
+                     || document.activeElement === inputRef.current)) {
+        if (modeRef.current && !queryRef.current) {
+          // Empty-query Backspace drops the mode chip, back to normal search.
+          e.preventDefault();
+          exitMode();
+        } else {
+          // WebKitGTK binds its native "delete backward" editing command to a
+          // physical keycode, so a Backspace injected via the virtual-keyboard
+          // protocol (wtype, used to script demo recordings) reports
+          // e.key === "Backspace" but never edits the field. Drive the deletion
+          // in JS so synthetic input behaves like a real keypress; this is
+          // identical to what native editing would do for a hardware Backspace.
+          const el = inputRef.current!;
+          const start = el.selectionStart ?? el.value.length;
+          const end = el.selectionEnd ?? el.value.length;
+          if (start === 0 && start === end) return; // nothing before the caret
+          e.preventDefault();
+          const cut = start === end ? start - 1 : start;
+          setQuery(el.value.slice(0, cut) + el.value.slice(end));
+          // Restore the caret after React re-renders the controlled value.
+          requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = cut; });
+        }
       } else if (e.key === "Escape") {
         e.preventDefault();
         // Esc dismisses a preview text selection before anything else.
