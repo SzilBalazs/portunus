@@ -14,7 +14,7 @@ import ExtensionFormModal from "./components/ExtensionFormModal";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
-import { isPreviewable } from "./utils";
+import { isPreviewable, onAccentColor } from "./utils";
 import { ColoredIconsContext } from "./coloredIcons";
 import { dispatchLaunch, dispatchShortcut, collectResultActions, isCopyKey, type LaunchContext } from "./providers/registry";
 import { getKeybinds, matchesBuiltin, useKeybinds } from "./keybinds/store";
@@ -122,6 +122,7 @@ export default function App() {
   const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
   const [contentEnabled, setContentEnabled] = useState(true);
   const [coloredIcons, setColoredIcons] = useState(true);
+  const [accentBleed, setAccentBleed] = useState<"off" | "subtle" | "bold">("subtle");
   // Full config kept in a ref so the (effect-bound) keydown handler reads the
   // current value without re-subscribing. Refreshed on mount/show/invalidation.
   const configRef = useRef<Config | null>(null);
@@ -336,6 +337,7 @@ export default function App() {
       applyTheme(cfg.appearance);
       setContentEnabled(cfg.content.enabled);
       setColoredIcons(cfg.files.colored_icons);
+      setAccentBleed(cfg.appearance.accent_bleed ?? "subtle");
       configRef.current = cfg;
       setOnboardConfig(cfg);
       if (!cfg.general.onboarding_completed) setShowOnboarding(true);
@@ -343,6 +345,7 @@ export default function App() {
     const unlisteners: Array<() => void> = [];
     listen<Config["appearance"]>("appearance-changed", event => {
       applyTheme(event.payload);
+      setAccentBleed(event.payload.accent_bleed ?? "subtle");
     }).then(fn => { unlisteners.push(fn); });
     // matugen post_hook (portunus --reload-theme) → re-fetch + re-inject the
     // external CSS, then re-apply the current theme so live edits show instantly.
@@ -1195,6 +1198,23 @@ export default function App() {
   }, [displayResults, selectedIndex, quickResult, actionPanel, extForm]);
 
   const selected = displayResults[selectedIndex] ?? null;
+
+  // Accent bleed: publish the selected result's sampled dominant color as
+  // `--item-accent` (+ a legible `--item-on-accent`) on the document root, where
+  // the gated App.css rules and the sandboxed extension preview both read it.
+  // When bleed is off (or the result has no sampled color) we fall back to the
+  // theme accent so the look is byte-identical to today.
+  useEffect(() => {
+    const root = document.documentElement;
+    const hex = accentBleed !== "off" ? selected?.dominant_color : undefined;
+    if (hex) {
+      root.style.setProperty("--item-accent", hex);
+      root.style.setProperty("--item-on-accent", onAccentColor(hex));
+    } else {
+      root.style.setProperty("--item-accent", "var(--accent)");
+      root.style.setProperty("--item-on-accent", "var(--text-on-accent)");
+    }
+  }, [selected?.id, selected?.dominant_color, accentBleed]);
 
   // Selecting a different result or switching modes swaps the previewed content
   // out from under a text selection - drop it. Query edits are NOT a dependency:

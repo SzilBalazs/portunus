@@ -24,11 +24,23 @@ function animLabel(v: Config["appearance"]["animate_results"]): string {
   return ANIM_OPTIONS.find(o => o.value === v)?.label ?? "Slide";
 }
 
+// Accent bleed: tint the selection + its preview with the color sampled from
+// each result's own icon/art, instead of the single theme accent.
+const BLEED_OPTIONS = [
+  { label: "Off",    value: "off"    },
+  { label: "Subtle", value: "subtle" },
+  { label: "Bold",   value: "bold"   },
+] as const;
+
+function bleedLabel(v: Config["appearance"]["accent_bleed"]): string {
+  return BLEED_OPTIONS.find(o => o.value === v)?.label ?? "Subtle";
+}
+
 export default function AppearanceSection({ config, onChange }: Props) {
   const set = (patch: Partial<Config["appearance"]>) =>
     onChange({ ...config, appearance: { ...config.appearance, ...patch } });
 
-  const { theme, font_size, animate_results, show_metadata, slide_selection, grain } = config.appearance;
+  const { theme, font_size, animate_results, show_metadata, slide_selection, grain, accent_bleed } = config.appearance;
 
   return (
     <div className="settings-section">
@@ -71,6 +83,20 @@ export default function AppearanceSection({ config, onChange }: Props) {
 
         <SettingsField name="Sliding selection" desc="Glide the highlight between rows as you navigate.">
           <Toggle label="Sliding selection" checked={slide_selection ?? true} onChange={v => set({ slide_selection: v })} />
+        </SettingsField>
+
+        <SettingsField
+          name="Accent bleed"
+          desc="Tint the selected row and its preview with the color sampled from that result's icon or art, instead of the theme accent."
+        >
+          <Select
+            options={BLEED_OPTIONS.map(o => ({ label: o.label }))}
+            value={bleedLabel(accent_bleed)}
+            onChange={label => {
+              const opt = BLEED_OPTIONS.find(o => o.label === label);
+              if (opt) set({ accent_bleed: opt.value });
+            }}
+          />
         </SettingsField>
 
         <SettingsField name="Film grain" desc="Faint noise texture over the launcher. 0 turns it off.">

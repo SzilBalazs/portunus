@@ -83,6 +83,7 @@ export interface Config {
     show_metadata: boolean;
     slide_selection: boolean;
     grain: number;
+    accent_bleed: "off" | "subtle" | "bold";
   };
   keybinds: KeybindsConfig;
   /** Per-extension state keyed by name. Absent = disabled. */
@@ -442,6 +443,9 @@ export interface SearchResult {
   icon_path?: string;
   /** Pre-built `data:` URI for a validated extension-supplied icon. */
   icon_data_uri?: string;
+  /** Dominant `#rrggbb` color sampled from the result's icon/art (accent bleed).
+   *  Absent for glyph-only results (files/folders) → theme accent fallback. */
+  dominant_color?: string;
   file_size?: number;
   created?: number;
   modified?: number;

@@ -46,6 +46,9 @@ const THEME_VARS = [
   '--bg', '--bg-deep', '--bg-card',
   '--accent', '--accent-soft', '--accent-border',
   '--radius', '--radius-sm', '--line', '--border', '--text-on-accent',
+  // Accent-bleed: the selected result's sampled color, set on documentElement by
+  // App.tsx. Flows the album-art / icon hue into the sandboxed preview HTML.
+  '--item-accent', '--item-on-accent',
 ];
 
 const EXT_UTILS_CSS = [

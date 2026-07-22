@@ -1,9 +1,25 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 
-use super::{ranking, Provider, SearchResult};
+use super::{dominant_color, ranking, Provider, SearchResult};
 use crate::config::SharedConfig;
+
+/// Memoized icon-path → dominant color. Decoding an icon is done once on the
+/// background load thread; a config reload rebuilds the app list but reuses the
+/// cached colors instead of re-decoding.
+static COLOR_CACHE: LazyLock<Mutex<HashMap<String, Option<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn dominant_color_for(path: &str) -> Option<String> {
+    if let Some(hit) = COLOR_CACHE.lock().unwrap().get(path) {
+        return hit.clone();
+    }
+    let color = dominant_color::extract_from_path(std::path::Path::new(path));
+    COLOR_CACHE.lock().unwrap().insert(path.to_string(), color.clone());
+    color
+}
 
 // ── data types ───────────────────────────────────────────────────────────────
 
@@ -14,6 +30,7 @@ struct DesktopEntry {
     exec: String,
     description: Option<String>,
     icon_path: Option<String>,
+    dominant_color: Option<String>,
 }
 
 /// Intermediate: raw fields straight from the .desktop file, icon not yet resolved.
@@ -87,11 +104,15 @@ fn load_apps() -> Vec<DesktopEntry> {
                     .as_deref()
                     .and_then(|n| resolve_icon(n, &icon_index))
                     .or_else(|| icon_index.get(&stem).cloned());
+                // Sample the icon's dominant color here on the background load
+                // thread (memoized) so the search path only clones a String.
+                let dominant_color = icon_path.as_deref().and_then(dominant_color_for);
                 apps.push(DesktopEntry {
                     name: parsed.name,
                     exec: parsed.exec,
                     description: parsed.description,
                     icon_path,
+                    dominant_color,
                 });
             }
         }
@@ -393,6 +414,7 @@ impl Provider for AppProvider {
                     kind: "app".to_string(),
                     exec: Some(app.exec.clone()),
                     icon_path: app.icon_path.clone(),
+                    dominant_color: app.dominant_color.clone(),
                     parts: Some(parts),
                     ..Default::default()
                 }))

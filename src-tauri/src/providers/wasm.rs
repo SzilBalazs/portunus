@@ -21,7 +21,7 @@ use portunus_ext_sdk::{
 
 use super::breaker::FailureBreaker;
 use super::ranking::{Category, MatchTier, ScoreParts};
-use super::{SearchResult, EXTENSION_BAND, SCORE_EXTENSION_TRIGGERED};
+use super::{dominant_color, SearchResult, EXTENSION_BAND, SCORE_EXTENSION_TRIGGERED};
 use crate::extensions::hostfns::{self, ExtensionCtx, PreviewEmitSlot, QueryEmitSlot};
 use crate::extensions::kv::ExtensionKv;
 use crate::extensions::manifest::{CommandSpec, ExtensionManifest, Limits};
@@ -499,6 +499,14 @@ impl WasmProvider {
     ) -> SearchResult {
         let relevance = if dto.relevance.is_finite() { dto.relevance } else { 0.0 };
         let icon_data_uri = dto.icon.as_ref().and_then(|i| self.icon_data_uri(i));
+        // Sample the icon's dominant color for accent bleed. Only when the icon
+        // already passed mime/size validation (icon_data_uri is Some), and the
+        // bytes are the same validated (≤32 KB, whitelisted-MIME) payload.
+        let dominant_color = if icon_data_uri.is_some() {
+            dto.icon.as_ref().and_then(icon_dominant_color)
+        } else {
+            None
+        };
         let relevance_bonus = relevance.clamp(0.0, 100.0) / 100.0 * EXTENSION_BAND;
         // Scoped results carry no root-band parts: inside a scope there is
         // nothing else to compete against, and the scope must keep working
@@ -541,6 +549,7 @@ impl WasmProvider {
             kind: self.command_kind(command),
             score,
             icon_data_uri,
+            dominant_color,
             // Round-tripped back to the extension on activate/preview.
             ext: Some(dto),
             ext_command: Some(command.to_string()),
@@ -586,6 +595,19 @@ impl WasmProvider {
         }
         Some(format!("data:{};base64,{}", icon.mime, icon.data_base64))
     }
+}
+
+/// Decode a validated result icon's base64 bytes and sample its dominant color
+/// for accent bleed. Best-effort: a decode/sampling miss just yields None.
+fn icon_dominant_color(icon: &portunus_ext_sdk::ResultIcon) -> Option<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(icon.data_base64.as_bytes())
+        .ok()?;
+    dominant_color::extract_from_bytes(&bytes)
+}
+
+impl WasmProvider {
 
     /// Runs the extension's default (or named) action for a result and
     /// returns the declarative effects it requested, validated and

@@ -500,6 +500,32 @@ fn de_result_animation<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ResultA
     })
 }
 
+/// Per-item accent-bleed intensity. Serialized lowercase ("off"/"subtle"/"bold").
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccentBleed {
+    Off,
+    Subtle,
+    Bold,
+}
+
+/// Accept the legacy boolean form (`true` → Subtle, `false` → Off) as well as
+/// the new string enum, so upgrading doesn't fail the whole-config parse and
+/// reset every setting to defaults.
+fn de_accent_bleed<'de, D: serde::Deserializer<'de>>(d: D) -> Result<AccentBleed, D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Compat {
+        Bool(bool),
+        Enum(AccentBleed),
+    }
+    Ok(match Compat::deserialize(d)? {
+        Compat::Bool(true) => AccentBleed::Subtle,
+        Compat::Bool(false) => AccentBleed::Off,
+        Compat::Enum(e) => e,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
@@ -512,6 +538,10 @@ pub struct AppearanceConfig {
     pub slide_selection: bool,
     /// Film-grain noise overlay opacity (0.0 = off .. 0.25 = strong).
     pub grain: f32,
+    /// Per-item accent bleed: tint the selected item + its preview with the
+    /// dominant color sampled from its own icon/album art.
+    #[serde(deserialize_with = "de_accent_bleed")]
+    pub accent_bleed: AccentBleed,
 }
 
 impl Default for AppearanceConfig {
@@ -523,6 +553,7 @@ impl Default for AppearanceConfig {
             show_metadata: true,
             slide_selection: true,
             grain: 0.07,
+            accent_bleed: AccentBleed::Subtle,
         }
     }
 }

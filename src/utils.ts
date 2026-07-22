@@ -20,6 +20,25 @@ export function groupLabel(kind: string): string | null {
   return null;
 }
 
+// Pick a legible text color ("#000" or "#fff") for a `#rrggbb` background using
+// standard sRGB relative luminance (WCAG: linearize each channel, weight
+// 0.2126/0.7152/0.0722). Used for accent-bleed button text over the sampled
+// item color. Unparseable input falls back to white.
+export function onAccentColor(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "#fff";
+  const int = parseInt(m[1], 16);
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const lum =
+    0.2126 * lin((int >> 16) & 255) +
+    0.7152 * lin((int >> 8) & 255) +
+    0.0722 * lin(int & 255);
+  return lum > 0.5 ? "#000" : "#fff";
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;

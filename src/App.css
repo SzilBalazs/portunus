@@ -520,6 +520,26 @@ html, body, #root {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* ---------- accent bleed (per-item sampled color) ----------
+   Everything below is gated on the data-accent-bleed attribute so "off" (and
+   unset) stays byte-identical to the theme accent. --item-accent /
+   --item-on-accent are published on :root by App.tsx (theme accent when off or
+   when a result has no sampled color). Background stays neutral - only the rail,
+   icon, button, and preview wash pick up the item color.
+
+   Row-targeted rails sit ABOVE the slide-selection reset below, so under sliding
+   selection the row shadow is still cleared and .selection-bg paints the rail. */
+:root[data-accent-bleed="subtle"] .result-row.selected,
+:root[data-accent-bleed="bold"] .result-row.selected {
+  box-shadow: inset 2px 0 0 var(--item-accent);
+}
+/* Bold: fatter rail + a soft, static outer glow halo (no animation). */
+:root[data-accent-bleed="bold"] .result-row.selected {
+  box-shadow:
+    inset 3px 0 0 var(--item-accent),
+    0 0 18px -3px color-mix(in srgb, var(--item-accent) 42%, transparent);
+}
+
 /* ---------- sliding selection ----------
    A single highlight layer behind the rows that glides + resizes to the selected
    row. Off by default styling (display:none); App.tsx flips data-slide-selection.
@@ -557,6 +577,20 @@ html, body, #root {
   .selection-bg { transition: none; }
 }
 
+/* Accent-bleed rail on the sliding-selection layer. Higher specificity than the
+   base .selection-bg, so it wins regardless of source order. The glow rides the
+   layer's existing transform transition (already killed under reduced motion
+   above), so no new motion is introduced. */
+:root[data-accent-bleed="subtle"] .selection-bg,
+:root[data-accent-bleed="bold"] .selection-bg {
+  box-shadow: inset 2px 0 0 var(--item-accent);
+}
+:root[data-accent-bleed="bold"] .selection-bg {
+  box-shadow:
+    inset 3px 0 0 var(--item-accent),
+    0 0 18px -3px color-mix(in srgb, var(--item-accent) 42%, transparent);
+}
+
 .result-icon {
   width: 28px;
   height: 28px;
@@ -592,6 +626,13 @@ html, body, #root {
    non-categorized icons (apps, clipboard, calc…) adopt the generic accent. */
 .result-row.selected .result-icon:not([data-cat]) { background: var(--icon-bg-sel); color: var(--accent); }
 .result-row.selected .result-icon[data-cat] { background-color: color-mix(in srgb, currentColor 22%, transparent); }
+
+/* Accent bleed: the focused non-categorized icon adopts the item color. Category
+   glyphs keep their own hue (they already encode file type). */
+:root[data-accent-bleed="subtle"] .result-row.selected .result-icon:not([data-cat]),
+:root[data-accent-bleed="bold"] .result-row.selected .result-icon:not([data-cat]) {
+  color: var(--item-accent);
+}
 
 .result-icon-img {
   width: 28px;
@@ -744,7 +785,31 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Contain the accent-bleed wash pseudo (z-index:-1) to this box so it can't
+     slip behind the preview column background. No visual effect on its own. */
+  isolation: isolate;
 }
+
+/* Accent bleed: a soft, blurred radial wash of the item color behind the hero
+   icon. Static (no animation); opacity scales subtle -> bold. Sits behind the
+   icon (z-index/order via negative z on the pseudo). */
+:root[data-accent-bleed="subtle"] .app-preview-icon-stage::before,
+:root[data-accent-bleed="bold"] .app-preview-icon-stage::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 180px;
+  height: 180px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--item-accent) 0%, transparent 70%);
+  filter: blur(26px);
+  pointer-events: none;
+  z-index: -1;
+}
+:root[data-accent-bleed="subtle"] .app-preview-icon-stage::before { opacity: 0.18; }
+:root[data-accent-bleed="bold"]   .app-preview-icon-stage::before { opacity: 0.4; }
 
 .app-preview-icon {
   width: 96px;
@@ -800,6 +865,12 @@ html, body, #root {
   padding: 3px 10px;
 }
 
+/* Accent bleed: the exec chip picks up a faint item-color tint. */
+:root[data-accent-bleed="subtle"] .app-preview-exec,
+:root[data-accent-bleed="bold"] .app-preview-exec {
+  background: color-mix(in srgb, var(--item-accent) 12%, transparent);
+}
+
 .app-preview-actions { display: flex; justify-content: center; gap: 8px; }
 
 .btn-primary {
@@ -817,6 +888,20 @@ html, body, #root {
 }
 
 .btn-primary:hover { filter: brightness(1.08); }
+
+/* Accent bleed: the CTA is a flat fill of the item color, the way it was before
+   the bleed system was removed (plain var(--accent), just re-hued per item). The
+   sample is toned toward black into the old usable-accent lightness band so a
+   vivid icon reads as a rich muted fill, not a neon glow. Contrast-picked text,
+   no gradient/sheen. Off path above is untouched. Static - no transition. */
+:root[data-accent-bleed="subtle"] .btn-primary,
+:root[data-accent-bleed="bold"] .btn-primary {
+  background: color-mix(in srgb, var(--item-accent) 76%, #000 24%);
+  color: var(--item-on-accent);
+}
+:root[data-accent-bleed="bold"] .btn-primary {
+  box-shadow: 0 0 16px -6px color-mix(in srgb, var(--item-accent) 45%, transparent);
+}
 
 .btn-kbd {
   font-size: 14px;

@@ -32,6 +32,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 chrono-tz = { version = "0.10", default-features = false }
 pdfium-render = { version = "0.8", features = ["image"] }
 image = "0.25"
+resvg = "0.44"          # pure-Rust SVG rasterizer for dominant-color sampling of svg icons
+base64 = "0.22"         # decode extension-supplied icon bytes for dominant-color sampling
 roxmltree = "0.20"
 toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
