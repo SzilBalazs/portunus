@@ -86,7 +86,11 @@ fn load_apps() -> Vec<DesktopEntry> {
                     .icon_name
                     .as_deref()
                     .and_then(|n| resolve_icon(n, &icon_index))
-                    .or_else(|| icon_index.get(&stem).cloned());
+                    .or_else(|| {
+                        icon_index
+                            .get(&stem)
+                            .and_then(|p| servable_icon_path(std::path::Path::new(p)))
+                    });
                 apps.push(DesktopEntry {
                     name: parsed.name,
                     exec: parsed.exec,
@@ -107,12 +111,8 @@ fn load_apps() -> Vec<DesktopEntry> {
 /// that contain app icons. Avoids walking the full icon tree (which can be
 /// 80k+ files on a system with Papirus or similar large themes installed).
 fn build_icon_index() -> HashMap<String, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let roots = [
-        format!("{home}/.local/share/icons"),
-        "/usr/share/icons".to_string(),
-        "/usr/share/pixmaps".to_string(),
-    ];
+    let mut roots: Vec<PathBuf> = xdg_data_dirs().into_iter().map(|d| d.join("icons")).collect();
+    roots.push(PathBuf::from("/usr/share/pixmaps"));
 
     // (size_dir, category_dir, base_score) - scanned in declaration order.
     // SVG gets an additional +100 bonus inside index_dir.
@@ -132,17 +132,16 @@ fn build_icon_index() -> HashMap<String, String> {
 
     let mut index: HashMap<String, (String, u32)> = HashMap::new();
 
-    for root_str in &roots {
-        let root = PathBuf::from(root_str);
+    for root in &roots {
         if !root.is_dir() {
             continue;
         }
 
         // /usr/share/pixmaps - icons live directly in the root dir.
-        index_dir(&root, 35, &mut index);
+        index_dir(root, 35, &mut index);
 
         // Enumerate installed themes (hicolor, Papirus, Adwaita, …).
-        let Ok(theme_entries) = fs::read_dir(&root) else {
+        let Ok(theme_entries) = fs::read_dir(root) else {
             continue;
         };
         let themes: Vec<PathBuf> = theme_entries
@@ -252,7 +251,8 @@ fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
         return None;
     }
 
-    index.get(icon).cloned()
+    // May be outside the asset scope (NixOS store paths via XDG_DATA_DIRS).
+    index.get(icon).and_then(|p| servable_icon_path(std::path::Path::new(p)))
 }
 
 // ── .desktop parser ───────────────────────────────────────────────────────────
