@@ -932,6 +932,7 @@ pub fn run() {
             let reload_frecency = frecency_state.clone();
             let reload_keybinds = Arc::clone(&keybinds_cb);
             let reload_config_state = Arc::clone(&watcher_config_state);
+            let reload_app = app.handle().clone();
             let reload_fn: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                 let new_cfg = config::Config::load();
                 {
@@ -953,6 +954,10 @@ pub fn run() {
                     );
                     *last = new_cfg.clone();
                 }
+                // Re-apply appearance live: the frontend only calls applyTheme on
+                // mount or on this event, so --reload-config would refresh the
+                // config state without visibly switching the theme otherwise.
+                let _ = reload_app.emit("appearance-changed", new_cfg.appearance.clone());
                 // Keep the frontend-visible config in sync with the file.
                 *reload_config_state.lock().unwrap() = new_cfg;
             });
