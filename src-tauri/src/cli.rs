@@ -43,6 +43,8 @@ USAGE:
 
 FLAGS:
   --show              Show the launcher window (signals running instance)
+  --close             Close the launcher window (signals running instance)
+  --toggle            Toggle the launcher window (signals running instance)
   --clipboard         Show the launcher pre-filled with \"clipboard\"
   --reindex           Rebuild the content search index
   --reload-config     Reload config from file without restarting
@@ -67,6 +69,20 @@ SUBCOMMANDS:
 
     if std::env::args().any(|a| a == "--show") {
         if !ipc::try_signal_running("show") {
+            eprintln!("portunus: no running instance found");
+            std::process::exit(1);
+        }
+        return true;
+    }
+    if std::env::args().any(|a| a == "--close") {
+        if !ipc::try_signal_running("close") {
+            eprintln!("portunus: no running instance found");
+            std::process::exit(1);
+        }
+        return true;
+    }
+    if std::env::args().any(|a| a == "--toggle") {
+        if !ipc::try_signal_running("toggle") {
             eprintln!("portunus: no running instance found");
             std::process::exit(1);
         }
