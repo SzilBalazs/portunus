@@ -1,10 +1,41 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
+
+use tauri::Manager;
 
 use super::{dominant_color, ranking, Provider, SearchResult};
 use crate::config::SharedConfig;
+
+/// App handle used to widen the asset-protocol scope to the icons we resolve.
+/// Unset on CLI paths that never serve icons - those skip the registration.
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP.set(app);
+}
+
+/// Let the WebView serve the icons we resolved. `assetProtocol.scope` in
+/// tauri.conf.json only covers the usual distro roots, but icons live wherever
+/// the packaging puts them: the nix store (reached via `XDG_DATA_DIRS`), or an
+/// app's own data dir (JetBrains Toolbox ships icons under
+/// ~/.local/share/JetBrains/…). Allow those exact files - the alternative,
+/// copying them into a servable directory, means a disk copy per icon on any
+/// system whose icons all sit outside the static roots.
+fn allow_icons(apps: &[DesktopEntry]) {
+    let Some(app) = APP.get() else { return };
+    let scope = app.asset_protocol_scope();
+    for path in apps.iter().filter_map(|a| a.icon_path.as_deref()) {
+        // Paths the static scope already covers need no pattern of their own,
+        // so the common case adds nothing to match against.
+        if !scope.is_allowed(path) {
+            if let Err(e) = scope.allow_file(path) {
+                eprintln!("[portunus] icon scope: {path}: {e}");
+            }
+        }
+    }
+}
 
 /// Memoized icon-path → dominant color. Decoding an icon is done once on the
 /// background load thread; a config reload rebuilds the app list but reuses the
@@ -118,6 +149,7 @@ fn load_apps() -> Vec<DesktopEntry> {
         }
     }
 
+    allow_icons(&apps);
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps
 }
@@ -128,12 +160,8 @@ fn load_apps() -> Vec<DesktopEntry> {
 /// that contain app icons. Avoids walking the full icon tree (which can be
 /// 80k+ files on a system with Papirus or similar large themes installed).
 fn build_icon_index() -> HashMap<String, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let roots = [
-        format!("{home}/.local/share/icons"),
-        "/usr/share/icons".to_string(),
-        "/usr/share/pixmaps".to_string(),
-    ];
+    let mut roots: Vec<PathBuf> = xdg_data_dirs().into_iter().map(|d| d.join("icons")).collect();
+    roots.push(PathBuf::from("/usr/share/pixmaps"));
 
     // (size_dir, category_dir, base_score) - scanned in declaration order.
     // SVG gets an additional +100 bonus inside index_dir.
@@ -153,17 +181,16 @@ fn build_icon_index() -> HashMap<String, String> {
 
     let mut index: HashMap<String, (String, u32)> = HashMap::new();
 
-    for root_str in &roots {
-        let root = PathBuf::from(root_str);
+    for root in &roots {
         if !root.is_dir() {
             continue;
         }
 
         // /usr/share/pixmaps - icons live directly in the root dir.
-        index_dir(&root, 35, &mut index);
+        index_dir(root, 35, &mut index);
 
         // Enumerate installed themes (hicolor, Papirus, Adwaita, …).
-        let Ok(theme_entries) = fs::read_dir(&root) else {
+        let Ok(theme_entries) = fs::read_dir(root) else {
             continue;
         };
         let themes: Vec<PathBuf> = theme_entries
@@ -216,55 +243,21 @@ fn index_dir(dir: &PathBuf, base_score: u32, index: &mut HashMap<String, (String
     }
 }
 
-/// Roots the asset protocol is allowed to serve from.
-/// Must stay in sync with `assetProtocol.scope` in tauri.conf.json.
-fn in_asset_scope(path: &std::path::Path) -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-    path.starts_with(format!("{home}/.local/share/icons"))
-        || path.starts_with("/usr/share/icons")
-        || path.starts_with("/usr/share/pixmaps")
-}
-
-/// Make a resolved icon path servable by the asset protocol: return it as-is
-/// when it is inside the scope, otherwise copy it into a cache directory that
-/// is inside the scope (e.g. JetBrains Toolbox ships icons under
-/// ~/.local/share/JetBrains/…, which the asset protocol would block).
-fn servable_icon_path(path: &std::path::Path) -> Option<String> {
-    if in_asset_scope(path) {
-        return path.to_str().map(String::from);
-    }
-    let home = std::env::var("HOME").ok()?;
-    let cache_dir = PathBuf::from(format!("{home}/.local/share/icons/portunus-cache"));
-    fs::create_dir_all(&cache_dir).ok()?;
-    let dest = cache_dir.join(path.file_name()?);
-    // Re-copy only when the cached copy is missing or differs in size.
-    let needs_copy = match (fs::metadata(path), fs::metadata(&dest)) {
-        (Ok(src), Ok(cached)) => src.len() != cached.len(),
-        (Ok(_), Err(_)) => true,
-        _ => return None,
-    };
-    if needs_copy {
-        fs::copy(path, &dest).ok()?;
-    }
-    dest.to_str().map(String::from)
-}
-
 /// Resolve a raw icon field to an absolute path using the pre-built index.
 fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
     if icon.starts_with('/') {
         // Trust the shipped absolute path - it is the icon the app intends
         // (a stem like "toolbox" could collide with an unrelated theme icon).
-        // Out-of-scope paths are copied into the cache by servable_icon_path.
         let p = std::path::Path::new(icon);
         if p.exists() {
             let resolved = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-            return servable_icon_path(&resolved);
+            return Some(resolved.to_string_lossy().into_owned());
         }
         for ext in ["svg", "png"] {
             let q = p.with_extension(ext);
             if q.exists() {
                 let resolved = fs::canonicalize(&q).unwrap_or_else(|_| q.clone());
-                return servable_icon_path(&resolved);
+                return Some(resolved.to_string_lossy().into_owned());
             }
         }
         // Dead path: don't guess from the file stem - names like "toolbox"

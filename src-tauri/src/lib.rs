@@ -845,6 +845,8 @@ pub fn run() {
 
             // Let extension logging push live-tail events to Settings.
             extensions::logs::set_app_handle(app.handle().clone());
+            // Let the apps provider widen the asset scope to the icons it finds.
+            providers::apps::set_app_handle(app.handle().clone());
             // Async extension query orchestration (streams `search-stream`).
             extensions::query::init(app.handle().clone());
 
