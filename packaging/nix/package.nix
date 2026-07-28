@@ -1,6 +1,7 @@
 { lib
 , stdenv
 , wrapGAppsHook3
+, xorg
 , cargo-tauri
 , glib-networking
 , gst_all_1
@@ -21,7 +22,7 @@ stdenv.mkDerivation {
 
   dontUnpack = true;
 
-  nativeBuildInputs = [ wrapGAppsHook3 ];
+  nativeBuildInputs = [ wrapGAppsHook3 xorg.lndir ];
 
   # runtime pieces the hook picks up from buildInputs
   buildInputs = [
@@ -30,11 +31,13 @@ stdenv.mkDerivation {
     gst_all_1.gst-plugins-good
   ];
 
+  # Symlink the unwrapped output instead of copying it - the binary and its
+  # resources would otherwise sit in the store twice. lndir mirrors the tree as
+  # real dirs holding symlinks, so wrapProgram can still replace bin/portunus.
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp -r ${unwrapped}/. $out/
-    chmod -R u+w $out # wrapProgram rewrites bin/
+    lndir -silent ${unwrapped} $out
     runHook postInstall
   '';
 

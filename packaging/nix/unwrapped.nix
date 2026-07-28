@@ -16,11 +16,29 @@ rustPlatform.buildRustPackage {
   pname = "portunus-unwrapped";
   version = (lib.importTOML ../../src-tauri/Cargo.toml).package.version;
 
-  src = ../../.;
+  # Only the inputs the build actually reads, so docs/CI/packaging commits do
+  # not invalidate the build (and the binary cache).
+  src = lib.fileset.toSource {
+    root = ../../.;
+    fileset = lib.fileset.unions [
+      ../../src
+      ../../src-tauri
+      ../../extension-sdk # path dependency of the portunus crate
+      ../../templates # scaffold templates, include_str!'d by cli_ext.rs
+      ../../public
+      ../../index.html
+      ../../vite.config.ts
+      ../../tsconfig.json
+      ../../tsconfig.node.json
+      ../../package.json
+      ../../bun.lock
+      ../../bun.nix
+    ];
+  };
 
   cargoRoot = "src-tauri";
   buildAndTestSubdir = "src-tauri";
-  cargoHash = "sha256-oGa0K8493xLF9Qhjq3tdyVDmDfxZUNdDQcxaoEXW0KA=";
+  cargoLock.lockFile = ../../src-tauri/Cargo.lock;
 
   bunDeps = bun2nix.fetchBunDeps { bunNix = ../../bun.nix; };
   dontUseBunBuild = true; # cargo-tauri.hook owns build/install

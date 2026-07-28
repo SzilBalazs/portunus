@@ -31,6 +31,10 @@ examples/extensions/gh/target/
 *.wasm
 *.portext
 
+# Nix build result symlinks
+result
+result-*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
