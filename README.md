@@ -79,6 +79,37 @@ build such as `pdfium-bin`, and tesseract with the language data you want
 
 </details>
 
+### Nix (flake)
+
+```bash
+nix run github:SzilBalazs/portunus
+```
+
+Prebuilt binaries come from `portunus.cachix.org`. Nix applies a flake's own
+substituter list only for trusted users, so unless you are one, add the cache to
+your configuration - without it Nix quietly builds the whole app from source:
+
+```nix
+# NixOS: configuration.nix
+nix.settings = {
+  substituters = [ "https://portunus.cachix.org" ];
+  trusted-public-keys = [
+    "portunus.cachix.org-1:byhkNv2iSgx4QQmrwgmtzYHFY+ztYe8+3vcAStcDemI="
+  ];
+};
+```
+
+For a one-off run, `--accept-flake-config` does the same job:
+
+```bash
+nix run --accept-flake-config github:SzilBalazs/portunus
+```
+
+The wrapper puts libpdfium, the poppler tools, cliphist, wl-clipboard, wtype and
+the tesseract data on the package's own path, so PDF preview, clipboard history,
+content search and OCR work out of the box. Dictionary lookups are the exception:
+they need a `dictd` server and its databases running on the host.
+
 ## Compositor setup
 
 Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it; it hides again on launch or Escape.

@@ -7,9 +7,16 @@
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
+  # Only applied automatically for trusted users - everyone else needs the
+  # substituter in their own nix.conf (see the Nix section in README.md) or
+  # `--accept-flake-config`.
   nixConfig = {
-    extra-substituters = [ "https://nix-community.cachix.org" ];
+    extra-substituters = [
+      "https://portunus.cachix.org"
+      "https://nix-community.cachix.org"
+    ];
     extra-trusted-public-keys = [
+      "portunus.cachix.org-1:byhkNv2iSgx4QQmrwgmtzYHFY+ztYe8+3vcAStcDemI="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };
