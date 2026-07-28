@@ -26,9 +26,27 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Logical size we aim for. Result rows render icons at ~28 px, so 48 leaves
-/// headroom for HiDPI without pulling in needlessly heavy 512 px artwork.
-const TARGET_SIZE: u32 = 48;
+/// Logical size we aim for: the preview hero renders at 96 CSS px, which is the
+/// largest consumer and wants 2x that on a HiDPI display. 128 covers it without
+/// routinely pulling in 512 px artwork; `size_distance` below then does the
+/// real work of preferring an oversized file to an undersized one.
+const TARGET_SIZE: u32 = 128;
+
+/// How much worse an undersized icon is than an oversized one, per pixel of
+/// shortfall. Downscaling is free; upscaling is visibly soft, so a bitmap-only
+/// theme (Steam writes 16-96 px PNGs and nothing else) must reach for its
+/// largest file rather than tie-break onto a 32 px one. 5 is the smallest
+/// weight that settles the 96-vs-256 pair - the one real themes actually
+/// present - in favour of the sharp option instead of leaving it a tie.
+const UNDERSIZE_PENALTY: u32 = 5;
+
+/// Distance from `TARGET_SIZE`, with shortfall weighted `UNDERSIZE_PENALTY`x.
+fn size_distance(size: u32) -> u32 {
+    match size.checked_sub(TARGET_SIZE) {
+        Some(over) => over,
+        None => (TARGET_SIZE - size).saturating_mul(UNDERSIZE_PENALTY),
+    }
+}
 
 /// Hard cap on the inherit chain. Guards against a pathological `Inherits`
 /// graph; real themes are 2-4 deep.
@@ -55,16 +73,46 @@ struct DirKey {
     not_app_context: bool,
     /// false sorts first: vector artwork before fixed-size bitmaps.
     not_scalable: bool,
-    /// Distance from `TARGET_SIZE`, in logical pixels.
+    /// Distance from `TARGET_SIZE`, undersize-weighted. See `size_distance`.
     size_distance: u32,
     /// 1x before 2x, so `@2x` duplicates only matter when nothing else has the name.
     scale: u32,
 }
 
+/// One directory a theme declares, before it is bound to a base directory. The
+/// spec allows a theme to be split across roots with `index.theme` present in
+/// only one of them, so the declaration and the root it lives under are
+/// resolved separately.
+struct DirDecl {
+    subdir: PathBuf,
+    size: u32,
+    scale: u32,
+    /// `Type=Scalable`, or a path component literally named `scalable` for
+    /// themes that forget to say so.
+    scalable: bool,
+    app_context: bool,
+}
+
+impl DirDecl {
+    fn key(&self, theme_rank: usize) -> DirKey {
+        DirKey {
+            theme_rank,
+            symbolic: self
+                .subdir
+                .components()
+                .any(|c| c.as_os_str().eq_ignore_ascii_case("symbolic")),
+            not_app_context: !self.app_context,
+            not_scalable: !self.scalable,
+            size_distance: size_distance(self.size),
+            scale: self.scale,
+        }
+    }
+}
+
 /// A parsed `index.theme`: the directories it declares plus the themes it falls
 /// back to.
 struct ThemeMeta {
-    dirs: Vec<(PathBuf, DirKey)>,
+    dirs: Vec<DirDecl>,
     inherits: Vec<String>,
 }
 
@@ -161,10 +209,10 @@ fn safe_subdir(name: &str) -> Option<PathBuf> {
 }
 
 /// Parse one theme's `index.theme`. Sections other than `[Icon Theme]` are
-/// directory declarations; we take every one that exists on disk rather than
-/// only those listed in `Directories=`, since some themes ship an incomplete
-/// list.
-fn parse_index_theme(root: &Path, theme_rank: usize) -> Option<ThemeMeta> {
+/// directory declarations; we take every one rather than only those listed in
+/// `Directories=`, since some themes ship an incomplete list. Whether a
+/// declared directory exists is decided later, once per base directory.
+fn parse_index_theme(root: &Path) -> Option<ThemeMeta> {
     let content = fs::read_to_string(root.join("index.theme")).ok()?;
 
     /// Which section the parser is inside. `Ignored` covers a header that
@@ -187,11 +235,6 @@ fn parse_index_theme(root: &Path, theme_rank: usize) -> Option<ThemeMeta> {
             fields.clear();
             return;
         };
-        let path = root.join(subdir);
-        if !path.is_dir() {
-            fields.clear();
-            return;
-        }
         let size: u32 = fields
             .get("Size")
             .and_then(|s| s.parse().ok())
@@ -207,18 +250,13 @@ fn parse_index_theme(root: &Path, theme_rank: usize) -> Option<ThemeMeta> {
         let named_scalable = subdir
             .components()
             .any(|c| c.as_os_str().eq_ignore_ascii_case("scalable"));
-        let symbolic = subdir
-            .components()
-            .any(|c| c.as_os_str().eq_ignore_ascii_case("symbolic"));
-        let key = DirKey {
-            theme_rank,
-            symbolic,
-            not_app_context: fields.get("Context").map(String::as_str) != Some("Applications"),
-            not_scalable: !(ty == "Scalable" || named_scalable),
-            size_distance: size.abs_diff(TARGET_SIZE),
+        dirs.push(DirDecl {
+            subdir: subdir.clone(),
+            size,
             scale,
-        };
-        dirs.push((path, key));
+            scalable: ty == "Scalable" || named_scalable,
+            app_context: fields.get("Context").map(String::as_str) == Some("Applications"),
+        });
         fields.clear();
     };
 
@@ -253,6 +291,100 @@ fn parse_index_theme(root: &Path, theme_rank: usize) -> Option<ThemeMeta> {
     Some(ThemeMeta { dirs, inherits })
 }
 
+// ── directories without an index.theme ────────────────────────────────────────
+
+/// Logical size encoded in a directory name: `48x48`, `48`, or nothing.
+fn size_from_component(name: &str) -> Option<u32> {
+    name.split_once('x').map_or(name, |(head, _)| head).parse().ok()
+}
+
+/// Derive directory declarations by walking a theme root two levels deep, for
+/// theme trees that ship no `index.theme` at all - the layout Steam creates
+/// under `~/.local/share/icons/hicolor` when it installs per-game icons. Both
+/// `<size>/<context>` and `<context>/<size>` orders are handled by taking
+/// whichever component parses as a size.
+fn synthesize_index(root: &Path) -> Vec<DirDecl> {
+    let mut out = Vec::new();
+    let Ok(level1) = fs::read_dir(root) else {
+        return out;
+    };
+    for outer in level1.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
+        let Ok(name_a) = outer.file_name().into_string() else {
+            continue;
+        };
+        let Ok(level2) = fs::read_dir(outer.path()) else {
+            continue;
+        };
+        for inner in level2.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
+            let Ok(name_b) = inner.file_name().into_string() else {
+                continue;
+            };
+            let (outer_size, inner_size) =
+                (size_from_component(&name_a), size_from_component(&name_b));
+            // Only the `<context>/<size>` order puts the context outermost;
+            // `scalable/apps` carries no size at all and reads like the first.
+            let context = if inner_size.is_some() { &name_a } else { &name_b };
+            out.push(DirDecl {
+                subdir: Path::new(&name_a).join(&name_b),
+                size: outer_size.or(inner_size).unwrap_or(TARGET_SIZE),
+                scale: 1,
+                scalable: name_a.eq_ignore_ascii_case("scalable")
+                    || name_b.eq_ignore_ascii_case("scalable"),
+                app_context: context.eq_ignore_ascii_case("apps"),
+            });
+        }
+    }
+    out
+}
+
+/// Bind one theme's declarations to every base directory that carries it, and
+/// append them to `dirs` at `theme_rank`. Returns the themes it inherits, or
+/// `None` if no root has the theme at all.
+///
+/// A theme may be split across roots (a user override plus the system install)
+/// with `index.theme` present in only one of them, so the declaration list is
+/// read once and applied to all of them - a per-root parse would drop whichever
+/// roots lack the file.
+fn collect_theme(
+    roots: &[PathBuf],
+    name: &str,
+    theme_rank: usize,
+    dirs: &mut Vec<(PathBuf, DirKey)>,
+) -> Option<Vec<String>> {
+    let bases: Vec<PathBuf> = roots
+        .iter()
+        .map(|r| r.join(name))
+        .filter(|p| p.is_dir())
+        .collect();
+    if bases.is_empty() {
+        return None;
+    }
+
+    let (decls, inherits) = match bases.iter().find_map(|b| parse_index_theme(b)) {
+        Some(meta) => (meta.dirs, meta.inherits),
+        None => {
+            // Same subdir can appear under several roots; declare it once and
+            // let the binding loop below pick up every root that has it.
+            let mut seen = HashSet::new();
+            let mut decls: Vec<DirDecl> = bases.iter().flat_map(|b| synthesize_index(b)).collect();
+            decls.retain(|d| seen.insert(d.subdir.clone()));
+            (decls, Vec::new())
+        }
+    };
+
+    for base in &bases {
+        for decl in &decls {
+            let path = base.join(&decl.subdir);
+            // Declared-but-absent directories must not enter the lookup order,
+            // or every miss would pay a `read_dir` for them.
+            if path.is_dir() {
+                dirs.push((path, decl.key(theme_rank)));
+            }
+        }
+    }
+    Some(inherits)
+}
+
 // ── chain construction ────────────────────────────────────────────────────────
 
 impl IconResolver {
@@ -275,18 +407,8 @@ impl IconResolver {
             if name == "hicolor" {
                 hicolor_seen = true;
             }
-            // A theme can be split across roots (user override plus system
-            // install); every root that has it contributes at this rank.
-            let mut found = false;
-            for root in &roots {
-                let dir = root.join(&name);
-                if let Some(meta) = parse_index_theme(&dir, rank) {
-                    dirs.extend(meta.dirs);
-                    queue.extend(meta.inherits);
-                    found = true;
-                }
-            }
-            if found {
+            if let Some(inherits) = collect_theme(&roots, &name, rank, &mut dirs) {
+                queue.extend(inherits);
                 rank += 1;
             }
         }
@@ -294,11 +416,7 @@ impl IconResolver {
         // Every theme is required to inherit hicolor; add it explicitly for the
         // ones that forget, so app-shipped icons remain reachable.
         if !hicolor_seen {
-            for root in &roots {
-                if let Some(meta) = parse_index_theme(&root.join("hicolor"), rank) {
-                    dirs.extend(meta.dirs);
-                }
-            }
+            collect_theme(&roots, "hicolor", rank, &mut dirs);
             rank += 1;
         }
 
@@ -426,13 +544,13 @@ mod tests {
             &["48x48/apps", "scalable/apps"],
         );
 
-        let meta = parse_index_theme(&root, 0).unwrap();
+        let meta = parse_index_theme(&root).unwrap();
         assert_eq!(meta.inherits, vec!["hicolor"]);
         assert_eq!(meta.dirs.len(), 2);
         // Scalable sorts ahead of the fixed-size directory at equal size.
         let mut dirs = meta.dirs;
-        dirs.sort_by(|a, b| a.1.cmp(&b.1));
-        assert!(dirs[0].0.ends_with("scalable/apps"));
+        dirs.sort_by_key(|d| d.key(0));
+        assert!(dirs[0].subdir.ends_with("scalable/apps"));
     }
 
     /// breeze puts the size *under* the context; the section name carries the
@@ -448,29 +566,74 @@ mod tests {
             &["apps/48", "mimetypes/22"],
         );
 
-        let meta = parse_index_theme(&root, 0).unwrap();
+        let meta = parse_index_theme(&root).unwrap();
         assert_eq!(meta.dirs.len(), 2);
         let mut dirs = meta.dirs;
-        dirs.sort_by(|a, b| a.1.cmp(&b.1));
-        assert!(dirs[0].0.ends_with("apps/48"));
-        assert!(dirs[1].0.ends_with("mimetypes/22"));
+        dirs.sort_by_key(|d| d.key(0));
+        assert!(dirs[0].subdir.ends_with("apps/48"));
+        assert!(dirs[1].subdir.ends_with("mimetypes/22"));
     }
 
     /// Declared-but-absent directories must not enter the lookup order, or
     /// every miss would pay a `read_dir` for them.
     #[test]
     fn skips_absent_directories() {
-        let root = tmpdir("absent").join("sparse");
+        let base = tmpdir("absent");
         write_theme(
-            &root,
+            &base.join("sparse"),
             "[Icon Theme]\nName=Sparse\n\n\
              [48x48/apps]\nSize=48\nContext=Applications\n\n\
              [512x512/apps]\nSize=512\nContext=Applications\n",
             &["48x48/apps"],
         );
 
-        let meta = parse_index_theme(&root, 0).unwrap();
-        assert_eq!(meta.dirs.len(), 1);
+        let mut dirs = Vec::new();
+        collect_theme(&[base], "sparse", 0, &mut dirs).unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert!(dirs[0].0.ends_with("48x48/apps"));
+    }
+
+    /// The spec puts `index.theme` in one base directory only; the directories
+    /// it declares must still be picked up from every other root that has the
+    /// theme.
+    #[test]
+    fn binds_declarations_to_every_root() {
+        let base = tmpdir("split");
+        let (user, system) = (base.join("user"), base.join("system"));
+        write_theme(
+            &system.join("hicolor"),
+            "[Icon Theme]\nName=Hicolor\n\n[32x32/apps]\nSize=32\nContext=Applications\n",
+            &["32x32/apps"],
+        );
+        // Steam's layout: icon directories, no index.theme of their own.
+        fs::create_dir_all(user.join("hicolor/32x32/apps")).unwrap();
+
+        let mut dirs = Vec::new();
+        collect_theme(&[user.clone(), system.clone()], "hicolor", 0, &mut dirs).unwrap();
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs.iter().any(|(p, _)| p.starts_with(&user)));
+        assert!(dirs.iter().any(|(p, _)| p.starts_with(&system)));
+    }
+
+    /// A theme tree with no `index.theme` anywhere still yields directories,
+    /// derived from the directory names.
+    #[test]
+    fn synthesizes_directories_without_an_index() {
+        let base = tmpdir("no-index");
+        for d in ["hicolor/32x32/apps", "hicolor/scalable/apps", "hicolor/16x16/mimetypes"] {
+            fs::create_dir_all(base.join(d)).unwrap();
+        }
+
+        let mut dirs = Vec::new();
+        let inherits = collect_theme(&[base], "hicolor", 0, &mut dirs).unwrap();
+        assert!(inherits.is_empty());
+        assert_eq!(dirs.len(), 3);
+        dirs.sort_by(|a, b| a.1.cmp(&b.1));
+        // scalable/apps first (vector, app context), then 32x32/apps, then the
+        // non-app context.
+        assert!(dirs[0].0.ends_with("scalable/apps"));
+        assert!(dirs[1].0.ends_with("32x32/apps"));
+        assert!(dirs[2].0.ends_with("16x16/mimetypes"));
     }
 
     #[test]
@@ -512,6 +675,31 @@ mod tests {
         assert!(symbolic < inherited);
     }
 
+    /// A bitmap-only theme must reach for its largest file rather than tie-break
+    /// onto a small one - Steam ships 16-96 px PNGs and the preview renders at
+    /// 96 CSS px.
+    #[test]
+    fn prefers_oversize_to_undersize() {
+        let decl = |size| DirDecl {
+            subdir: PathBuf::from(format!("{size}x{size}/apps")),
+            size,
+            scale: 1,
+            scalable: false,
+            app_context: true,
+        };
+        let mut sizes = vec![16, 24, 32, 64, 96, 256];
+        sizes.sort_by_key(|s| decl(*s).key(0));
+        assert_eq!(sizes[0], 256, "an oversized icon downscales cleanly");
+        assert_eq!(sizes[1], 96, "then the largest that fits under the target");
+
+        // Without the undersize weighting these two would tie at distance 32.
+        assert!(size_distance(160) < size_distance(96));
+        // Steam's own spread, with no oversized file to fall back to.
+        let mut steam = vec![16, 24, 32, 64, 96];
+        steam.sort_by_key(|s| decl(*s).key(0));
+        assert_eq!(steam[0], 96);
+    }
+
     #[test]
     fn strips_icon_extensions() {
         assert_eq!(strip_icon_extension("firefox.png"), "firefox");
@@ -544,7 +732,7 @@ mod tests {
             if !visited.insert(name.clone()) {
                 continue;
             }
-            if let Some(meta) = parse_index_theme(&base.join(&name), rank) {
+            if let Some(meta) = parse_index_theme(&base.join(&name)) {
                 queue.extend(meta.inherits);
                 rank += 1;
             }
