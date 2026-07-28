@@ -23,6 +23,8 @@ export interface Config {
     max_results: number;
     onboarding_completed: boolean;
     layer_shell: boolean;
+    /** Icon theme for app icons; null/absent auto-detects from the desktop settings. */
+    icon_theme?: string | null;
   };
   providers: {
     apps: boolean;

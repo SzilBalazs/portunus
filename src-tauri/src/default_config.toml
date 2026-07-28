@@ -5,6 +5,7 @@
 max_results = 20             # total results displayed in the launcher
 onboarding_completed = false # set true after the first-launch wizard runs
 layer_shell = true           # Wayland only: use a wlr-layer-shell overlay surface (restart to apply)
+# icon_theme = "Papirus-Dark"  # app icon theme; unset auto-detects from GTK settings / gsettings
 
 [providers]
 apps  = true   # .desktop application search

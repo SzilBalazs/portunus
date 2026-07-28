@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Config } from "../../types";
 import ThemeGrid from "./ThemeGrid";
 import Toggle from "./Toggle";
@@ -36,9 +38,20 @@ function bleedLabel(v: Config["appearance"]["accent_bleed"]): string {
   return BLEED_OPTIONS.find(o => o.value === v)?.label ?? "Subtle";
 }
 
+// Stands in for `icon_theme: null`, i.e. follow the GTK/gsettings icon theme.
+const ICON_THEME_AUTO = "Auto (desktop setting)";
+
 export default function AppearanceSection({ config, onChange }: Props) {
   const set = (patch: Partial<Config["appearance"]>) =>
     onChange({ ...config, appearance: { ...config.appearance, ...patch } });
+  // Icon theme lives under [general] but belongs next to the other visuals.
+  const setGeneral = (patch: Partial<Config["general"]>) =>
+    onChange({ ...config, general: { ...config.general, ...patch } });
+
+  const [iconThemes, setIconThemes] = useState<string[]>([]);
+  useEffect(() => {
+    invoke<string[]>("list_icon_themes").then(setIconThemes).catch(() => setIconThemes([]));
+  }, []);
 
   const { theme, font_size, animate_results, show_metadata, slide_selection, grain, accent_bleed } = config.appearance;
 
@@ -74,6 +87,19 @@ export default function AppearanceSection({ config, onChange }: Props) {
               const opt = ANIM_OPTIONS.find(o => o.label === label);
               if (opt) set({ animate_results: opt.value });
             }}
+          />
+        </SettingsField>
+
+        <SettingsField
+          name="Icon theme"
+          desc="Icon theme used for app icons. The chosen theme is exhausted before its fallbacks, so results stay visually consistent."
+        >
+          <Select
+            options={[{ label: ICON_THEME_AUTO }, ...iconThemes.map(t => ({ label: t }))]}
+            value={config.general.icon_theme || ICON_THEME_AUTO}
+            onChange={label =>
+              setGeneral({ icon_theme: label === ICON_THEME_AUTO ? null : label })
+            }
           />
         </SettingsField>
 

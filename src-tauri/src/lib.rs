@@ -119,6 +119,12 @@ fn list_commands(registry: tauri::State<'_, Registry>) -> Vec<providers::Command
     registry.read().unwrap_or_else(|e| e.into_inner()).commands()
 }
 
+/// Installed icon-theme names, for the Appearance section's theme picker.
+#[tauri::command]
+fn list_icon_themes() -> Vec<String> {
+    providers::icon_theme::installed_themes()
+}
+
 /// Records frecency for an invoked command entry so frequently-used commands
 /// rank higher in root search. Fired by the frontend on enter/run.
 #[tauri::command]
@@ -738,6 +744,7 @@ pub fn run() {
     let frecency_cfg = cfg.frecency.clone();
     let files_cfg = cfg.files.clone();
     let providers_cfg = cfg.providers.clone();
+    let icon_theme_cfg = cfg.general.icon_theme.clone();
     let dict_cfg = cfg.dict.clone();
     let calc_cfg = cfg.calc.clone();
     let marketplace_cfg = cfg.marketplace.clone();
@@ -1137,8 +1144,10 @@ pub fn run() {
                     bg_registry.write().unwrap().register(file_provider);
                 }
                 if providers_cfg.apps {
-                    let app_provider =
-                        providers::apps::AppProvider::new(Arc::clone(&shared_bg));
+                    let app_provider = providers::apps::AppProvider::new(
+                        Arc::clone(&shared_bg),
+                        icon_theme_cfg.as_deref(),
+                    );
                     bg_registry.write().unwrap().register(app_provider);
                 }
 
@@ -1200,6 +1209,7 @@ pub fn run() {
             unpin_result,
             list_pins,
             list_commands,
+            list_icon_themes,
             command_used,
             content_match_page,
             content_match_keys,

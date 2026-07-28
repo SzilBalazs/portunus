@@ -194,11 +194,21 @@ pub struct GeneralConfig {
     /// Use a wlr-layer-shell overlay surface on Wayland for compositor-agnostic
     /// always-on-top launcher behavior. Linux/Wayland only; takes effect on restart.
     pub layer_shell: bool,
+    /// Icon theme used to resolve app icons. `None`/empty auto-detects from the
+    /// GTK settings, then gsettings, then falls back to `hicolor`. Skipped on
+    /// write when unset so the file keeps no `icon_theme = ""` noise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_theme: Option<String>,
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
-        Self { max_results: 20, onboarding_completed: false, layer_shell: true }
+        Self {
+            max_results: 20,
+            onboarding_completed: false,
+            layer_shell: true,
+            icon_theme: None,
+        }
     }
 }
 

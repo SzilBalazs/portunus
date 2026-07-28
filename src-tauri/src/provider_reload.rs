@@ -133,11 +133,18 @@ pub fn rebuild_providers(
         notify_cb();
     }
 
-    if new_cfg.providers.apps != old_cfg.providers.apps {
+    // A new icon theme means every app icon has to be re-resolved, so it needs
+    // the same full rebuild as toggling the provider.
+    if new_cfg.providers.apps != old_cfg.providers.apps
+        || new_cfg.general.icon_theme != old_cfg.general.icon_theme
+    {
         let enabled = new_cfg.providers.apps;
         let shared2 = Arc::clone(shared);
+        let icon_theme = new_cfg.general.icon_theme.clone();
         spawn_rebuild(registry, notify_cb, "apps", "apps", move || {
-            enabled.then(|| Box::new(providers::apps::AppProvider::new(shared2)) as _)
+            enabled.then(|| {
+                Box::new(providers::apps::AppProvider::new(shared2, icon_theme.as_deref())) as _
+            })
         });
     }
 

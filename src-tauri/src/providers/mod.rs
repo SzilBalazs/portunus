@@ -7,6 +7,7 @@ pub mod content;
 pub mod dict;
 pub mod dominant_color;
 pub mod files;
+pub mod icon_theme;
 pub mod marketplace;
 pub mod ranking;
 pub mod wasm;

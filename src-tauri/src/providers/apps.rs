@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, OnceLock};
 
 use tauri::Manager;
 
-use super::{dominant_color, ranking, Provider, SearchResult};
+use super::{dominant_color, icon_theme, ranking, Provider, SearchResult};
 use crate::config::SharedConfig;
 
 /// App handle used to widen the asset-protocol scope to the icons we resolve.
@@ -80,30 +79,23 @@ pub struct AppProvider {
 }
 
 impl AppProvider {
-    pub fn new(shared: SharedConfig) -> Self {
-        Self { apps: load_apps(), shared }
+    /// `icon_theme` is the configured `[general] icon_theme`; `None` auto-detects.
+    /// It is passed explicitly rather than read from `shared`, which is the
+    /// narrow search-time snapshot and has no business carrying load-time input.
+    pub fn new(shared: SharedConfig, icon_theme: Option<&str>) -> Self {
+        Self { apps: load_apps(icon_theme), shared }
     }
 }
 
 // ── loading ───────────────────────────────────────────────────────────────────
 
-fn xdg_data_dirs() -> Vec<PathBuf> {
-    let system_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-
-    let mut dirs = vec![crate::paths::xdg_data_home()];
-    dirs.extend(system_dirs.split(':').map(PathBuf::from));
-    dirs
-}
-
-fn load_apps() -> Vec<DesktopEntry> {
-    let icon_index = build_icon_index();
+/// Read every visible `.desktop` file, deduped by file stem.
+fn parse_all_entries() -> Vec<(String, ParsedEntry)> {
     let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-
     let mut seen: HashSet<String> = HashSet::new();
-    let mut apps = Vec::new();
+    let mut parsed = Vec::new();
 
-    for data_dir in xdg_data_dirs() {
+    for data_dir in crate::paths::xdg_data_dirs() {
         let apps_dir = data_dir.join("applications");
         if !apps_dir.is_dir() {
             continue;
@@ -126,27 +118,88 @@ fn load_apps() -> Vec<DesktopEntry> {
             if !seen.insert(stem.clone()) {
                 continue;
             }
-            if let Some(parsed) = parse_desktop(entry.path(), &current_desktop) {
-                // Resolve the Icon field; if that fails (e.g. a dead absolute
-                // path), fall back to a theme icon named after the .desktop
-                // file itself (XDG convention, e.g. "jetbrains-toolbox").
-                let icon_path = parsed
-                    .icon_name
-                    .as_deref()
-                    .and_then(|n| resolve_icon(n, &icon_index))
-                    .or_else(|| icon_index.get(&stem).cloned());
-                // Sample the icon's dominant color here on the background load
-                // thread (memoized) so the search path only clones a String.
-                let dominant_color = icon_path.as_deref().and_then(dominant_color_for);
-                apps.push(DesktopEntry {
-                    name: parsed.name,
-                    exec: parsed.exec,
-                    description: parsed.description,
-                    icon_path,
-                    dominant_color,
-                });
+            if let Some(e) = parse_desktop(entry.path(), &current_desktop) {
+                parsed.push((stem, e));
             }
         }
+    }
+    parsed
+}
+
+/// Icon names to look up for one entry, in preference order. The `-symbolic`
+/// variant covers themes whose only artwork for a name is monochrome (modern
+/// Adwaita ships app icons exclusively that way); the `.desktop` stem is the
+/// XDG convention fallback for entries whose `Icon` field is missing or dead
+/// (e.g. JetBrains Toolbox).
+fn icon_candidates(stem: &str, icon_name: Option<&str>) -> Vec<String> {
+    let mut names = Vec::with_capacity(3);
+    if let Some(raw) = icon_name {
+        let base = icon_theme::strip_icon_extension(raw);
+        if !base.is_empty() && !raw.starts_with('/') {
+            names.push(base.to_string());
+            if !base.ends_with("-symbolic") {
+                names.push(format!("{base}-symbolic"));
+            }
+        }
+    }
+    names.push(stem.to_string());
+    names
+}
+
+fn load_apps(preferred_theme: Option<&str>) -> Vec<DesktopEntry> {
+    let parsed = parse_all_entries();
+
+    // Two-phase: collect the names we need, then resolve them in one pass over
+    // the theme chain. Probing per name would cost hundreds of thousands of
+    // syscalls on a deep inherit chain.
+    let resolver = icon_theme::IconResolver::new(preferred_theme);
+    let wanted: HashSet<String> = parsed
+        .iter()
+        .flat_map(|(stem, e)| icon_candidates(stem, e.icon_name.as_deref()))
+        .collect();
+    let resolved = resolver.resolve_all(&wanted);
+
+    let mut unresolved: Vec<&str> = Vec::new();
+    let mut apps: Vec<DesktopEntry> = parsed
+        .iter()
+        .map(|(stem, parsed)| {
+            // An absolute `Icon=` path is the icon the app intends, so it wins
+            // over anything the theme offers under the same stem.
+            let icon_path = parsed
+                .icon_name
+                .as_deref()
+                .filter(|n| n.starts_with('/'))
+                .and_then(resolve_absolute_icon)
+                .or_else(|| {
+                    icon_candidates(stem, parsed.icon_name.as_deref())
+                        .iter()
+                        .find_map(|n| resolved.get(n).cloned())
+                });
+            if icon_path.is_none() {
+                unresolved.push(parsed.icon_name.as_deref().unwrap_or(stem));
+            }
+            // Sample the icon's dominant color here on the background load
+            // thread (memoized) so the search path only clones a String.
+            let dominant_color = icon_path.as_deref().and_then(dominant_color_for);
+            DesktopEntry {
+                name: parsed.name.clone(),
+                exec: parsed.exec.clone(),
+                description: parsed.description.clone(),
+                icon_path,
+                dominant_color,
+            }
+        })
+        .collect();
+
+    if !unresolved.is_empty() {
+        unresolved.sort_unstable();
+        eprintln!(
+            "[portunus] icons: theme={} unresolved={}/{}: {}",
+            resolver.theme(),
+            unresolved.len(),
+            apps.len(),
+            unresolved.join(", ")
+        );
     }
 
     allow_icons(&apps);
@@ -154,119 +207,22 @@ fn load_apps() -> Vec<DesktopEntry> {
     apps
 }
 
-// ── icon index ────────────────────────────────────────────────────────────────
-
-/// Build a `stem → best_path` map by reading only the specific subdirectories
-/// that contain app icons. Avoids walking the full icon tree (which can be
-/// 80k+ files on a system with Papirus or similar large themes installed).
-fn build_icon_index() -> HashMap<String, String> {
-    let mut roots: Vec<PathBuf> = xdg_data_dirs().into_iter().map(|d| d.join("icons")).collect();
-    roots.push(PathBuf::from("/usr/share/pixmaps"));
-
-    // (size_dir, category_dir, base_score) - scanned in declaration order.
-    // SVG gets an additional +100 bonus inside index_dir.
-    let targets: &[(&str, &str, u32)] = &[
-        ("scalable", "apps", 190),
-        ("scalable", "applications", 190),
-        ("256x256", "apps", 180),
-        ("128x128", "apps", 170),
-        ("64x64", "apps", 160),
-        ("48x48", "apps", 150),
-        ("48x48", "applications", 150),
-        ("32x32", "apps", 140),
-        ("24x24", "apps", 130),
-        ("22x22", "apps", 125),
-        ("16x16", "apps", 110),
-    ];
-
-    let mut index: HashMap<String, (String, u32)> = HashMap::new();
-
-    for root in &roots {
-        if !root.is_dir() {
-            continue;
-        }
-
-        // /usr/share/pixmaps - icons live directly in the root dir.
-        index_dir(root, 35, &mut index);
-
-        // Enumerate installed themes (hicolor, Papirus, Adwaita, …).
-        let Ok(theme_entries) = fs::read_dir(root) else {
-            continue;
-        };
-        let themes: Vec<PathBuf> = theme_entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .map(|e| e.path())
-            .collect();
-
-        for theme in &themes {
-            for (size, cat, score) in targets {
-                let dir = theme.join(size).join(cat);
-                if dir.is_dir() {
-                    index_dir(&dir, *score, &mut index);
-                }
-            }
-        }
-    }
-
-    index.into_iter().map(|(k, (path, _))| (k, path)).collect()
-}
-
-/// Read one flat directory and insert every SVG/PNG file into the index.
-/// SVG gets a +100 bonus on top of `base_score` so it beats same-size PNGs.
-/// Stored paths are canonicalized (symlinks resolved) so the asset protocol
-/// always receives a real file path with no symlink chains to follow.
-fn index_dir(dir: &PathBuf, base_score: u32, index: &mut HashMap<String, (String, u32)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        let fmt_bonus: u32 = match path.extension().and_then(|e| e.to_str()) {
-            Some("svg") => 100,
-            Some("png") => 0,
-            _ => continue,
-        };
-        let score = base_score + fmt_bonus;
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            // Canonicalize so we store the real file path, not a symlink chain.
-            // Use the symlink name as stem but the resolved target as the path.
-            let resolved = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            let slot = index
-                .entry(stem.to_string())
-                .or_insert_with(|| (String::new(), 0));
-            if score > slot.1 {
-                slot.0 = resolved.to_string_lossy().into_owned();
-                slot.1 = score;
-            }
-        }
-    }
-}
-
-/// Resolve a raw icon field to an absolute path using the pre-built index.
-fn resolve_icon(icon: &str, index: &HashMap<String, String>) -> Option<String> {
-    if icon.starts_with('/') {
-        // Trust the shipped absolute path - it is the icon the app intends
-        // (a stem like "toolbox" could collide with an unrelated theme icon).
-        let p = std::path::Path::new(icon);
-        if p.exists() {
-            let resolved = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-            return Some(resolved.to_string_lossy().into_owned());
-        }
-        for ext in ["svg", "png"] {
-            let q = p.with_extension(ext);
-            if q.exists() {
-                let resolved = fs::canonicalize(&q).unwrap_or_else(|_| q.clone());
-                return Some(resolved.to_string_lossy().into_owned());
-            }
-        }
-        // Dead path: don't guess from the file stem - names like "toolbox"
-        // collide with unrelated theme icons. Caller falls back to the
-        // .desktop file stem instead.
-        return None;
-    }
-
-    index.get(icon).cloned()
+/// Resolve an absolute `Icon=` path. A dead path returns `None` so the caller
+/// falls through to the theme lookup - guessing from the file stem would let a
+/// name like "toolbox" collide with an unrelated theme icon.
+fn resolve_absolute_icon(icon: &str) -> Option<String> {
+    let p = std::path::Path::new(icon);
+    let hit = if p.exists() {
+        Some(p.to_path_buf())
+    } else {
+        // Some entries name an extensionless absolute path.
+        ["svg", "png"]
+            .iter()
+            .map(|ext| p.with_extension(ext))
+            .find(|q| q.exists())
+    }?;
+    let resolved = fs::canonicalize(&hit).unwrap_or(hit);
+    Some(resolved.to_string_lossy().into_owned())
 }
 
 // ── .desktop parser ───────────────────────────────────────────────────────────
