@@ -2429,13 +2429,40 @@ mark.preview-hl {
   color: var(--fg);
 }
 
-.ext-preview-html {
-  width: 100%;
+/* Sub-pixel bleed guard for the frame below. clip-path, not just overflow: an
+   iframe is a composited layer and plain overflow:hidden does not clip those in
+   WebKit2GTK (same reason .card-clip needs it). */
+.ext-preview-html-wrap {
+  position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  clip-path: inset(0);
+}
+
+/* zoom cancellation, not cosmetics: the launcher scales itself with `zoom` on
+   :root (theme.ts), and WebKitGTK then hands the child frame a layout viewport
+   that disagrees with the box it paints - the document lays out shorter and
+   narrower than the frame, leaving dead strips down the right and along the
+   bottom plus scrollbars for overflow that isn't there. Unzooming the frame puts
+   its viewport back in step with its box; buildSrcdoc re-applies the same zoom
+   inside the document so text keeps scaling with the rest of the UI. */
+.ext-preview-html {
+  zoom: var(--ui-zoom-inv, 1);
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 1px of slack, clipped by the wrapper: the zoom factors rarely divide into
+     whole pixels, so WebKit rounds the frame's view up and leaves its last
+     row/column unpainted (at font_size 11 the document measures 456x409 in a
+     457x410 view) - a light hairline of subframe base background along the
+     panel's bottom edge. Content is top-left anchored, so nothing shifts. */
+  width: calc(100% + 1px);
+  height: calc(100% + 1px);
+  display: block;
   border: none;
   background: transparent;
-  display: block;
 }
 
 /* ---------- action panel (Alt+Enter) ---------- */

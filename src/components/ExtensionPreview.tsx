@@ -49,6 +49,11 @@ const THEME_VARS = [
   // Accent-bleed: the selected result's sampled color, set on documentElement by
   // App.tsx. Flows the album-art / icon hue into the sandboxed preview HTML.
   '--item-accent', '--item-on-accent',
+  // Scrollbar thumb, so the iframe's own scrollbars match the host's.
+  '--bg-input',
+  // UI scale factor. The frame element is unzoomed by --ui-zoom-inv (App.css),
+  // so the document re-applies the zoom itself.
+  '--ui-zoom',
 ];
 
 const EXT_UTILS_CSS = [
@@ -71,17 +76,46 @@ const EXT_UTILS_CSS = [
   '.accent-line{border-left:2px solid var(--accent-border);padding-left:8px}',
 ].join('');
 
+/**
+ * Document scaffold for an `html` preview.
+ *
+ * `:root{zoom}` mirrors the launcher's own UI scale, which App.css cancels on
+ * the frame element - see the `.ext-preview-html` comment for why the frame
+ * itself must not be zoomed by its parent document.
+ *
+ * Two rules that must not be reintroduced: no percentage/viewport heights, and
+ * no `overflow` on `body`. A body locked to the viewport height keeps that
+ * height when a horizontal scrollbar appears, so it overflows by exactly the
+ * scrollbar's thickness and grows a spurious vertical one; and `overflow` on
+ * body adds a second scroll container beside the viewport's. Body is
+ * content-sized, the viewport is the only scroller, nothing is ever clipped.
+ */
 function buildSrcdoc(content: string): string {
   const style = getComputedStyle(document.documentElement);
-  const vars = THEME_VARS.map(v => `${v}:${style.getPropertyValue(v).trim()}`).join(';');
+  // Unset vars are dropped rather than emitted empty: an empty custom property
+  // makes `var(--x, fallback)` resolve to nothing instead of the fallback.
+  const vars = THEME_VARS
+    .map(v => [v, style.getPropertyValue(v).trim()] as const)
+    .filter(([, value]) => value)
+    .map(([v, value]) => `${v}:${value}`)
+    .join(';');
   return (
     `<!DOCTYPE html><html><head>` +
     `<meta http-equiv="Content-Security-Policy" ` +
     `content="default-src 'none'; style-src 'unsafe-inline' data:; img-src data:;">` +
-    `<style>:root{${vars}}` +
-    `html,body{height:100%}*{box-sizing:border-box;margin:0;padding:0}` +
+    `<style>:root{${vars};zoom:var(--ui-zoom,1)}` +
+    `*{box-sizing:border-box;margin:0;padding:0}` +
     `body{background:transparent;color:var(--fg);font-size:13px;line-height:1.5;` +
-    `font-family:system-ui,-apple-system,sans-serif;overflow-y:auto}` +
+    `font-family:system-ui,-apple-system,sans-serif}` +
+    // Host scrollbar look (App.css .text-preview-wrap), for previews long enough
+    // to scroll. Only ::-webkit-* rules:
+    // scrollbar-width/color would override them on WebKitGTK.
+    `::-webkit-scrollbar{width:10px;height:10px}` +
+    `::-webkit-scrollbar-thumb{background:var(--bg-input);border-radius:5px;` +
+    `border:2px solid transparent;background-clip:padding-box;min-height:32px;min-width:32px}` +
+    `::-webkit-scrollbar-thumb:hover{background:var(--fg-mute);background-clip:padding-box}` +
+    `::-webkit-scrollbar-track{background:transparent}` +
+    `::-webkit-scrollbar-corner{background:transparent}` +
     `${EXT_UTILS_CSS}</style>` +
     `</head><body>${content}</body></html>`
   );
@@ -226,12 +260,14 @@ export default function ExtensionPreview({ result }: PreviewProps) {
       );
     case "html":
       return (
-        <iframe
-          className="ext-preview-html"
-          sandbox=""
-          srcDoc={buildSrcdoc(content.content)}
-          title="extension preview"
-        />
+        <div className="ext-preview-html-wrap">
+          <iframe
+            className="ext-preview-html"
+            sandbox=""
+            srcDoc={buildSrcdoc(content.content)}
+            title="extension preview"
+          />
+        </div>
       );
     default:
       return <div className="preview-empty" />;

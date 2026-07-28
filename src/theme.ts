@@ -22,7 +22,14 @@ export async function injectMatugenTheme() {
 export function applyTheme(appearance: Config["appearance"]) {
   const root = document.documentElement;
   root.setAttribute("data-theme", appearance.theme);
-  root.style.zoom = String(appearance.font_size / 13);
+  // The whole UI scales via root zoom. Publish the factor and its reciprocal:
+  // an <iframe> inside a zoomed document gets a layout viewport that does not
+  // match its painted box in WebKitGTK, so the extension HTML preview cancels
+  // the zoom on the frame element and re-applies it inside (ExtensionPreview).
+  const zoom = appearance.font_size / 13;
+  root.style.zoom = String(zoom);
+  root.style.setProperty("--ui-zoom", String(zoom));
+  root.style.setProperty("--ui-zoom-inv", String(1 / zoom));
   root.dataset.animateResults = String(appearance.animate_results ?? "slide");
   root.dataset.showMetadata = String(appearance.show_metadata ?? true);
   root.dataset.slideSelection = String(appearance.slide_selection ?? true);
