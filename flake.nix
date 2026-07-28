@@ -61,6 +61,13 @@
             dict
             wtype
           ];
+
+          shellHook = ''
+            # Match packaging/nix/package.nix (--set-default): keep WebKitGTK off
+            # the explicit-sync path, otherwise the dev binary dies on NVIDIA with
+            # "Missing acquire timeline" as soon as the window first paints.
+            export __NV_DISABLE_EXPLICIT_SYNC="''${__NV_DISABLE_EXPLICIT_SYNC:-1}"
+          '';
         };
       });
     };
