@@ -167,7 +167,7 @@ services.dictd.enable = true;
 
 ## Compositor setup
 
-Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it; it hides again on launch or Escape.
+Portunus runs hidden at startup. Bind `portunus --toggle` to a key to reveal it; press it again (or launch/Escape) to hide it.
 
 > [!WARNING]
 > Clipboard features need Wayland.
@@ -178,7 +178,7 @@ Portunus runs hidden at startup. Bind `portunus --show` to a key to reveal it; i
 # ~/.config/hypr/hyprland.conf
 exec-once = /path/to/portunus
 
-bind = CTRL, SPACE, exec, /path/to/portunus --show
+bind = CTRL, SPACE, exec, /path/to/portunus --toggle
 bind = SUPER, V, exec, /path/to/portunus --clipboard
 ```
 
@@ -265,6 +265,8 @@ dev shell with the full toolchain, and `nix build` produces the package in
 portunus [FLAG]
 
   --show              Show the launcher window (signals a running instance)
+  --close             Close the launcher window (signals a running instance)
+  --toggle            Toggle the launcher window (signals a running instance)
   --clipboard         Show the launcher pre-filled with "clipboard"
   --reindex           Rebuild the content search index
   --reload-config     Reload config from file without restarting
