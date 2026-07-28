@@ -10,7 +10,7 @@ Find and launch apps, jump to files, do quick math, look up a word, dig through
 your clipboard history, or search the text inside your documents. One box, no mouse.
 
 [![Release](https://img.shields.io/github/v/release/SzilBalazs/portunus?style=flat-square)](https://github.com/SzilBalazs/portunus/releases)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE.txt)
 [![Wayland](https://img.shields.io/badge/Wayland-native-1793D1?style=flat-square)](#compositor-setup)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-FFC131?style=flat-square)](https://tauri.app)
 
@@ -29,11 +29,11 @@ vanishes again the second you launch something or press Escape.
 
 - 🔍 **Fuzzy app & file search** — apps (`.desktop` entries) plus the files and folders you index, ranked by how often you actually open them
 - 🧮 **Inline calculator** — math (`log2(10^8)`), unit conversion (`5km to mi`), currency (`100 usd to eur`), date math (`days until dec 25`), and timezones (`3pm est in cet`)
-- 📖 **Dictionary lookup** — `define serendipity` or `dict serendipity` (needs `dictd`)
+- 📖 **Dictionary lookup** — `define serendipity`, `dict serendipity`, or `dictionary serendipity` (needs the `dict` client; queries dict.org unless you run a local `dictd`)
 - 📋 **Clipboard history** — full-text search back through your `cliphist` entries (Wayland)
 - 📄 **Content search** — hit `Tab` to search the text inside PDFs, office docs, and images. OCR handles scanned PDFs and screenshots too
 - 👁 **Preview panel** — images, PDFs, text files, folder listings, clipboard contents
-- 🧩 **Extensions** — sandboxed wasm modules add new search providers, commands, and previews; install them from the built-in marketplace
+- 🧩 **Extensions** — sandboxed wasm modules add new search providers, commands, and previews; browse and install them by typing `marketplace` in the launcher
 - ⚡ **No spinners** — the Rust backend indexes on a background thread, so results show up as you type
 
 <table>
@@ -49,31 +49,71 @@ vanishes again the second you launch something or press Escape.
 
 ## Install
 
-### AppImage (all Wayland distros)
+Download a package from the [Releases page](https://github.com/SzilBalazs/portunus/releases). All of them are **x86_64 only** —
+on other architectures use the Nix flake or build from source.
 
-Download the latest release from the [Releases page](https://github.com/SzilBalazs/portunus/releases).
+### Debian / Ubuntu (`.deb`) — recommended
+
+```bash
+sudo apt install ./portunus_*_amd64.deb
+```
+
+The `.deb` links your system's own WebKitGTK, so the launcher never carries a
+stale bundled WebView — this is the lowest-latency option. It still bundles
+libpdfium, the poppler tools, and the English tesseract data under
+`/usr/lib/portunus`, so PDF preview, content search, and OCR need nothing extra.
+
+### AppImage (portable)
 
 ```bash
 chmod +x portunus_*_amd64.AppImage
 ./portunus_*_amd64.AppImage
 ```
 
+Self-contained and runs anywhere — but it is built on Ubuntu 24.04, so it needs
+**glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Arch, Fedora 40+). On older
+distros the AppImage will not start; install the `.deb` instead.
+
+### Arch Linux
+
+The release ships a ready-to-build `PKGBUILD` for `portunus-bin`, which installs
+the prebuilt `.deb` above. Its `sha256sum` is filled in by CI at release time, so
+there is nothing to edit:
+
+```bash
+curl -fLO https://github.com/SzilBalazs/portunus/releases/latest/download/PKGBUILD
+makepkg -si
+```
+
+Read the `PKGBUILD` before building, as you would for anything from the AUR.
+
 <details>
 <summary><b>Optional runtime dependencies</b></summary>
 
 <br/>
 
-The AppImage already bundles everything needed for PDF preview, content search,
-and OCR (libpdfium, the poppler tools, and the English tesseract data), so those
-work with no extra setup. Two features rely on system tools that are not bundled:
+Every package above bundles what PDF preview, content search, and OCR need
+(libpdfium, the poppler tools, and the English tesseract data), so those work
+with no extra setup. Two features rely on system tools that are not bundled:
 
 | Package | Feature | Arch | Ubuntu/Debian |
 |---|---|---|---|
 | `cliphist` + `wl-clipboard` | Clipboard history | `sudo pacman -S cliphist wl-clipboard` | `sudo apt install cliphist wl-clipboard` |
-| `dictd` | Dictionary definitions | `sudo pacman -S dictd` | `sudo apt install dictd` |
+| `wtype` | Smart paste (auto Ctrl+V) | `sudo pacman -S wtype` | `sudo apt install wtype` |
+| `dict` client | Dictionary definitions | `sudo pacman -S dictd` | `sudo apt install dict` |
 
-If you build from source instead of using the AppImage, you also need the PDF and
-OCR tools installed on your system: `poppler` (or `poppler-utils`), a `pdfium`
+Portunus shells out to the `dict` **client**, not to a server. Debian and Ubuntu
+split the two, so install `dict` there — `dictd` is the server and does not ship
+the `dict` binary at all. Arch's `dictd` package contains both. Either way you
+get a `dict.conf` that tries `localhost` first and falls back to `dict.org`, so
+definitions work immediately but go over the network. For offline lookups, run a
+local `dictd` carrying the WordNet (`wn`) database.
+
+**Settings → Providers** lists every optional dependency and whether Portunus can
+currently find it; the first-launch wizard shows the same check.
+
+If you build from source instead of installing a package, you also need the PDF and
+OCR tools on your system: `poppler` (or `poppler-utils`), a `pdfium`
 build such as `pdfium-bin`, and tesseract with the language data you want
 (`tesseract` + `tesseract-data-eng`).
 
@@ -105,10 +145,25 @@ For a one-off run, `--accept-flake-config` does the same job:
 nix run --accept-flake-config github:SzilBalazs/portunus
 ```
 
-The wrapper puts libpdfium, the poppler tools, cliphist, wl-clipboard, wtype and
-the tesseract data on the package's own path, so PDF preview, clipboard history,
-content search and OCR work out of the box. Dictionary lookups are the exception:
-they need a `dictd` server and its databases running on the host.
+The wrapper puts libpdfium, the poppler tools, cliphist, wl-clipboard, wtype, the
+`dict` client and the tesseract data on the package's own path, so PDF preview,
+clipboard history, content search and OCR work out of the box.
+
+Dictionary lookups need one extra step. The `dict` client reads its server list
+from `/etc/dict.conf`, which a plain `nix run` never creates, and it has no
+built-in default — with no config it exits with `'dict.conf' doesn't specify any
+dict server`. Point it at the public server:
+
+```bash
+echo 'server dict.org' >> ~/.dictrc
+```
+
+On NixOS you can get fully offline lookups instead by running the server locally —
+WordNet is already in the default database set:
+
+```nix
+services.dictd.enable = true;
+```
 
 ## Compositor setup
 
@@ -165,7 +220,10 @@ Run `matugen image <wallpaper>` (add `--mode light` for a light scheme), then se
 
 Portunus can be extended with sandboxed WebAssembly **extensions** — they add
 new search providers, launcher commands, previews, and background refreshers.
-Browse and install them from the built-in marketplace (**Settings → Extensions**).
+Type `marketplace` in the launcher to browse and install them — each install
+shows the permissions it asks for before you confirm. **Settings → Extensions**
+manages what you already have: update checks, sideloading a local `.portext`, and
+rescans.
 
 Reference extensions and the marketplace index live in a dedicated repo:
 **[SzilBalazs/portunus-extensions](https://github.com/SzilBalazs/portunus-extensions)**.
@@ -218,4 +276,4 @@ portunus [FLAG]
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE.txt)
