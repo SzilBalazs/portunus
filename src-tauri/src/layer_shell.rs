@@ -20,6 +20,14 @@ pub fn apply(window: &tauri::WebviewWindow) {
         return;
     }
 
+    // GNOME/Mutter and other non-wlroots compositors don't implement
+    // zwlr_layer_shell_v1. Without this probe gtk-layer-shell falls back to an
+    // XDG surface and every property setter below hits a g_critical.
+    if !gtk_layer_shell::is_supported() {
+        eprintln!("[portunus] layer_shell: compositor lacks zwlr_layer_shell_v1 - using XDG window");
+        return;
+    }
+
     let gtk_win = match window.gtk_window() {
         Ok(w) => w,
         Err(_) => return,

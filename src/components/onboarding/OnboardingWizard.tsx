@@ -94,12 +94,18 @@ const DE_GUIDES: Record<DesktopEnv, DeGuide> = {
     hotkey: exec => ({
       where: "Settings → Keyboard → Custom Shortcuts, or a terminal:",
       text: [
+        // GNOME binds <Super>space to the input-source switcher by default, and WM
+        // keybindings win over media-keys custom shortcuts - the entry shows up in
+        // Settings but never fires until these are cleared.
+        `gsettings set org.gnome.desktop.wm.keybindings switch-input-source "[]"`,
+        `gsettings set org.gnome.desktop.wm.keybindings switch-input-source-backward "[]"`,
         `gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/portunus/']"`,
         `gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/portunus/ name 'Portunus'`,
         `gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/portunus/ command '${exec} --show'`,
         `gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/portunus/ binding '<Super>space'`,
       ].join("\n"),
-      caveat: "The first line replaces any custom shortcuts you already have - prefer the Settings GUI if you use them.",
+      caveat:
+        "Lines 1-2 free up Super+Space by unbinding GNOME's keyboard-layout switcher; line 3 replaces any custom shortcuts you already have - prefer the Settings GUI if either matters to you.",
     }),
     xdgAutostart: true,
   },

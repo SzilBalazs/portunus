@@ -41,6 +41,8 @@ pub fn handle_cli_args() -> bool {
 USAGE:
   portunus [FLAG]
 
+With no flags: start Portunus, or show the window of the already-running instance.
+
 FLAGS:
   --show              Show the launcher window (signals running instance)
   --clipboard         Show the launcher pre-filled with \"clipboard\"
@@ -127,6 +129,15 @@ SUBCOMMANDS:
                 eprintln!("[content] content indexing is disabled in config");
             }
         }
+        return true;
+    }
+
+    // Bare `portunus` with an instance already running: surface that window instead
+    // of starting a second process that would fight over the IPC socket, frecency
+    // db, and content index. A stale socket file refuses the connect, so this
+    // falls through to a normal startup.
+    if args.len() == 1 && ipc::try_signal_running("show") {
+        eprintln!("portunus: already running - showing existing window");
         return true;
     }
 
