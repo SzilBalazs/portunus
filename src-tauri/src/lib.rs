@@ -502,8 +502,10 @@ fn is_apps_ready() -> bool {
     APPS_READY.load(Ordering::Acquire)
 }
 
-#[tauri::command]
-fn hide_window(app: tauri::AppHandle) {
+/// Hide the launcher plus the cleanup that goes with it. Shared by the frontend
+/// `hide_window` command and the `--close`/`--toggle` socket commands so the
+/// teardown can't drift between the two entry points.
+pub fn hide_launcher(app: &tauri::AppHandle) {
     // A hidden launcher has no use for in-flight async extension queries.
     if let Some(qm) = extensions::query::manager() {
         qm.cancel_all();
@@ -511,6 +513,11 @@ fn hide_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
+}
+
+#[tauri::command]
+fn hide_window(app: tauri::AppHandle) {
+    hide_launcher(&app);
 }
 
 /// Surface the launcher from the frontend. Used on first launch: the window is

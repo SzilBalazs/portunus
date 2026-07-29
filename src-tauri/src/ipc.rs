@@ -78,25 +78,20 @@ pub fn start_socket_listener(
                         }
                     }
                 } else if cmd == "close" {
-                    // Same cleanup as the frontend's hide_window command: a
-                    // hidden launcher has no use for in-flight extension queries.
-                    if let Some(qm) = crate::extensions::query::manager() {
-                        qm.cancel_all();
-                    }
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
+                    crate::hide_launcher(&app);
                 } else if cmd == "toggle" {
                     if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            if let Some(qm) = crate::extensions::query::manager() {
-                                qm.cancel_all();
-                            }
-                            let _ = window.hide();
-                        } else {
+                        if !window.is_visible().unwrap_or(false) {
                             let _ = app.emit("window-show", ());
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            crate::focus::show_and_focus(&window);
+                        } else if !window.is_focused().unwrap_or(false) {
+                            // Visible but unfocused - the compositor's
+                            // focus-stealing prevention dropped it, or the user
+                            // clicked away. Bring it back instead of making the
+                            // keybind a two-press dance.
+                            crate::focus::focus(&window);
+                        } else {
+                            crate::hide_launcher(&app);
                         }
                     }
                 } else if cmd == "reindex" {
