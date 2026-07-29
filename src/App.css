@@ -1317,7 +1317,12 @@ kbd {
 .ocr-text-layer {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* Above .pdf-hl-layer (z-index 2): the selection overlay + popover are
+     portaled into this layer, and its own z-index makes it a stacking context
+     the popover cannot escape - at equal z-index the later-in-DOM highlight
+     layer would paint the term boxes over the popover. The glyphs here are
+     transparent, so drawing above the highlights changes nothing visually. */
+  z-index: 4;
   pointer-events: none;
   /* No overflow:hidden here - the selection popover is portaled into this root
      and must be able to render past the page edge (words are positioned within
