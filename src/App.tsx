@@ -340,7 +340,12 @@ export default function App() {
       setAccentBleed(cfg.appearance.accent_bleed ?? "subtle");
       configRef.current = cfg;
       setOnboardConfig(cfg);
-      if (!cfg.general.onboarding_completed) setShowOnboarding(true);
+      if (!cfg.general.onboarding_completed) {
+        setShowOnboarding(true);
+        // First launch: the window is hidden at startup, so reveal it here -
+        // the wizard is the whole point of that run, not a background daemon.
+        invoke("show_window");
+      }
     });
     const unlisteners: Array<() => void> = [];
     listen<Config["appearance"]>("appearance-changed", event => {

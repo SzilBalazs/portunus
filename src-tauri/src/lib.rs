@@ -512,6 +512,17 @@ fn hide_window(app: tauri::AppHandle) {
     }
 }
 
+/// Surface the launcher from the frontend. Used on first launch: the window is
+/// hidden at startup, so the onboarding wizard reveals it itself once it has
+/// rendered (showing it from `setup()` would flash an unpainted window).
+#[tauri::command]
+fn show_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[tauri::command]
 fn get_config(state: tauri::State<ConfigState>) -> config::Config {
     util::lock(&state).clone()
@@ -1217,6 +1228,7 @@ pub fn run() {
             launch_app,
             reveal_file,
             hide_window,
+            show_window,
             cancel_search,
             is_apps_ready,
             get_config,
