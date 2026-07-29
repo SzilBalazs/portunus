@@ -53,7 +53,7 @@ function rowIcon(e: ClipboardEntry) {
   if (e.kind === "image") return <ClipThumb id={e.id} />;
   if (e.content_type === "color") {
     return (
-      <div className="clip-row-icon clip-swatch" style={{ background: e.color ?? "#000" }} />
+      <div className="clip-row-icon clip-swatch" style={{ background: accentColor(e) ?? "#000" }} />
     );
   }
   const glyph =
@@ -72,14 +72,24 @@ function rowSnippet(e: ClipboardEntry): string {
   return e.preview;
 }
 
+/** Colour that may be substituted into the selection tint. The value is
+ *  clipboard content, so keep it to the shapes the backend detector emits
+ *  (`#hex`, `rgb()`, `rgba()`) — anything else stays untinted rather than
+ *  becoming an arbitrary token stream inside a CSS custom property. */
+const CSS_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([0-9,.%\s]+\))$/i;
+
+function accentColor(e: ClipboardEntry | undefined): string | undefined {
+  if (!e || e.content_type !== "color" || !e.color) return undefined;
+  return CSS_COLOR.test(e.color.trim()) ? e.color.trim() : undefined;
+}
+
 export default function ClipboardList({ entries, selectedIndex, deleting, onSelect, onActivate }: Props) {
   const colRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<{ top: number; height: number; snap: boolean } | null>(null);
 
   const shown = entries.slice(0, RENDER_CAP);
-  const selectedColor =
-    entries[selectedIndex]?.content_type === "color" ? entries[selectedIndex].color ?? undefined : undefined;
+  const selectedColor = accentColor(entries[selectedIndex]);
 
   useLayoutEffect(() => {
     const el = selectedRef.current;

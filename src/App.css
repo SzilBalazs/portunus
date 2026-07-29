@@ -1583,10 +1583,15 @@ mark.preview-hl {
   padding: 0 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  content-visibility: auto;
-  contain-intrinsic-size: 40px;
   animation: row-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) calc(var(--row-i, 0) * 16ms) both;
 }
+
+/* No content-visibility here, deliberately: while .clip-selection-bg animates,
+   WebKitGTK gives it a composited layer and does not lift content-visibility
+   subtrees above it, so every row's text vanished for the length of the slide
+   and reappeared once the layer was dropped. The list is capped at RENDER_CAP
+   fixed-height rows (thumbnails already decode lazily), so skipping render work
+   bought little anyway. */
 
 @media (prefers-reduced-motion: reduce) { .clip-row { animation: none; } }
 :root[data-animate-results="off"] .clip-row { animation: none; }
@@ -1623,12 +1628,18 @@ mark.preview-hl {
 @media (prefers-reduced-motion: reduce) { .clip-selection-bg { transition: none; } }
 
 /* A copied colour value tints the selection with its own hue (--row-accent set
-   inline from the entry's colour). Deterministic — the colour IS the entry. */
+   inline from the entry's colour). Deterministic — the colour IS the entry.
+
+   The tint is an alpha gradient composited over the solid --sel-bg rather than
+   a color-mix against it: --sel-bg is itself a color-mix, and mixing with the
+   `transparent` keyword keeps every mix one level deep (pixel-equivalent
+   result, and a bogus --row-accent drops only the gradient, not the pill). */
 .clip-selection-bg.has-accent {
-  background: linear-gradient(
+  background-color: var(--sel-bg);
+  background-image: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--row-accent) 20%, var(--sel-bg)) 0%,
-    color-mix(in srgb, var(--row-accent) 6%, var(--sel-bg)) 100%
+    color-mix(in srgb, var(--row-accent) 20%, transparent) 0%,
+    color-mix(in srgb, var(--row-accent) 6%, transparent) 100%
   );
   box-shadow: inset 2px 0 0 var(--row-accent);
 }
