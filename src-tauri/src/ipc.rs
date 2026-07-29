@@ -66,15 +66,15 @@ pub fn start_socket_listener(
                             // Append a trailing space so prefix-based providers like ClipboardProvider activate.
                             let q_with_space = if q.ends_with(' ') { q } else { format!("{q} ") };
                             let _ = app.emit("window-show-query", q_with_space);
-                            if !already_visible {
-                                let _ = window.show();
+                            if already_visible {
+                                crate::focus::focus(&window);
+                            } else {
+                                crate::focus::show_and_focus(&window);
                             }
-                            let _ = window.set_focus();
                         } else if !already_visible {
                             // Plain --show: no-op when the window is already visible.
                             let _ = app.emit("window-show", ());
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            crate::focus::show_and_focus(&window);
                         }
                     }
                 } else if cmd == "reindex" {

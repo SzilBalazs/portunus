@@ -6,6 +6,7 @@ mod content_index;
 mod content_match;
 mod de_setup;
 mod extensions;
+mod focus;
 mod frecency;
 mod ipc;
 mod keybinds;
@@ -518,8 +519,7 @@ fn hide_window(app: tauri::AppHandle) {
 #[tauri::command]
 fn show_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        focus::show_and_focus(&window);
     }
 }
 
@@ -554,8 +554,7 @@ fn open_settings_window(app: tauri::AppHandle, section: Option<String>) {
         let _ = main.hide();
     }
     if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.show();
-        let _ = win.set_focus();
+        focus::show_and_focus(&win);
         if let Some(s) = section {
             let _ = win.emit("navigate-to-section", s);
         }
