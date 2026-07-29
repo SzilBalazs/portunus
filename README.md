@@ -27,14 +27,14 @@ vanishes again the second you launch something or press Escape.
 
 ## Features
 
-- 🔍 **Fuzzy app & file search** — apps (`.desktop` entries) plus the files and folders you index, ranked by how often you actually open them
-- 🧮 **Inline calculator** — math (`log2(10^8)`), unit conversion (`5km to mi`), currency (`100 usd to eur`), date math (`days until dec 25`), and timezones (`3pm est in cet`)
-- 📖 **Dictionary lookup** — `define serendipity`, `dict serendipity`, or `dictionary serendipity` (needs the `dict` client; queries dict.org unless you run a local `dictd`)
-- 📋 **Clipboard history** — full-text search back through your `cliphist` entries (Wayland)
-- 📄 **Content search** — hit `Tab` to search the text inside PDFs, office docs, and images. OCR handles scanned PDFs and screenshots too
-- 👁 **Preview panel** — images, PDFs, text files, folder listings, clipboard contents
-- 🧩 **Extensions** — sandboxed wasm modules add new search providers, commands, and previews; browse and install them by typing `marketplace` in the launcher
-- ⚡ **No spinners** — the Rust backend indexes on a background thread, so results show up as you type
+- 🔍 **Fuzzy app & file search**: apps (`.desktop` entries) plus the files and folders you index, ranked by how often you actually open them
+- 🧮 **Inline calculator**: math (`log2(10^8)`), unit conversion (`5km to mi`), currency (`100 usd to eur`), date math (`days until dec 25`), and timezones (`3pm est in cet`)
+- 📖 **Dictionary lookup**: `define serendipity`, `dict serendipity`, or `dictionary serendipity` (needs the `dict` client; queries dict.org unless you run a local `dictd`)
+- 📋 **Clipboard history**: full-text search back through your `cliphist` entries (Wayland)
+- 📄 **Content search**: hit `Tab` to search the text inside PDFs, office docs, and images. OCR handles scanned PDFs and screenshots too
+- 👁 **Preview panel**: images, PDFs, text files, folder listings, clipboard contents
+- 🧩 **Extensions**: sandboxed wasm modules add new search providers, commands, and previews; browse and install them by typing `marketplace` in the launcher
+- ⚡ **No spinners**: the Rust backend indexes on a background thread, so results show up as you type
 
 <table>
   <tr>
@@ -49,30 +49,8 @@ vanishes again the second you launch something or press Escape.
 
 ## Install
 
-Download a package from the [Releases page](https://github.com/SzilBalazs/portunus/releases). All of them are **x86_64 only** —
-on other architectures use the Nix flake or build from source.
-
-### Debian / Ubuntu (`.deb`) — recommended
-
-```bash
-sudo apt install ./portunus_*_amd64.deb
-```
-
-The `.deb` links your system's own WebKitGTK, so the launcher never carries a
-stale bundled WebView — this is the lowest-latency option. It still bundles
-libpdfium, the poppler tools, and the English tesseract data under
-`/usr/lib/portunus`, so PDF preview, content search, and OCR need nothing extra.
-
-### AppImage (portable)
-
-```bash
-chmod +x portunus_*_amd64.AppImage
-./portunus_*_amd64.AppImage
-```
-
-Self-contained and runs anywhere — but it is built on Ubuntu 24.04, so it needs
-**glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Arch, Fedora 40+). On older
-distros the AppImage will not start; install the `.deb` instead.
+Download a package from the [Releases page](https://github.com/SzilBalazs/portunus/releases). All of them are **x86_64 only**.
+On other architectures use the Nix flake or build from source.
 
 ### Arch Linux
 
@@ -86,6 +64,28 @@ makepkg -si
 ```
 
 Read the `PKGBUILD` before building, as you would for anything from the AUR.
+
+### Debian / Ubuntu (`.deb`)
+
+```bash
+sudo apt install ./portunus_*_amd64.deb
+```
+
+The `.deb` links your system's own WebKitGTK, so the launcher never carries a
+stale bundled WebView. This is the lowest-latency option. It still bundles
+libpdfium, the poppler tools, and the English tesseract data under
+`/usr/lib/portunus`, so PDF preview, content search, and OCR need nothing extra.
+
+### AppImage (portable)
+
+```bash
+chmod +x portunus_*_amd64.AppImage
+./portunus_*_amd64.AppImage
+```
+
+Self-contained and runs anywhere, but it is built on Ubuntu 24.04, so it needs
+**glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Arch, Fedora 40+). On older
+distros the AppImage will not start; install the `.deb` instead.
 
 <details>
 <summary><b>Optional runtime dependencies</b></summary>
@@ -103,7 +103,7 @@ with no extra setup. Two features rely on system tools that are not bundled:
 | `dict` client | Dictionary definitions | `sudo pacman -S dictd` | `sudo apt install dict` |
 
 Portunus shells out to the `dict` **client**, not to a server. Debian and Ubuntu
-split the two, so install `dict` there — `dictd` is the server and does not ship
+split the two, so install `dict` there; `dictd` is the server and does not ship
 the `dict` binary at all. Arch's `dictd` package contains both. Either way you
 get a `dict.conf` that tries `localhost` first and falls back to `dict.org`, so
 definitions work immediately but go over the network. For offline lookups, run a
@@ -127,7 +127,7 @@ nix run github:SzilBalazs/portunus
 
 Prebuilt binaries come from `portunus.cachix.org`. Nix applies a flake's own
 substituter list only for trusted users, so unless you are one, add the cache to
-your configuration - without it Nix quietly builds the whole app from source:
+your configuration. Without it Nix quietly builds the whole app from source:
 
 ```nix
 # NixOS: configuration.nix
@@ -151,14 +151,14 @@ clipboard history, content search and OCR work out of the box.
 
 Dictionary lookups need one extra step. The `dict` client reads its server list
 from `/etc/dict.conf`, which a plain `nix run` never creates, and it has no
-built-in default — with no config it exits with `'dict.conf' doesn't specify any
+built-in default. With no config it exits with `'dict.conf' doesn't specify any
 dict server`. Point it at the public server:
 
 ```bash
 echo 'server dict.org' >> ~/.dictrc
 ```
 
-On NixOS you can get fully offline lookups instead by running the server locally —
+On NixOS you can get fully offline lookups instead by running the server locally.
 WordNet is already in the default database set:
 
 ```nix
@@ -218,9 +218,9 @@ Run `matugen image <wallpaper>` (add `--mode light` for a light scheme), then se
 
 ## Extensions
 
-Portunus can be extended with sandboxed WebAssembly **extensions** — they add
+Portunus can be extended with sandboxed WebAssembly **extensions** that add
 new search providers, launcher commands, previews, and background refreshers.
-Type `marketplace` in the launcher to browse and install them — each install
+Type `marketplace` in the launcher to browse and install them. Each install
 shows the permissions it asks for before you confirm. **Settings → Extensions**
 manages what you already have: update checks, sideloading a local `.portext`, and
 rescans.
