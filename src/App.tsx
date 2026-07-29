@@ -419,7 +419,9 @@ export default function App() {
     setStreamed(new Map());
     setPendingExts(new Set());
     setExtErrors(new Map());
-    inputRef.current?.focus();
+    // The onboarding wizard is modal and owns focus - don't pull it back into
+    // the input hidden behind it (typing would land in the blurred search bar).
+    if (!showOnboardingRef.current) inputRef.current?.focus();
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); setColoredIcons(cfg.files.colored_icons); configRef.current = cfg; });
   });
 
@@ -432,8 +434,9 @@ export default function App() {
         delete document.documentElement.dataset.altHeld;
         selection.clear();
       }
-      // Don't steal focus back into the input while Quicklook is open (modal).
-      if (focused && !quicklookRef.current) inputRef.current?.focus();
+      // Don't steal focus back into the input while Quicklook or the onboarding
+      // wizard is open (both modal).
+      if (focused && !quicklookRef.current && !showOnboardingRef.current) inputRef.current?.focus();
     }).then(fn => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);
@@ -1287,6 +1290,13 @@ export default function App() {
     if (actionPanel || extForm) inputRef.current?.blur();
     else inputRef.current?.focus();
   }, [actionPanel, extForm]);
+
+  // Onboarding is modal too: the wizard focuses its own controls, so blur the
+  // input or keystrokes go into the search bar blurred out behind the overlay.
+  // No refocus on close - onComplete already does it.
+  useEffect(() => {
+    if (showOnboarding) inputRef.current?.blur();
+  }, [showOnboarding]);
 
   // A reload swaps extension instances - a pinned panel or form would target
   // a stale provider, so drop them.
