@@ -349,6 +349,14 @@ a:focus-visible,
   align-items: center;
 }
 
+/* Two or more buttons sharing one control slot. Generic: the slot itself has no
+   gap because almost every field holds a single control. */
+.settings-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Stacked: label on top, control full-width below. For wide inputs that would
    overflow the two-column row (secret/text fields), especially when narrow. */
 .settings-field--stacked {
@@ -1457,7 +1465,13 @@ a:focus-visible,
   transition: border-color 0.12s, background 0.12s;
 }
 
-.settings-btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.settings-btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.settings-btn-secondary:disabled { opacity: 0.5; cursor: default; }
+
+/* In-flight feedback without touching the label: swapping the text would resize
+   the button and shift the whole row. The glyph spins instead. */
+.settings-btn-secondary[data-busy] svg { animation: settings-btn-spin 0.8s linear infinite; }
+@keyframes settings-btn-spin { to { transform: rotate(360deg); } }
 
 /* ---------- primary / danger buttons ---------- */
 
@@ -1487,6 +1501,22 @@ a:focus-visible,
   transition: color 0.12s, border-color 0.12s;
 }
 .settings-btn-danger:hover { color: #e5534b; border-color: #e5534b55; }
+
+/* Every settings button lays its content out as one centered row, so an icon +
+   label pair works anywhere and not just inside the extension toolbar. The gap
+   is inert for the text-only buttons (a single child has nothing to space). */
+.settings-btn-primary,
+.settings-btn-secondary,
+.settings-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+/* Button glyphs ride the button's text color at a small fixed size. */
+.settings-btn-primary svg,
+.settings-btn-secondary svg,
+.settings-btn-danger svg { width: 13px; height: 13px; }
 
 /* ---------- badge primitive ---------- */
 
@@ -1562,15 +1592,6 @@ a:focus-visible,
   gap: 10px;
   margin-bottom: 14px;
 }
-.settings-ext-toolbar .settings-btn-primary,
-.settings-ext-toolbar .settings-btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-/* Toolbar-button glyphs ride the button's text color at a small fixed size. */
-.settings-ext-toolbar .settings-btn-primary svg,
-.settings-ext-toolbar .settings-btn-secondary svg { width: 13px; height: 13px; }
 
 .settings-ext-filter {
   display: flex;

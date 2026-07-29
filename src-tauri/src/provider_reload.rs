@@ -179,6 +179,10 @@ pub fn rebuild_providers(
         eprintln!("[config] marketplace index url changed");
     }
 
+    // `[general] check_for_updates` / `update_check_interval_hours` need no hook
+    // here: the checker thread re-reads them from config_state on every wake, and
+    // the About section has a "Check now" button for immediate feedback.
+
     if new_cfg.dict != old_cfg.dict {
         let mut reg = registry.write().unwrap();
         if new_cfg.dict.enabled {

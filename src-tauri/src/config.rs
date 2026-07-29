@@ -199,6 +199,14 @@ pub struct GeneralConfig {
     /// write when unset so the file keeps no `icon_theme = ""` noise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_theme: Option<String>,
+    /// Check GitHub for a newer Portunus release and show it in Settings →
+    /// About. Notify only - nothing is ever downloaded or installed. Sends one
+    /// unauthenticated GET to api.github.com per interval; set false to opt out
+    /// of any network contact.
+    pub check_for_updates: bool,
+    /// Hours between automatic release checks. The last check time is persisted
+    /// in `update-check.json`, so a restart doesn't re-check.
+    pub update_check_interval_hours: u64,
 }
 
 impl Default for GeneralConfig {
@@ -208,6 +216,8 @@ impl Default for GeneralConfig {
             onboarding_completed: false,
             layer_shell: true,
             icon_theme: None,
+            check_for_updates: true,
+            update_check_interval_hours: 24,
         }
     }
 }

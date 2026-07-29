@@ -1,3 +1,4 @@
+mod app_update;
 mod cli;
 mod cli_ext;
 mod clipboard_ocr;
@@ -779,6 +780,9 @@ pub fn run() {
     // The disk-reload paths (config watcher, --reload-config) refresh it too,
     // so a manual file edit isn't clobbered by the next Settings autosave.
     let watcher_config_state = Arc::clone(&config_state);
+    // The release checker polls it for the enable toggle and the interval, which
+    // is why those settings need no reload hook of their own.
+    let update_config_state = Arc::clone(&config_state);
 
     // Populated once the content watcher thread starts; None until then.
     let content_watcher_tx: ContentWatcherTx = Arc::new(Mutex::new(None));
@@ -1125,6 +1129,10 @@ pub fn run() {
                     Err(e) => eprintln!("[marketplace] index refresh failed: {e}"),
                 });
             }
+            // Notify-only release check; reads the enable/interval settings live
+            // from config_state on each wake, so no reload plumbing is needed.
+            app_update::spawn_checker(app.handle().clone(), Arc::clone(&update_config_state));
+
             let handle = app.handle().clone();
             let shared_bg = Arc::clone(&shared_config);
             let startup_ci = Arc::clone(&content_state);
@@ -1249,6 +1257,8 @@ pub fn run() {
             de_setup::de_setup_info,
             de_setup::get_autostart,
             de_setup::set_autostart,
+            app_update::app_update_status,
+            app_update::app_update_check,
             // File preview
             preview::render_pdf_page,
             preview::pdf_match_rects,

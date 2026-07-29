@@ -5,6 +5,8 @@
 max_results = 20             # total results displayed in the launcher
 onboarding_completed = false # set true after the first-launch wizard runs
 layer_shell = true           # Wayland only: use a wlr-layer-shell overlay surface (restart to apply)
+check_for_updates = true     # check GitHub for new releases (notify only, never downloads or installs)
+update_check_interval_hours = 24 # hours between automatic release checks
 # icon_theme = "Papirus-Dark"  # app icon theme; unset auto-detects from GTK settings / gsettings
 
 [providers]

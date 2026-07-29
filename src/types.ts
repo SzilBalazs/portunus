@@ -25,6 +25,10 @@ export interface Config {
     layer_shell: boolean;
     /** Icon theme for app icons; null/absent auto-detects from the desktop settings. */
     icon_theme?: string | null;
+    /** Check GitHub for a newer release. Notify only — never downloads or installs. */
+    check_for_updates: boolean;
+    /** Hours between automatic release checks. */
+    update_check_interval_hours: number;
   };
   providers: {
     apps: boolean;
@@ -360,6 +364,27 @@ export interface MarketplaceUpdateInfo {
   /** The new version's full permission set (from the index entry), for
    *  diffing against the consented snapshot and gating a grown spawn list. */
   permissions: ExtensionPermissions;
+}
+
+/** A stable Portunus release the app is willing to point at. Mirrors the Rust
+ *  `app_update::ReleaseInfo`; `url` is built in the backend from the tag, never
+ *  taken from the API response. */
+export interface ReleaseInfo {
+  version: string;
+  tag: string;
+  url: string;
+  published_at: string;
+}
+
+/** What the About section reads (`app_update_status`). Mirrors the Rust
+ *  `app_update::UpdateStatus`. The enable toggle and the interval are not here -
+ *  they come from `Config.general`, which is their only source of truth. */
+export interface AppUpdateStatus {
+  current_version: string;
+  latest: ReleaseInfo | null;
+  update_available: boolean;
+  /** 0 = never checked (fresh install, or checks disabled). */
+  checked_at: number;
 }
 
 /** Payload of a `kind: "marketplace"` row - the index entry plus install

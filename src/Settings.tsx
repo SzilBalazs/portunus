@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriListener } from "./hooks/useTauriListener";
-import { Config, ContentDirEntry } from "./types";
+import { AppUpdateStatus, Config, ContentDirEntry } from "./types";
 import GeneralSection from "./components/settings/GeneralSection";
 import ProvidersSection from "./components/settings/ProvidersSection";
 import ClipboardSection from "./components/settings/ClipboardSection";
@@ -13,6 +13,7 @@ import RankingSection from "./components/settings/RankingSection";
 import ContentSection from "./components/settings/ContentSection";
 import DebugSection from "./components/settings/DebugSection";
 import AppearanceSection from "./components/settings/AppearanceSection";
+import AboutSection from "./components/settings/AboutSection";
 import ExtensionsSection from "./components/settings/ExtensionsSection";
 import KeybindsSection from "./components/settings/keybinds/KeybindsSection";
 import { DepsProvider } from "./components/settings/DepsContext";
@@ -20,7 +21,7 @@ import { applyTheme } from "./theme";
 import "./settings.css";
 import "./themes.css";
 
-type Section = "general" | "keybinds" | "providers" | "clipboard" | "extensions" | "dict" | "files" | "ranking" | "content" | "debug" | "appearance";
+type Section = "general" | "keybinds" | "providers" | "clipboard" | "extensions" | "dict" | "files" | "ranking" | "content" | "debug" | "appearance" | "about";
 
 interface NavItem {
   id: Section;
@@ -133,6 +134,15 @@ const NAV: NavItem[] = [
       </svg>
     ),
   },
+  {
+    id: "about",
+    label: "About",
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+    ),
+  },
 ];
 
 // Sidebar grouping: keeps all sections but clusters them under labeled dividers
@@ -143,7 +153,7 @@ const NAV_GROUPS: { label: string; ids: Section[] }[] = [
   { label: "Search sources", ids: ["providers", "files", "content", "clipboard", "dict", "extensions"] },
   { label: "Ranking",        ids: ["ranking"] },
   { label: "Appearance",     ids: ["appearance"] },
-  { label: "Advanced",       ids: ["debug"] },
+  { label: "Advanced",       ids: ["debug", "about"] },
 ];
 
 const AUTOSAVE_DELAY_MS = 800;
@@ -329,6 +339,16 @@ export default function Settings() {
   useTauriListener("extensions-reloaded", fetchUpdateCount, [fetchUpdateCount]);
   useTauriListener("marketplace-index-updated", fetchUpdateCount, [fetchUpdateCount]);
 
+  // App release update for the About nav badge. Cache-only read, no network.
+  const [appUpdate, setAppUpdate] = useState(false);
+  const fetchAppUpdate = useCallback(() => {
+    invoke<AppUpdateStatus>("app_update_status")
+      .then(s => setAppUpdate(s.update_available))
+      .catch(() => {});
+  }, []);
+  useEffect(fetchAppUpdate, [fetchAppUpdate]);
+  useTauriListener("app-update-available", fetchAppUpdate, [fetchAppUpdate]);
+
   // Apply theme immediately on any appearance change.
   // Only broadcast to main window when it's a user-driven change, not the initial disk load.
   useEffect(() => {
@@ -505,6 +525,9 @@ export default function Settings() {
                       {item.id === "extensions" && updateCount > 0 && (
                         <span className="settings-nav-badge">{updateCount}</span>
                       )}
+                      {item.id === "about" && appUpdate && (
+                        <span className="settings-nav-badge">1</span>
+                      )}
                     </button>
                   );
                 })}
@@ -555,6 +578,7 @@ export default function Settings() {
                 )}
                 {activeSection === "debug"      && <DebugSection      config={config} onChange={setConfig} />}
                 {activeSection === "appearance" && <AppearanceSection config={config} onChange={setConfig} />}
+                {activeSection === "about"      && <AboutSection      config={config} onChange={setConfig} />}
                 </div>
               </DepsProvider>
             )}
