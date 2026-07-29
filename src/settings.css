@@ -206,7 +206,16 @@ a:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* The body clips overflow, so a short window would otherwise cut off the
+     lower nav items with no way to reach them. */
+  min-height: 0;
+  overflow-y: auto;
 }
+
+.settings-sidebar::-webkit-scrollbar { width: 4px; }
+.settings-sidebar::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.settings-sidebar:hover::-webkit-scrollbar-thumb { background: var(--bg-input); }
+.settings-sidebar::-webkit-scrollbar-track { background: transparent; }
 
 .settings-nav-item {
   display: flex;
@@ -1116,6 +1125,8 @@ a:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Never squash groups to fit - the sidebar scrolls instead. */
+  flex-shrink: 0;
 }
 
 .settings-nav-group + .settings-nav-group {
