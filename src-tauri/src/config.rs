@@ -279,6 +279,20 @@ pub struct FilesConfig {
     pub dirs: Vec<DirEntry>,
     pub show_dotfiles: bool,
     pub colored_icons: bool,
+    /// Directory names pruned from the walk, matched exactly against a path
+    /// component. Build and cache trees dwarf a home directory's real contents,
+    /// and every entry they contribute is scored on every keystroke.
+    pub ignore: Vec<String>,
+}
+
+/// Names that are almost always machine-generated. Deliberately conservative:
+/// each one is a build/cache convention, not a plausible name for a document
+/// directory the user would want to find.
+fn default_ignore() -> Vec<String> {
+    ["node_modules", "target", ".git", ".cache", "__pycache__", ".venv"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 impl Default for FilesConfig {
@@ -292,6 +306,7 @@ impl Default for FilesConfig {
             ],
             show_dotfiles: false,
             colored_icons: true,
+            ignore: default_ignore(),
         }
     }
 }
@@ -300,7 +315,9 @@ impl FilesConfig {
     /// True when the index-affecting fields match. `colored_icons` is a
     /// display-only flag, so a change to it must not trigger a file re-walk.
     pub fn index_eq(&self, other: &Self) -> bool {
-        self.dirs == other.dirs && self.show_dotfiles == other.show_dotfiles
+        self.dirs == other.dirs
+            && self.show_dotfiles == other.show_dotfiles
+            && self.ignore == other.ignore
     }
 }
 

@@ -107,6 +107,7 @@ pub fn rebuild_providers(
                             .collect(),
                         show_dotfiles: files_cfg.show_dotfiles,
                         colored_icons: files_cfg.colored_icons,
+                        ignore: files_cfg.ignore.clone(),
                     };
                     let new_entries = providers::files::FileProvider::walk_dirs(&added_cfg);
                     fe.write().unwrap().extend(new_entries);

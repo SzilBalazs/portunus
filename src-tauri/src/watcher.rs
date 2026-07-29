@@ -344,7 +344,10 @@ pub fn start_file_watcher(
                         // debounced + depth-bounded (default 2). Narrow by kind if it bites.
                         to_remove.push(path.to_string_lossy().into_owned());
                         to_add.extend(providers::files::FileProvider::entries_for_path(
-                            path, base, depth,
+                            path,
+                            base,
+                            depth,
+                            &current_cfg.ignore,
                         ));
                     }
                 } else {

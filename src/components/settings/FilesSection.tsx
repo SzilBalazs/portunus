@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import { Config, DirEntry } from "../../types";
 import DirRow from "./DirRow";
+import TagEditor from "./TagEditor";
 import Toggle from "./Toggle";
 import SectionHeader from "./SectionHeader";
 import SettingsGroup from "./SettingsGroup";
@@ -88,6 +89,18 @@ export default function FilesSection({ config, onChange }: Props) {
               </button>
             )}
           </div>
+          <SettingsField
+            stacked
+            name="Ignored directory names"
+            desc="Pruned from the crawl wherever they appear, matched against a whole path component. Build and cache trees can outnumber your real files many times over, and every indexed entry is scored on every keystroke."
+          >
+            <TagEditor
+              values={config.files.ignore}
+              onChange={ignore => setFiles({ ignore })}
+              placeholder="add name…"
+              normalize={raw => raw.replace(/\/+$/, "")}
+            />
+          </SettingsField>
         </SettingsGroup>
 
         <SettingsGroup title="Display">

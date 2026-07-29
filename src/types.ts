@@ -52,6 +52,8 @@ export interface Config {
     dirs: DirEntry[];
     show_dotfiles: boolean;
     colored_icons: boolean;
+    /** Directory names pruned from the walk (exact whole-component match). */
+    ignore: string[];
   };
   search: {
     min_quality: number;
