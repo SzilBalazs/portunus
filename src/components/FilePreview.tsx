@@ -1208,7 +1208,6 @@ function TextPreview({ path, lang, terms }: { path: string; lang: string; terms:
   const key = textHtmlKey(path, lang, terms);
   const [html, setHtml] = useState<string | null>(() => textHtmlCache.get(key) ?? null);
   const ref = useTermHighlight<HTMLPreElement>(terms, html);
-
   useEffect(() => {
     const cached = textHtmlCache.get(key);
     // Cache hit: swap synchronously, no fetch, no flash.
@@ -1219,18 +1218,24 @@ function TextPreview({ path, lang, terms }: { path: string; lang: string; terms:
     // empty wrap — the stale frame is imperceptible for local reads and avoids
     // the dark-box flash. First-ever mount has nothing to show, so html stays null.
     // Pass terms so the backend returns a window centered on the first match.
-    invoke<string>("read_text_preview", { path, terms })
-      .then(text => {
-        if (cancelled) return;
-        setTimeout(() => {
+    //
+    // Debounced like the md/pdf previews: the highlight below runs synchronously
+    // on the main thread and commits multi-KB of innerHTML, so a file merely
+    // passed over must not pay for it.
+    const t = setTimeout(() => {
+      invoke<string>("read_text_preview", { path, terms })
+        .then(text => {
           if (cancelled) return;
-          const out = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
-          storeTextHtml(key, out);
-          setHtml(out);
-        }, 0);
-      })
-      .catch(() => { if (!cancelled) setHtml(""); });
-    return () => { cancelled = true; };
+          setTimeout(() => {
+            if (cancelled) return;
+            const out = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+            storeTextHtml(key, out);
+            setHtml(out);
+          }, 0);
+        })
+        .catch(() => { if (!cancelled) setHtml(""); });
+    }, 40);
+    return () => { cancelled = true; clearTimeout(t); };
     // termsKey stands in for the terms array (stable string identity).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, path, lang, termsKey]);

@@ -39,6 +39,11 @@ const EMPTY_TERMS: string[] = [];
 // yet a fast response can still keep the window open (form/keep-open).
 const ACTIVATE_HIDE_MS = 150;
 
+// Backstop delay for the preview gate (see App): how long after the last
+// autorepeat move the held preview waits before committing. Only reached once the
+// repeat stream stops, so it is release latency, not per-move latency.
+const PREVIEW_SETTLE_MS = 120;
+
 /** One activation routed through the shared response flow. */
 interface ExtActivateRequest {
   id: string;
@@ -112,6 +117,9 @@ export default function App() {
   // instead of masquerading the failure as a genuine zero-result query.
   const [searchError, setSearchError] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // Whether the keydown behind the pending selection change was an OS autorepeat.
+  // Read (and cleared) by the preview gate further down.
+  const navRepeatRef = useRef(false);
   // The pinned result shown in Quicklook (null = closed). Pinning the result -
   // rather than tracking a boolean + selectedIndex - keeps the overlay on the
   // same file even if background events reorder/extend the results underneath.
@@ -1120,6 +1128,7 @@ export default function App() {
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
+        navRepeatRef.current = e.repeat;
         userMovedRef.current = true;
         setSelectedIndex(i => {
           const n = Math.min(i + 1, Math.max(displayResults.length - 1, 0));
@@ -1128,6 +1137,7 @@ export default function App() {
         });
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
+        navRepeatRef.current = e.repeat;
         userMovedRef.current = true;
         setSelectedIndex(i => {
           const n = Math.max(i - 1, 0);
@@ -1226,14 +1236,66 @@ export default function App() {
 
   const selected = displayResults[selectedIndex] ?? null;
 
+  // ── preview gate ───────────────────────────────────────────────────────────
+  // Rendering a preview is the single most expensive thing a selection move can
+  // trigger (a wasm `extension_preview` round-trip, a synchronous hljs highlight
+  // + multi-KB innerHTML commit, an OCR/PDF fetch). Driving it straight off
+  // `selected` means holding an arrow key pays that cost for every row passed
+  // over, and the keypress backlog then outlives the keypress itself.
+  //
+  // So the preview follows the *settled* selection: a discrete move commits it
+  // immediately (indistinguishable from reading `selected` directly - no added
+  // latency, no loading state), while a move that lands inside PREVIEW_SETTLE_MS
+  // of the previous one holds the old preview and re-arms the timer. Fast nav
+  // therefore renders one preview - the one the user stopped on.
+  const [previewSel, setPreviewSel] = useState<SearchResult | null>(null);
+  // Whether the move that produced the current selection came from an autorepeat
+  // keydown. This is the gate's input rather than a timing threshold, because
+  // timing turned out to be unmeasurable from here: the observed gap between
+  // moves under a held key is ~50-70ms but jitters past 500ms whenever the
+  // renderer is starved, so any fixed threshold misclassifies constantly. The OS
+  // repeat flag is exact and free (see navRepeatRef, set by the nav handlers).
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    const commit = () => setPreviewSel(selected);
+    const repeat = navRepeatRef.current;
+    navRepeatRef.current = false;
+    clearTimeout(previewTimerRef.current);
+    // Deliberate move (single keypress, click, Alt+N) or an emptied list: commit
+    // now. Holding a stale preview over an empty list reads as a stuck panel.
+    if (!selected || !repeat) { commit(); return; }
+    // Mid-autorepeat: hold the current preview and let the last move win. The
+    // timer is only a backstop for a repeat stream slower than itself.
+    previewTimerRef.current = setTimeout(commit, PREVIEW_SETTLE_MS);
+    return () => clearTimeout(previewTimerRef.current);
+    // Identity, not the object: a re-ranked list hands back an equal result with
+    // a fresh reference, which must not re-arm the gate.
+  }, [selected?.id]);
+  // The gate holds the previous *result object*; re-resolve it against the live
+  // list so a streamed update to the same id still reaches the preview.
+  const previewResult = previewSel && selected?.id === previewSel.id ? selected : previewSel;
+
   // Accent bleed: publish the selected result's sampled dominant color as
   // `--item-accent` (+ a legible `--item-on-accent`) on the document root, where
   // the gated App.css rules and the sandboxed extension preview both read it.
   // When bleed is off (or the result has no sampled color) we fall back to the
   // theme accent so the look is byte-identical to today.
+  //
+  // Keyed to the *settled* selection (like the preview), and written only when the
+  // value actually changes. Both matter for a reason worth keeping written down: a
+  // custom property on :root is inherited by the whole document, so each write
+  // invalidates computed style for all of it. On an untruncated scope list that
+  // restyled hundreds of rows per arrow keypress to recolor one — measured as
+  // 126ms vs 37ms of paint per move on a 150-row list. Under a held key the hue
+  // now lands on the row the user stops on instead of strobing through every row
+  // passed over; a discrete keypress still commits immediately.
+  const bleedRef = useRef("");
   useEffect(() => {
     const root = document.documentElement;
-    const hex = accentBleed !== "off" ? selected?.dominant_color : undefined;
+    const hex = accentBleed !== "off" ? previewResult?.dominant_color : undefined;
+    const next = hex ?? "";
+    if (next === bleedRef.current) return;
+    bleedRef.current = next;
     if (hex) {
       root.style.setProperty("--item-accent", hex);
       root.style.setProperty("--item-on-accent", onAccentColor(hex));
@@ -1241,16 +1303,18 @@ export default function App() {
       root.style.setProperty("--item-accent", "var(--accent)");
       root.style.setProperty("--item-on-accent", "var(--text-on-accent)");
     }
-  }, [selected?.id, selected?.dominant_color, accentBleed]);
+  }, [previewResult?.id, previewResult?.dominant_color, accentBleed]);
 
   // Selecting a different result or switching modes swaps the previewed content
   // out from under a text selection - drop it. Query edits are NOT a dependency:
   // the input keeps focus during a selection, so a stray keystroke must not wipe
   // it before Ctrl+C; when a query change actually re-renders the preview, the
   // controller's MutationObserver clears the now-disconnected selection anyway.
+  // Keyed on the *previewed* result, not the selected one: a text selection lives
+  // in the preview DOM, so it survives exactly as long as that preview does.
   useEffect(() => {
     selection.clear();
-  }, [mode, selected?.id]);
+  }, [mode, previewResult?.id]);
 
   // Toggling quicklook swaps the preview between two DOM subtrees that render the
   // same text (side panel ⇄ overlay). Carry the selection across instead of
@@ -1535,8 +1599,12 @@ export default function App() {
           />
           <div className="preview-col">
             <PreviewPanel
-              result={selected}
-              onLaunch={() => launch(selected ?? undefined)}
+              result={previewResult}
+              // The panel's own Open button targets what the panel is showing,
+              // not the live selection: on the rare frame where the gate has them
+              // apart, opening the file named directly above the button is the
+              // only defensible reading. Keyboard Enter stays on `selected`.
+              onLaunch={() => launch(previewResult ?? undefined)}
               onReveal={() => { setQuery(""); setResults([]); }}
               terms={previewTerms}
               highlight={highlight}

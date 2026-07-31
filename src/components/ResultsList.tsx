@@ -1,8 +1,75 @@
-import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SearchResult } from "../types";
 import { groupLabel, shortenPath } from "../utils";
 import { PinIcon } from "../icons";
 import ResultIcon from "./ResultIcon";
+
+interface RowProps {
+  result: SearchResult;
+  index: number;
+  isSelected: boolean;
+  /** Group header text, or null when this row continues the previous group. */
+  label: string | null;
+  /** Alt+N shortcut digit, or 0 for rows past the ninth launchable one. */
+  shortcut: number;
+  rowRef: (el: HTMLElement | null) => void;
+  /** Only supplied when this row renders a header. */
+  labelRef?: (el: HTMLElement | null) => void;
+  onSelect: (index: number) => void;
+  onLaunch: (result: SearchResult) => void;
+}
+
+/**
+ * One result row plus (optionally) the group header above it.
+ *
+ * Memoized, and the reason is load-bearing: a scope list is not truncated to
+ * `max_results` (browse mode shows everything), so an unmemoized list re-rendered
+ * every whole subtree on every arrow keypress — tens of ms of commit for a move
+ * that only ever changes two rows. Every prop here is therefore either primitive
+ * or referentially stable across renders; adding an inline callback or a freshly
+ * built object to this signature silently undoes that.
+ */
+const ResultRow = memo(function ResultRow({
+  result, index, isSelected, label, shortcut, rowRef, labelRef, onSelect, onLaunch,
+}: RowProps) {
+  return (
+    <Fragment>
+      {label !== null && (
+        <div ref={labelRef} className={`result-group-label${index === 0 ? " first" : ""}`}>
+          <span>{label}</span>
+        </div>
+      )}
+      <div
+        ref={rowRef}
+        className={`result-row${isSelected ? " selected" : ""}`}
+        data-kind={result.kind}
+        style={{ '--row-i': index } as CSSProperties}
+        role="option"
+        aria-selected={isSelected}
+        onClick={() => { onSelect(index); onLaunch(result); }}
+      >
+        <ResultIcon icon_path={result.icon_path} iconDataUri={result.icon_data_uri} glyph={result.command?.glyph} title={result.title} kind={result.kind} />
+        <div className="result-text">
+          <div className="result-title">{result.title}</div>
+          {result.subtitle && <div className="result-subtitle">{shortenPath(result.subtitle)}</div>}
+        </div>
+        <div className={`result-meta${result.ext?.badge ? " has-badge" : ""}${result.pinned ? " has-pin" : ""}`}>
+          {result.pinned && (
+            <span className="result-pin" title="Pinned for this search" aria-label="Pinned">
+              <PinIcon />
+            </span>
+          )}
+          {result.ext?.badge
+            ? <span className="result-badge">{result.ext.badge}</span>
+            : ""}
+        </div>
+        <div className="result-shortcut" style={shortcut === 0 ? { visibility: 'hidden' } : undefined}>
+          {shortcut === 0 ? "" : shortcut}
+        </div>
+      </div>
+    </Fragment>
+  );
+});
 
 interface Props {
   results: SearchResult[];
@@ -24,8 +91,6 @@ interface Props {
 }
 
 export default function ResultsList({ results, selectedIndex, active, searching, onSelect, onLaunch, launchableResults, emptyLabel = "No results", emptyReady = true, pending = [] }: Props) {
-  const selectedRef = useRef<HTMLDivElement>(null);
-  const selectedLabelRef = useRef<HTMLDivElement>(null);
   const colRef = useRef<HTMLDivElement>(null);
   // FLIP: live element nodes keyed by a stable flip-key, plus their last-known
   // offsetTop and any in-flight glide. When the result set re-ranks, retained
@@ -38,10 +103,54 @@ export default function ResultsList({ results, selectedIndex, active, searching,
   const flipTops = useRef<Map<string, number>>(new Map());
   const flipAnims = useRef<Map<string, Animation>>(new Map());
 
-  const flipRef = (key: string) => (el: HTMLElement | null) => {
-    if (el) flipEls.current.set(key, el);
-    else flipEls.current.delete(key);
-  };
+  // One ref callback per flip-key, cached and reused. An inline `el => …` would
+  // be a fresh function identity every render, so React would detach and reattach
+  // *every* row's ref on every keypress (and churn the flip maps doing it) —
+  // and no memoized row could ever bail out, since its ref prop always differs.
+  const flipRefFns = useRef<Map<string, (el: HTMLElement | null) => void>>(new Map());
+  const flipRef = useCallback((key: string) => {
+    let fn = flipRefFns.current.get(key);
+    if (!fn) {
+      fn = (el: HTMLElement | null) => {
+        if (el) {
+          flipEls.current.set(key, el);
+        } else {
+          flipEls.current.delete(key);
+          flipTops.current.delete(key);
+        }
+      };
+      flipRefFns.current.set(key, fn);
+    }
+    return fn;
+  }, []);
+
+  // Group header per row (null = continues the previous group), resolved once per
+  // result set. Both the rows and the scroll-anchor logic below read it.
+  const labels = useMemo(
+    () => results.map((r, i) => {
+      const label = groupLabel(r.kind);
+      if (label === null) return null;
+      return i > 0 && label === groupLabel(results[i - 1].kind) ? null : label;
+    }),
+    [results],
+  );
+
+  // Alt+N digit per result id. Built once per result set instead of an
+  // `indexOf` per row (which made rendering the list quadratic).
+  const shortcuts = useMemo(() => {
+    const m = new Map<string, number>();
+    launchableResults.forEach((r, i) => { if (i < 9) m.set(r.id, i + 1); });
+    return m;
+  }, [launchableResults]);
+
+  // Row callbacks reach the current props through refs, so the identities handed
+  // to the memoized rows never change even when the parent passes fresh closures.
+  const onSelectRef = useRef(onSelect);
+  const onLaunchRef = useRef(onLaunch);
+  onSelectRef.current = onSelect;
+  onLaunchRef.current = onLaunch;
+  const handleSelect = useCallback((i: number) => onSelectRef.current(i), []);
+  const handleLaunch = useCallback((r: SearchResult) => onLaunchRef.current(r), []);
 
   useLayoutEffect(() => {
     const flip =
@@ -72,6 +181,14 @@ export default function ResultsList({ results, selectedIndex, active, searching,
       anim.onfinish = () => { if (flipAnims.current.get(key) === anim) flipAnims.current.delete(key); };
     }
     flipTops.current = next;
+    // Drop ref callbacks for rows that are no longer mounted. Only worth doing
+    // once the cache has clearly outgrown the list — pruning on every result set
+    // would hand surviving rows fresh callback identities and defeat their memo.
+    if (flipRefFns.current.size > results.length * 4 + 64) {
+      for (const key of flipRefFns.current.keys()) {
+        if (!flipEls.current.has(key)) flipRefFns.current.delete(key);
+      }
+    }
   }, [results]);
 
   // Geometry of the sliding-selection layer: tracks the selected row's box so a
@@ -80,7 +197,14 @@ export default function ResultsList({ results, selectedIndex, active, searching,
   // (CSS) so it slides behind them. null = hidden.
   const [indicator, setIndicator] = useState<{ top: number; height: number; snap: boolean } | null>(null);
   useLayoutEffect(() => {
-    const el = selectedRef.current;
+    // The selected nodes come out of the flip registry rather than refs assigned
+    // during render — that assignment is what forced every row to re-render to
+    // stay correct. `labels` is the same first-in-group test the rows render from.
+    const selectedResult = results[selectedIndex];
+    const el = selectedResult ? flipEls.current.get(`r:${selectedResult.id}`) : undefined;
+    const labelEl = selectedResult && labels[selectedIndex] !== null
+      ? flipEls.current.get(`g:${selectedResult.id}`)
+      : undefined;
     const col = colRef.current;
     if (!el || !col) { setIndicator(null); return; }
     // Keep the selection in view, here (pre-paint) so we can tell if it scrolled.
@@ -92,7 +216,7 @@ export default function ResultsList({ results, selectedIndex, active, searching,
     // (moving) box — scrolling to a mid-animation target makes the list lurch.
     // offsetTop is transform-independent. Anchor the top at the group label when
     // first-in-group so the header isn't clipped above the fold.
-    const anchorTop = (selectedLabelRef.current ?? el).offsetTop;
+    const anchorTop = (labelEl ?? el).offsetTop;
     const bottom = el.offsetTop + el.offsetHeight;
     if (anchorTop < col.scrollTop) col.scrollTop = anchorTop;
     else if (bottom > col.scrollTop + col.clientHeight) col.scrollTop = bottom - col.clientHeight;
@@ -119,62 +243,20 @@ export default function ResultsList({ results, selectedIndex, active, searching,
       {active && results.length === 0 && !searching && emptyReady && pending.length === 0 && (
         <div className="results-empty">{emptyLabel}</div>
       )}
-      {results.map((result, i) => {
-        const label = groupLabel(result.kind);
-        const prevLabel = i > 0 ? groupLabel(results[i - 1].kind) : null;
-        const showLabel = label !== null && label !== prevLabel;
-        const shortcutIdx = launchableResults.indexOf(result);
-        const showShortcut = shortcutIdx >= 0 && shortcutIdx < 9;
-        return (
-          <Fragment key={result.id}>
-            {showLabel && (
-              <div
-                ref={el => {
-                  flipRef(`g:${result.id}`)(el);
-                  if (i === selectedIndex) selectedLabelRef.current = el;
-                }}
-                className={`result-group-label${i === 0 ? " first" : ""}`}
-              >
-                <span>{label}</span>
-              </div>
-            )}
-            <div
-              ref={el => {
-                flipRef(`r:${result.id}`)(el);
-                if (i === selectedIndex) selectedRef.current = el;
-              }}
-              className={`result-row${i === selectedIndex ? " selected" : ""}`}
-              data-kind={result.kind}
-              style={{ '--row-i': i } as CSSProperties}
-              role="option"
-              aria-selected={i === selectedIndex}
-              onClick={() => {
-                onSelect(i);
-                onLaunch(result);
-              }}
-            >
-              <ResultIcon icon_path={result.icon_path} iconDataUri={result.icon_data_uri} glyph={result.command?.glyph} title={result.title} kind={result.kind} />
-              <div className="result-text">
-                <div className="result-title">{result.title}</div>
-                {result.subtitle && <div className="result-subtitle">{shortenPath(result.subtitle)}</div>}
-              </div>
-              <div className={`result-meta${result.ext?.badge ? " has-badge" : ""}${result.pinned ? " has-pin" : ""}`}>
-                {result.pinned && (
-                  <span className="result-pin" title="Pinned for this search" aria-label="Pinned">
-                    <PinIcon />
-                  </span>
-                )}
-                {result.ext?.badge
-                  ? <span className="result-badge">{result.ext.badge}</span>
-                  : ""}
-              </div>
-              <div className="result-shortcut" style={!showShortcut ? { visibility: 'hidden' } : undefined}>
-                {showShortcut ? shortcutIdx + 1 : ""}
-              </div>
-            </div>
-          </Fragment>
-        );
-      })}
+      {results.map((result, i) => (
+        <ResultRow
+          key={result.id}
+          result={result}
+          index={i}
+          isSelected={i === selectedIndex}
+          label={labels[i]}
+          shortcut={shortcuts.get(result.id) ?? 0}
+          rowRef={flipRef(`r:${result.id}`)}
+          labelRef={labels[i] !== null ? flipRef(`g:${result.id}`) : undefined}
+          onSelect={handleSelect}
+          onLaunch={handleLaunch}
+        />
+      ))}
       {active && pending.map(name => (
         <div className="result-pending" key={`pending:${name}`}>
           <span className="result-pending-spinner" aria-hidden="true" />

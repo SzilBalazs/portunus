@@ -1,4 +1,4 @@
-import { ReactNode, useSyncExternalStore } from "react";
+import { memo, ReactNode, useSyncExternalStore } from "react";
 import { SearchResult } from "../types";
 import { EnterIcon, DeleteIcon } from "../icons";
 import { isPreviewable } from "../utils";
@@ -145,7 +145,9 @@ function hints(
   return <Open />;
 }
 
-export default function FooterHints({ selected, quicklookOpen = false, clipboardMode = false, contentMode = false, smartPaste = false, clipboardIdle = false, pdfHighlight = true, actionPanelOpen = false }: Props) {
+// Memoized: every prop is a primitive or the selected result, so an arrow keypress
+// that lands on a result of the same kind re-renders nothing down here.
+export default memo(function FooterHints({ selected, quicklookOpen = false, clipboardMode = false, contentMode = false, smartPaste = false, clipboardIdle = false, pdfHighlight = true, actionPanelOpen = false }: Props) {
   // Subscribed here (not prop-drilled): the selection is orthogonal to what
   // App knows about, and the bar must react in clipboard mode too.
   const sel = useSyncExternalStore(selection.subscribe, selection.getSnapshot);
@@ -163,4 +165,4 @@ export default function FooterHints({ selected, quicklookOpen = false, clipboard
       {showActions && <Hint s={chord("builtin:action-panel")}>actions</Hint>}
     </div>
   );
-}
+});
