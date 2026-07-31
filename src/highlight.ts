@@ -109,21 +109,15 @@ export function cellMatches(text: string, qkeys: Set<string>): boolean {
   return false;
 }
 
-/**
- * Wraps matched words in `<mark class="preview-hl">` inside `el`, walking text nodes
- * so it works over highlight.js / ReactMarkdown output (whose HTML can't be safely
- * string-replaced). A word matches when its key is among the query keys. Each mark is
- * stamped with `data-hlkey` so `focusBestCluster` can group by distinct key without
- * re-keying. Returns the first mark element, for scrolling.
- */
-export async function highlightInElement(
-  el: HTMLElement,
-  terms: string[],
-  shouldCancel?: () => boolean,
-): Promise<HTMLElement | null> {
-  if (!terms.length) return null;
+/** The markable text nodes of a subtree, with their tokens. */
+interface MarkPlan {
+  nodes: Text[];
+  tokensByNode: Token[][];
+}
 
-  // Collect text nodes first; we mutate the DOM as we go.
+/** Collects the text nodes to mark inside `el` (skipping already-marked text and
+ * non-content elements) plus their tokens. Read-only - the caller mutates. */
+function planMarks(el: HTMLElement): MarkPlan {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
@@ -136,27 +130,31 @@ export async function highlightInElement(
       return NodeFilter.FILTER_ACCEPT;
     },
   });
-  const textNodes: Text[] = [];
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    textNodes.push(n as Text);
-  }
+  const nodes: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+  return { nodes, tokensByNode: nodes.map((n) => tokenize(n.nodeValue ?? "")) };
+}
 
-  // Key the query terms plus every word in the subtree in one batched call.
-  const tokensByNode = textNodes.map((n) => tokenize(n.nodeValue ?? ""));
-  const allWords: string[] = terms.slice();
-  for (const toks of tokensByNode) for (const t of toks) allWords.push(t.word);
-  await ensureKeys(allWords);
-  // The await is a backend round-trip; bail before touching the DOM if the caller
-  // (e.g. a preview that navigated away) cancelled in the meantime.
-  if (shouldCancel?.()) return null;
+/** Every word the plan needs keyed, query terms included. */
+function planWords(plan: MarkPlan, terms: string[]): string[] {
+  const out = terms.slice();
+  for (const toks of plan.tokensByNode) for (const t of toks) out.push(t.word);
+  return out;
+}
 
-  const qkeys = querySet(terms);
-  if (!qkeys.size) return null;
+/** True once every word in the plan (and every term) has a cached key, i.e. marking
+ * can run without a backend round-trip. */
+function planIsKeyed(plan: MarkPlan, terms: string[]): boolean {
+  for (const w of planWords(plan, terms)) if (!keyCache.has(w)) return false;
+  return true;
+}
 
+/** Replaces matched words with `<mark>` elements. Requires cached keys. */
+function applyMarks(plan: MarkPlan, qkeys: Set<string>): HTMLElement | null {
   let first: HTMLElement | null = null;
-  textNodes.forEach((node, ni) => {
+  plan.nodes.forEach((node, ni) => {
     const text = node.nodeValue ?? "";
-    const hits = tokensByNode[ni].filter((t) => {
+    const hits = plan.tokensByNode[ni].filter((t) => {
       const k = keyOf(t.word);
       return k !== undefined && qkeys.has(k);
     });
@@ -178,6 +176,63 @@ export async function highlightInElement(
     node.parentNode?.replaceChild(frag, node);
   });
   return first;
+}
+
+/**
+ * Synchronous marking, for the common case where the subtree's words are already
+ * keyed (the preview warmed them before committing its content - see
+ * `warmHighlightKeys`). Returns `{ first }` when it ran, or `null` when some word
+ * is unkeyed and the caller must fall back to `highlightInElement`. Running sync
+ * matters: called from a layout effect it puts the marks in the same paint as the
+ * content, instead of a frame or more later.
+ */
+export function markInElement(el: HTMLElement, terms: string[]): { first: HTMLElement | null } | null {
+  if (!terms.length) return { first: null };
+  const plan = planMarks(el);
+  if (!planIsKeyed(plan, terms)) return null;
+  const qkeys = querySet(terms);
+  if (!qkeys.size) return { first: null };
+  return { first: applyMarks(plan, qkeys) };
+}
+
+/**
+ * Pre-keys `terms` plus every word in `text` so a later `markInElement` over the
+ * rendered form of that text can run synchronously. Callers await this before
+ * committing the content, so content and marks land together.
+ */
+export async function warmHighlightKeys(text: string, terms: string[]): Promise<void> {
+  if (!terms.length) return;
+  const words = terms.slice();
+  for (const t of tokenize(text)) words.push(t.word);
+  await ensureKeys(words);
+}
+
+/**
+ * Wraps matched words in `<mark class="preview-hl">` inside `el`, walking text nodes
+ * so it works over highlight.js / ReactMarkdown output (whose HTML can't be safely
+ * string-replaced). A word matches when its key is among the query keys. Each mark is
+ * stamped with `data-hlkey` so `focusBestCluster` can group by distinct key without
+ * re-keying. Returns the first mark element, for scrolling.
+ */
+export async function highlightInElement(
+  el: HTMLElement,
+  terms: string[],
+  shouldCancel?: () => boolean,
+): Promise<HTMLElement | null> {
+  if (!terms.length) return null;
+
+  // Collect text nodes first; we mutate the DOM as we go.
+  const plan = planMarks(el);
+
+  // Key the query terms plus every word in the subtree in one batched call.
+  await ensureKeys(planWords(plan, terms));
+  // The await is a backend round-trip; bail before touching the DOM if the caller
+  // (e.g. a preview that navigated away) cancelled in the meantime.
+  if (shouldCancel?.()) return null;
+
+  const qkeys = querySet(terms);
+  if (!qkeys.size) return null;
+  return applyMarks(plan, qkeys);
 }
 
 /**

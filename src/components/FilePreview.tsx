@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { SearchResult } from "../types";
 import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, isOfficeText, isSpreadsheet, fileCategory, folderSummary } from "../utils";
 import { ColoredIconsContext } from "../coloredIcons";
-import { cellMatches, tokenize, keyOf, ensureKeys, loadQueryKeys } from "../highlight";
+import { cellMatches, tokenize, keyOf, ensureKeys, loadQueryKeys, warmHighlightKeys } from "../highlight";
 import MarkdownView from "./MarkdownView";
 import { selection } from "../selection/controller";
 import { PdfTextLayer, OcrTextLayer } from "./TextLayer";
@@ -64,6 +64,12 @@ function contentMatchKey(path: string, query: string): string {
 type HlRect = [number, number, number, number];
 const pdfRectsPromiseCache = new Map<string, Promise<HlRect[]>>();
 const pdfRectsCache = new Map<string, HlRect[]>();
+// Shared empty box list, so "no highlights" is a stable reference across renders.
+const NO_RECTS: HlRect[] = [];
+// How long a bitmap swap will wait for its highlight boxes before going up without
+// them (see warmRects). Long enough for a normal text-layer extraction, short enough
+// that a pathological one can't read as a stuck preview.
+const RECTS_WARM_MAX_MS = 300;
 
 function pdfRectsKey(path: string, page: number, terms: string[]): string {
   return `${path}#${page}#${terms.join(" ")}`;
@@ -197,28 +203,52 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
 
   // Highlight boxes for the *displayed* page (empty when highlighting is off / no
   // terms / no text layer). Keyed on `shown` - the {path, page} the visible <img>
-  // actually shows, set on image load - rather than the requested `path`/`cur`, so
-  // the boxes never update ahead of the image: navigating (or switching files)
-  // keeps the old boxes on the old image until the new page renders, then they
-  // swap together. path+page move as a pair so we never fetch a mismatched combo.
-  // Normalized, so width/zoom-independent; seeded from cache to avoid a fetch flash.
-  const termsKey = terms.join(" ");
+  // actually shows - rather than the requested `path`/`cur`, so the boxes never
+  // describe a page other than the one on screen. Normalized, so width/zoom-independent.
+  //
+  // *Derived* from the cache, not held in state: as state they lagged the bitmap by a
+  // commit, and by a whole `pdf_match_rects` round-trip on a miss - so switching files
+  // swapped the page long before the boxes, leaving the old file's boxes sitting on the
+  // new page until they blinked to the right ones. Derived, a cache miss draws no boxes
+  // at all, and the render effect below warms the cache *before* it swaps `src`, so the
+  // boxes and the bitmap they belong to land in the same paint.
   const [shown, setShown] = useState(() => ({ path, page: startPage() }));
-  const [rects, setRects] = useState<HlRect[]>(
-    () => pdfRectsCache.get(pdfRectsKey(path, startPage(), terms)) ?? [],
-  );
+  // Flipped in the same commit as `src` (the bitmap is decoded before that commit, so
+  // it paints in that same frame) and again from the image's onLoad as a backstop for
+  // any path that skipped the decode probe. No-ops when nothing changed, so the extra
+  // call can't churn a render.
+  const markShown = useCallback((p: string, pg: number) => {
+    setShown(prev => (prev.path === p && prev.page === pg ? prev : { path: p, page: pg }));
+  }, []);
+  const wantRects = highlight && terms.length > 0;
+  const rectsKey = pdfRectsKey(shown.path, shown.page, terms);
+  const [, bumpRects] = useState(0);
+  const rects = wantRects ? pdfRectsCache.get(rectsKey) ?? NO_RECTS : NO_RECTS;
+  // Backstop for a page that reached the screen with cold boxes: turning highlighting
+  // on mid-view, or a bitmap that came from cache before the warm below could run.
   useEffect(() => {
-    if (!highlight || !terms.length) { setRects([]); return; }
-    const cached = pdfRectsCache.get(pdfRectsKey(shown.path, shown.page, terms));
-    if (cached) { setRects(cached); return; }
+    if (!wantRects || pdfRectsCache.has(rectsKey)) return;
     let cancelled = false;
     getPdfRects(shown.path, shown.page, terms)
-      .then(r => { if (!cancelled) setRects(r); })
-      .catch(e => { console.error("[pdf] pdf_match_rects failed:", e); if (!cancelled) setRects([]); });
+      .then(() => { if (!cancelled) bumpRects(n => n + 1); })
+      .catch(e => { console.error("[pdf] pdf_match_rects failed:", e); });
     return () => { cancelled = true; };
-    // termsKey stands in for the terms array (stable string identity).
+    // rectsKey covers path+page+terms.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown.path, shown.page, termsKey, highlight]);
+  }, [rectsKey, wantRects]);
+
+  // Resolves once the boxes for `page` are cached, or null when there is nothing to
+  // wait for (highlighting off, no terms, already cached). Callers await it before
+  // committing a new bitmap so the page never appears without its highlights. Bounded:
+  // a pathological text-layer extraction must not hold the page hostage - past the
+  // deadline the bitmap goes up and the backstop effect above fills the boxes in.
+  const warmRects = (p: number): Promise<unknown> | null =>
+    wantRects && !pdfRectsCache.has(pdfRectsKey(path, p, terms))
+      ? Promise.race([
+          getPdfRects(path, p, terms).catch(() => {}),
+          new Promise(res => setTimeout(res, RECTS_WARM_MAX_MS)),
+        ])
+      : null;
 
   // outerRef is the non-scrolling parent; vp is its inner box - the Quicklook viewport
   // the page is scaled/clamped against, and the fit box for the side preview.
@@ -351,7 +381,19 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
     flipPendingRef.current = true;
   }
 
-  useEffect(() => { setCur(startPage()); }, [path, page]);
+  // Adopt a new file / match page during render, not in an effect. In an effect the
+  // render *before* it commits with the new `path` but the old `cur`, so `key` names a
+  // page of the new file that nobody asked for and the render effect below happily
+  // rasterizes it - then the corrected page starts too and whichever resolves first
+  // paints. That was the "wrong page flashes, then snaps to the match" glitch.
+  // Adjusting here makes React re-render before committing, so the mismatched pair
+  // never reaches an effect.
+  const pageSrcRef = useRef(`${path}\0${page}`);
+  const pageSrcKey = `${path}\0${page}`;
+  if (pageSrcRef.current !== pageSrcKey) {
+    pageSrcRef.current = pageSrcKey;
+    setCur(startPage());
+  }
 
   // Track the displayed page so launch can open the PDF at it.
   useEffect(() => { pdfView.path = path; pdfView.page = cur; }, [path, cur]);
@@ -375,15 +417,22 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
   useEffect(() => {
     // Quicklook waits for its measurement so the first render targets the real width.
     if (quicklook && vp.w === 0) return;
+    let cancelled = false;
     const cached = pdfUrlCache.get(key);
     if (cached) {
-      setSrc(cached); setLoaded(true); setRendering(false);
-      setShowSkeleton(false); setReveal(false); setError(false);
-      setCount(pdfPageCount.get(path) ?? null);
-      if (quicklook) consumeFlip();
-      return;
+      const commit = () => {
+        setSrc(cached); markShown(path, cur); setLoaded(true); setRendering(false);
+        setShowSkeleton(false); setReveal(false); setError(false);
+        setCount(pdfPageCount.get(path) ?? null);
+        if (quicklook) consumeFlip();
+      };
+      // Bitmap is cached but the boxes may not be; wait for them rather than paint a
+      // bare page and pop the highlights in afterwards.
+      const warm = warmRects(cur);
+      if (!warm) { commit(); return; }
+      warm.then(() => { if (!cancelled) commit(); });
+      return () => { cancelled = true; };
     }
-    let cancelled = false;
     setError(false);
 
     if (quicklook) {
@@ -394,8 +443,10 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
         getPdfUrl(path, cur, renderWidth)
           .then(async (url) => {
             try { const probe = new Image(); probe.src = url; await probe.decode(); } catch { /* onLoad covers it */ }
+            // Highlights ride along with the bitmap (see warmRects).
+            await warmRects(cur);
             if (cancelled) return;
-            setSrc(url); setLoaded(true); setRendering(false);
+            setSrc(url); markShown(path, cur); setLoaded(true); setRendering(false);
             setCount(pdfPageCount.get(path) ?? null);
             consumeFlip();
           })
@@ -422,10 +473,12 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
       getPdfUrl(path, cur, renderWidth)
         .then(async (url) => {
           try { const probe = new Image(); probe.src = url; await probe.decode(); } catch { /* onLoad covers it */ }
+          // Highlights ride along with the bitmap (see warmRects).
+          await warmRects(cur);
           if (cancelled) return;
           clearTimeout(skeletonTimer);
           setReveal(skeletonShownRef.current);
-          setSrc(url); setLoaded(true); setShowSkeleton(false);
+          setSrc(url); markShown(path, cur); setLoaded(true); setShowSkeleton(false);
           setCount(pdfPageCount.get(path) ?? null);
         })
         .catch((e) => {
@@ -565,7 +618,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
                 style={{ width: "100%", height: "100%" }}
                 onLoad={e => {
                   setLoaded(true);
-                  setShown({ path, page: cur });
+                  markShown(path, cur);
                   const t = e.currentTarget;
                   if (t.naturalWidth && t.naturalHeight) {
                     const ratio = t.naturalWidth / t.naturalHeight;
@@ -613,7 +666,7 @@ function PdfPreview({ path, page, terms = [], highlight = true, quicklook = fals
             style={displayW ? { width: displayW, height: displayH } : undefined}
             onLoad={e => {
               setLoaded(true);
-              setShown({ path, page: cur });
+              markShown(path, cur);
               const t = e.currentTarget;
               if (t.naturalWidth && t.naturalHeight) {
                 const ratio = t.naturalWidth / t.naturalHeight;
@@ -1167,7 +1220,13 @@ function MarkdownPreview({ path, terms }: { path: string; terms: string[] }) {
     // the PDF preview uses.
     const t = setTimeout(() => {
       invoke<string>("read_text_preview", { path, terms })
-        .then(text => { if (!cancelled) setSource(text); })
+        // Key the document's words before committing it, so MarkdownView's mark
+        // pass runs synchronously and the marks paint with the text (see
+        // useTermHighlight). No-op when there are no terms.
+        .then(async text => {
+          await warmHighlightKeys(text, terms);
+          if (!cancelled) setSource(text);
+        })
         .catch(() => { if (!cancelled) setSource(""); });
     }, 40);
     return () => { cancelled = true; clearTimeout(t); };
@@ -1224,7 +1283,12 @@ function TextPreview({ path, lang, terms }: { path: string; lang: string; terms:
     // passed over must not pay for it.
     const t = setTimeout(() => {
       invoke<string>("read_text_preview", { path, terms })
-        .then(text => {
+        .then(async text => {
+          if (cancelled) return;
+          // Key the file's words before committing the html, so the mark pass in
+          // useTermHighlight runs synchronously and the marks land in the same
+          // paint as the code. No-op when there are no terms.
+          await warmHighlightKeys(text, terms);
           if (cancelled) return;
           setTimeout(() => {
             if (cancelled) return;
@@ -1302,20 +1366,27 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], hi
   const [matchPage, setMatchPage] = useState<number | null>(() =>
     isPdf && terms.length ? contentMatchPageCache.get(contentMatchKey(filePath, termsKey)) ?? null : 0,
   );
-  // Tracks the file the current matchPage belongs to. Blanking to `null` only when
-  // the file itself changes lets a same-file term refetch (i.e. typing) keep the
-  // page mounted instead of unmounting/remounting the reader between keystrokes.
-  const matchPagePathRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!isPdf || !terms.length) { setMatchPage(0); matchPagePathRef.current = filePath; return; }
-    // Cache hit (revisited PDF): resolve synchronously, no unmount, no fetch.
-    const cached = contentMatchPageCache.get(contentMatchKey(filePath, termsKey));
-    if (cached != null) { setMatchPage(cached); matchPagePathRef.current = filePath; return; }
-    let cancelled = false;
-    // Hold the reader (page-0 flash then jump) only on a file change / first mount.
-    // On a same-file refetch keep the current page so the PDF doesn't flash.
-    if (matchPagePathRef.current !== filePath) setMatchPage(null);
+  // Tracks the file the current matchPage belongs to. Reconciled during render, not in
+  // the effect below: an effect commits one render with the new `filePath` still paired
+  // with the *previous* file's matchPage, and PdfPreview then renders that page of the
+  // new file before the corrected one arrives (the wrong-page flash). Blanking only on
+  // a file change lets a same-file term refetch (i.e. typing) keep the page mounted
+  // instead of unmounting/remounting the reader between keystrokes.
+  const matchPagePathRef = useRef<string | null>(filePath);
+  if (matchPagePathRef.current !== filePath) {
     matchPagePathRef.current = filePath;
+    // Cache hit (revisited PDF): keep the reader mounted on the right page. Otherwise
+    // `null` holds the mount until the fetch below resolves.
+    setMatchPage(
+      isPdf && terms.length ? contentMatchPageCache.get(contentMatchKey(filePath, termsKey)) ?? null : 0,
+    );
+  }
+  useEffect(() => {
+    if (!isPdf || !terms.length) { setMatchPage(0); return; }
+    // Cache hit (revisited PDF, or a term change on the same file): no fetch.
+    const cached = contentMatchPageCache.get(contentMatchKey(filePath, termsKey));
+    if (cached != null) { setMatchPage(cached); return; }
+    let cancelled = false;
     invoke<number | null>("content_match_page", { path: filePath, query: termsKey })
       // Same page number -> return prev so PdfPreview's props are referentially
       // unchanged and it doesn't re-render.
