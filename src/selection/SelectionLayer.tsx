@@ -10,13 +10,13 @@
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { selection } from "./controller";
-import { caretRect, rectsForRange, rootScale, type SelRect } from "./geometry";
+import { caretRect, probeFrame, rectsForRange, visibleRect, type SelRect } from "./geometry";
 import SelectionPopover, { type PopoverActions } from "./SelectionPopover";
 
 export default function SelectionLayer({ actions }: { actions: PopoverActions }) {
   const snap = useSyncExternalStore(selection.subscribe, selection.getSnapshot);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  // Force a recompute after mount (overlay ref lands) and on scroll/resize.
+  const probeRef = useRef<HTMLElement>(null);
+  // Force a recompute after mount (probe ref lands) and on scroll/resize.
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
   const active = !!snap.root && (!!snap.range || snap.keyboard);
@@ -61,31 +61,35 @@ export default function SelectionLayer({ actions }: { actions: PopoverActions })
 
   if (!snap.root || !active) return null;
 
-  // Measure relative to the overlay's own box (see file header).
+  // Measure from the probe: it is laid out at the overlay's own origin and at a
+  // known CSS size, so it reports both where that origin paints and how much a
+  // CSS pixel there covers - including the launcher's root `zoom` and the PDF
+  // reader's scale transform together. See probeFrame().
   let rects: SelRect[] = [];
   let caret: SelRect | null = null;
   let focusRect: SelRect | null = null;
   // Visible box (the scroll viewport) expressed in the same overlay-local space,
   // so the popover can flip/clamp regardless of scroll/pin behavior.
   let viewport = { top: 0, bottom: 0, left: 0, right: 0 };
-  const overlay = overlayRef.current;
-  if (overlay) {
-    const originRect = overlay.getBoundingClientRect();
-    const scale = rootScale(snap.root);
-    if (snap.range) rects = rectsForRange(snap.range, originRect, scale);
+  const frame = probeFrame(probeRef.current);
+  if (frame) {
+    if (snap.range) rects = rectsForRange(snap.range, frame);
     if (snap.focus) {
-      const c = caretRect(snap.focus, originRect, scale);
+      const c = caretRect(snap.focus, frame);
       // Anchor the popover at the focus end (drag-release / caret), not the
       // bottom-most rect (wrong end for an upward selection).
       focusRect = c ?? (rects.length > 0 ? rects[rects.length - 1] : null);
       if (snap.keyboard) caret = c;
     }
-    const vb = snap.root.getBoundingClientRect();
+    // The *visible* part of the root, not the whole of it: the PDF reader's page
+    // is far bigger than what you can see once it is zoomed past fit, and clamping
+    // the popover to the page instead of the viewport puts it off-screen.
+    const vb = visibleRect(snap.root);
     viewport = {
-      top: (vb.top - originRect.top) / scale.y,
-      bottom: (vb.bottom - originRect.top) / scale.y,
-      left: (vb.left - originRect.left) / scale.x,
-      right: (vb.right - originRect.left) / scale.x,
+      top: (vb.top - frame.y) / frame.sy,
+      bottom: (vb.bottom - frame.y) / frame.sy,
+      left: (vb.left - frame.x) / frame.sx,
+      right: (vb.right - frame.x) / frame.sx,
     };
   }
 
@@ -93,7 +97,8 @@ export default function SelectionLayer({ actions }: { actions: PopoverActions })
 
   return createPortal(
     <Fragment>
-      <div ref={overlayRef} className="sel-overlay" aria-hidden="true">
+      <div className="sel-overlay" aria-hidden="true">
+        <i className="sel-probe" ref={probeRef} />
         {rects.map((r, i) => (
           <div key={i} className="sel-rect" style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />
         ))}

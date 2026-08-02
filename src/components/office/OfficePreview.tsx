@@ -5,6 +5,7 @@ import type { OfficeShape } from "../../types";
 import { buildOfficeSrcdoc, clampOfficeZoom, randomToken, OFFICE_ZOOM_STEP } from "../../srcdoc";
 import { hostFocus } from "../../focus";
 import { selection } from "../../selection/controller";
+import { probeFrame } from "../../selection/geometry";
 import OfficeFrame from "./OfficeFrame";
 import type { OfficeFrameHandle } from "./OfficeFrame";
 import type { FrameSelState, HostMessage } from "./protocol";
@@ -167,6 +168,7 @@ function OfficeHtmlPreview({
   // chords, the footer bar and the popover behave as they do for any other
   // preview. See `adoptExternal` in selection/controller.ts.
   const wrapRef = useRef<HTMLDivElement>(null);
+  const probeRef = useRef<HTMLElement>(null);
   const selRef = useRef<FrameSelState | null>(null);
   // Bumped only when the selected *text* changes, so the popover survives the
   // stream of anchor restatements a scroll produces (see ExternalPopover.key).
@@ -182,9 +184,16 @@ function OfficeHtmlPreview({
     let popover = null;
     const wrap = wrapRef.current;
     const fr = frameRef.current?.rect();
+    // The probe reports both where the wrap's positioning origin paints and how
+    // many painted pixels one authored CSS pixel there covers - the launcher runs
+    // the whole UI under a root `zoom`, so those are not the same number, and a
+    // popover placed in painted pixels drifts by a percentage of its distance from
+    // the origin. `k` is the other half: frame-viewport pixels to painted ones,
+    // measured against the viewport width the frame reported, so it holds however
+    // the frame's own zoom happens to be plumbed.
+    const pf = probeFrame(probeRef.current);
     const show = s.text !== "" && !s.dragging && !s.keyboard && s.anchor;
-    if (show && wrap && fr && s.vw > 0 && s.vh > 0) {
-      const wr = wrap.getBoundingClientRect();
+    if (show && wrap && fr && pf && s.vw > 0 && s.vh > 0) {
       const kx = fr.width / s.vw;
       const ky = fr.height / s.vh;
       const [ax, ay, aw, ah] = s.anchor!;
@@ -192,16 +201,16 @@ function OfficeHtmlPreview({
         host: wrap,
         key: selEpoch.current,
         anchor: {
-          x: fr.left - wr.left + ax * kx,
-          y: fr.top - wr.top + ay * ky,
-          w: aw * kx,
-          h: ah * ky,
+          x: (fr.left + ax * kx - pf.x) / pf.sx,
+          y: (fr.top + ay * ky - pf.y) / pf.sy,
+          w: (aw * kx) / pf.sx,
+          h: (ah * ky) / pf.sy,
         },
         viewport: {
-          top: fr.top - wr.top,
-          bottom: fr.bottom - wr.top,
-          left: fr.left - wr.left,
-          right: fr.right - wr.left,
+          top: (fr.top - pf.y) / pf.sy,
+          bottom: (fr.bottom - pf.y) / pf.sy,
+          left: (fr.left - pf.x) / pf.sx,
+          right: (fr.right - pf.x) / pf.sx,
         },
       };
     }
@@ -343,6 +352,8 @@ function OfficeHtmlPreview({
   return (
     <div className="office-preview">
       <div className="office-frame-wrap" ref={wrapRef}>
+        {/* Scale probe for the popover this wrap hosts - see the mapping in onSel. */}
+        <i className="sel-probe" ref={probeRef} />
         {built && (
           <OfficeFrame
             ref={frameRef}

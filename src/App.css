@@ -1277,6 +1277,18 @@ kbd {
   z-index: 3;
 }
 
+/* Scale probe (geometry.ts probeFrame): a hidden box at the overlay's origin, at
+   a known CSS size, so the painted-vs-authored ratio of this space is measured
+   rather than assumed. Keep the size in sync with PROBE_PX. */
+.sel-probe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100px;
+  height: 100px;
+  visibility: hidden;
+}
+
 .sel-rect {
   position: absolute;
   background: color-mix(in srgb, var(--accent) 32%, transparent);

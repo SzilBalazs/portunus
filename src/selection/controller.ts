@@ -16,6 +16,7 @@ import {
   caretClientRect,
   caretFromPoint,
   offsetAtX,
+  visibleRect,
 } from "./geometry";
 import { extractText, separatesLine } from "./extract";
 
@@ -38,28 +39,15 @@ const MOVE_KEYS: Record<string, "left" | "right" | "up" | "down" | "home" | "end
   End: "end",
 };
 
+/** Nearest ancestor that can actually be scrolled - narrower than
+ *  `clipAncestor`, because a plain `overflow: hidden` box has no scrollTop to
+ *  move (the PDF reader pans with a transform inside one). */
 function scrollableAncestor(el: HTMLElement): HTMLElement | null {
   for (let n: HTMLElement | null = el; n; n = n.parentElement) {
     const s = getComputedStyle(n);
     if (/(auto|scroll)/.test(s.overflowY + s.overflowX)) return n;
   }
   return null;
-}
-
-/** The on-screen part of a root that may be clipped by its scroll container. */
-function visibleRect(root: HTMLElement): DOMRect {
-  const r = root.getBoundingClientRect();
-  const scroller = scrollableAncestor(root);
-  if (!scroller) return r;
-  const v = scroller.getBoundingClientRect();
-  const left = Math.max(r.left, v.left);
-  const top = Math.max(r.top, v.top);
-  return new DOMRect(
-    left,
-    top,
-    Math.max(0, Math.min(r.right, v.right) - left),
-    Math.max(0, Math.min(r.bottom, v.bottom) - top),
-  );
 }
 
 /** Word boundaries around an offset within one text node ([start, end), or

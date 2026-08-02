@@ -197,31 +197,82 @@ function mergeLineRects(rects: SelRect[]): SelRect[] {
   return lines;
 }
 
-/** Reads the zoom factor a selectable root is rendered under (PDF Quicklook
- *  applies a CSS scale transform on an ancestor; DOM previews are 1). */
-/** The effective CSS scale between `root`'s layout box and its painted box,
- *  derived empirically (getBoundingClientRect is post-transform; offset* are
- *  pre-transform). Captures the PDF Quicklook zoom — and any ancestor
- *  transform — without a hand-maintained attribute. `1` when untransformed. */
-export function rootScale(root: HTMLElement): { x: number; y: number } {
-  const rect = root.getBoundingClientRect();
-  const x = root.offsetWidth > 0 ? rect.width / root.offsetWidth : 1;
-  const y = root.offsetHeight > 0 ? rect.height / root.offsetHeight : 1;
-  return {
-    x: Number.isFinite(x) && x > 0 ? x : 1,
-    y: Number.isFinite(y) && y > 0 ? y : 1,
-  };
+/** CSS size of a `.sel-probe` box, kept in sync with the App.css rule. */
+export const PROBE_PX = 100;
+
+/**
+ * Nearest ancestor that clips `el` — anything with a non-`visible` overflow, not
+ * only `auto`/`scroll`.
+ *
+ * That distinction is the whole point: the PDF reader zooms and pans with a
+ * transform and lets `.pdf-ql` clip (`overflow: hidden`), so it never scrolls and
+ * a scroller-only walk finds nothing. Treating the page itself as the visible box
+ * then puts the selection popover somewhere off-screen whenever the page is zoomed
+ * past fit. Scrolling still needs the narrower `auto|scroll` test — a clipping box
+ * has no scrollTop to move — so that one stays where it is used, in the controller.
+ */
+export function clipAncestor(el: HTMLElement): HTMLElement | null {
+  for (let n: HTMLElement | null = el; n; n = n.parentElement) {
+    const s = getComputedStyle(n);
+    if (s.overflowY !== "visible" || s.overflowX !== "visible") return n;
+  }
+  return null;
 }
 
-/** Highlight rects for a range, positioned relative to `originRect` — the live
- *  bounding rect of the overlay element the rects render inside. Because the
- *  offset is measured against the overlay's OWN painted position, this is
- *  correct whether the overlay scrolls with the content or is pinned (WebKitGTK
- *  differs by element box), and stays correct across scroll as long as it is
- *  recomputed with a fresh `originRect`. `scale` is the overlay/root
- *  painted-vs-layout ratio (PDF zoom, ancestor transforms). Walks text nodes
- *  rather than Range.getClientRects (which adds contained elements' boxes). */
-export function rectsForRange(range: Range, originRect: DOMRect, scale: { x: number; y: number }): SelRect[] {
+/** The on-screen part of a root, clipped by whatever encloses it. */
+export function visibleRect(root: HTMLElement): DOMRect {
+  const r = root.getBoundingClientRect();
+  const clip = clipAncestor(root);
+  if (!clip) return r;
+  const v = clip.getBoundingClientRect();
+  const left = Math.max(r.left, v.left);
+  const top = Math.max(r.top, v.top);
+  return new DOMRect(
+    left,
+    top,
+    Math.max(0, Math.min(r.right, v.right) - left),
+    Math.max(0, Math.min(r.bottom, v.bottom) - top),
+  );
+}
+
+/** A positioning space: where its origin is painted, and how many painted pixels
+ *  one authored CSS pixel inside it covers. */
+export interface PaintFrame {
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+}
+
+/**
+ * Measure a positioning space from a `.sel-probe` — a hidden box the caller
+ * renders at `left:0;top:0` inside it, at a known CSS size.
+ *
+ * Two independent things scale these spaces: `zoom` (the launcher's whole UI runs
+ * under `documentElement.style.zoom`) and `transform` (the PDF Quicklook's page
+ * scale). A rect converted with only one of them is out by a percentage of its
+ * distance from the origin — right at the top of a preview, visibly wrong further
+ * down. Deriving the factor from `offsetWidth` looks like it handles both, but
+ * whether `offset*` divides `zoom` back out is an engine detail; a box laid out at
+ * a known CSS size in the space itself needs no such assumption, and its painted
+ * position is that space's origin (no assumption about the parent's padding
+ * either). Returns null when the probe has not been laid out yet.
+ */
+export function probeFrame(probe: Element | null): PaintFrame | null {
+  if (!probe) return null;
+  const r = probe.getBoundingClientRect();
+  if (!(r.width > 0) || !(r.height > 0)) return null;
+  return { x: r.left, y: r.top, sx: r.width / PROBE_PX, sy: r.height / PROBE_PX };
+}
+
+/** Highlight rects for a range, in the coordinates of the space `frame` measures —
+ *  the overlay the rects render inside. Because the offset is measured against
+ *  that space's OWN painted origin, this is correct whether the overlay scrolls
+ *  with the content or is pinned (WebKitGTK differs by element box), and stays
+ *  correct across scroll as long as it is recomputed with a fresh frame. Walks
+ *  text nodes rather than Range.getClientRects (which adds contained elements'
+ *  boxes). */
+export function rectsForRange(range: Range, frame: PaintFrame): SelRect[] {
   const out: SelRect[] = [];
   const sub = document.createRange();
   for (const node of textNodesInRange(range)) {
@@ -232,10 +283,10 @@ export function rectsForRange(range: Range, originRect: DOMRect, scale: { x: num
     for (const r of sub.getClientRects()) {
       if (r.width <= 0 || r.height <= 0) continue;
       out.push({
-        x: (r.left - originRect.left) / scale.x,
-        y: (r.top - originRect.top) / scale.y,
-        w: r.width / scale.x,
-        h: r.height / scale.y,
+        x: (r.left - frame.x) / frame.sx,
+        y: (r.top - frame.y) / frame.sy,
+        w: r.width / frame.sx,
+        h: r.height / frame.sy,
       });
     }
   }
@@ -262,16 +313,15 @@ export function caretClientRect(pos: CaretPos): DOMRect | null {
   return new DOMRect(pos.offset >= len ? pr.right : pr.left, pr.top, 0, pr.height);
 }
 
-/** Rect of a collapsed caret position, relative to `originRect` (same overlay
- *  space as `rectsForRange`). */
-export function caretRect(pos: CaretPos, originRect: DOMRect, scale: { x: number; y: number }): SelRect | null {
+/** Rect of a collapsed caret position, in the same space as `rectsForRange`. */
+export function caretRect(pos: CaretPos, frame: PaintFrame): SelRect | null {
   const rect = caretClientRect(pos);
   if (!rect) return null;
   return {
-    x: (rect.left - originRect.left) / scale.x,
-    y: (rect.top - originRect.top) / scale.y,
+    x: (rect.left - frame.x) / frame.sx,
+    y: (rect.top - frame.y) / frame.sy,
     w: 0,
-    h: rect.height / scale.y,
+    h: rect.height / frame.sy,
   };
 }
 
