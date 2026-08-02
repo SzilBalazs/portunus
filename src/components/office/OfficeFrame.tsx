@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { HostMessage } from "./protocol";
+import type { FrameSelState, HostMessage } from "./protocol";
 import { isFrameMessage } from "./protocol";
 
 type Slot = "a" | "b";
@@ -9,6 +9,9 @@ const other = (s: Slot): Slot => (s === "a" ? "b" : "a");
 export interface OfficeFrameHandle {
   /** Posts to the *front* buffer. No-op before the first `ready`. */
   send(msg: HostMessage): boolean;
+  /** Painted box of the buffer on screen, for mapping frame coordinates into the
+   *  host's (the selection popover is rendered host-side). */
+  rect(): DOMRect | null;
 }
 
 interface Props {
@@ -19,8 +22,8 @@ interface Props {
   title: string;
   /** Fires when a buffer has parsed and centred its match, i.e. when it is shown. */
   onReady?: () => void;
-  /** In-frame text selection changed. */
-  onSelection?: (text: string) => void;
+  /** In-frame selection state changed (or its anchor moved under a scroll/zoom). */
+  onSel?: (state: FrameSelState) => void;
   /** The frame's zoom changed (ctrl+wheel in-frame, or an ack for `zoom`). */
   onZoomed?: (factor: number) => void;
   /** The frame took focus and wants the host to take it back. */
@@ -48,7 +51,7 @@ interface Props {
  *    element, which destroys the painted document, which is the flash.
  */
 const OfficeFrame = forwardRef<OfficeFrameHandle, Props>(function OfficeFrame(
-  { srcdoc, token, title, onReady, onSelection, onZoomed, onRefocus },
+  { srcdoc, token, title, onReady, onSel, onZoomed, onRefocus },
   ref,
 ) {
   const [docs, setDocs] = useState<Record<Slot, string | null>>({ a: null, b: null });
@@ -63,8 +66,8 @@ const OfficeFrame = forwardRef<OfficeFrameHandle, Props>(function OfficeFrame(
   // re-installing it on every parent render would drop messages in the gap.
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
-  const onSelectionRef = useRef(onSelection);
-  onSelectionRef.current = onSelection;
+  const onSelRef = useRef(onSel);
+  onSelRef.current = onSel;
   const onZoomedRef = useRef(onZoomed);
   onZoomedRef.current = onZoomed;
   const onRefocusRef = useRef(onRefocus);
@@ -108,7 +111,7 @@ const OfficeFrame = forwardRef<OfficeFrameHandle, Props>(function OfficeFrame(
       // Everything else only counts from the document actually on screen: a back
       // buffer still settling must not report its selection as the user's.
       if (live.current?.token !== msg.token) return;
-      if (msg.type === "selection") onSelectionRef.current?.(msg.text);
+      if (msg.type === "sel") onSelRef.current?.(msg);
       else if (msg.type === "zoomed") onZoomedRef.current?.(msg.factor);
     };
     window.addEventListener("message", onMessage);
@@ -125,7 +128,12 @@ const OfficeFrame = forwardRef<OfficeFrameHandle, Props>(function OfficeFrame(
     return true;
   }, []);
 
-  useImperativeHandle(ref, () => ({ send }), [send]);
+  const rect = useCallback((): DOMRect | null => {
+    const l = live.current;
+    return (l && frames.current[l.slot]?.getBoundingClientRect()) ?? null;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ send, rect }), [send, rect]);
 
   return (
     <>

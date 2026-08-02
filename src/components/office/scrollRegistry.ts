@@ -37,6 +37,16 @@ export const officeScroll = {
     return handlers.length > 0 && handlers[handlers.length - 1] === fn;
   },
 
+  /**
+   * Enter keyboard caret mode in the office frame on top (the select-mode chord,
+   * for which there is no host-side `[data-selectable]` root to hand the engine).
+   * False when no frame has a document live yet, so the chord falls through.
+   */
+  enterSelect(): boolean {
+    const fn = handlers[handlers.length - 1];
+    return fn ? fn({ type: "selEnter" }) : false;
+  },
+
   /** True when an office frame consumed the key (so the caller preventDefaults). */
   handleKey(key: string, shift: boolean): boolean {
     const fn = handlers[handlers.length - 1];

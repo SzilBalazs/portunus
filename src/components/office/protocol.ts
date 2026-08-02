@@ -24,20 +24,49 @@ export type HostMessage =
   /** Reset to the top of the current section. */
   | { type: "section" }
   /** Reader zoom, multiplied into the launcher's own UI scale. */
-  | { type: "zoom"; factor: number; requestId?: number };
+  | { type: "zoom"; factor: number; requestId?: number }
+  /** Enter keyboard caret mode (the select-mode chord). Answered with a `sel`
+   *  either way, so a document with no text releases the host's adoption instead
+   *  of leaving it believing a caret is live. */
+  | { type: "selEnter" }
+  /** A movement key (or Escape) forwarded into keyboard caret mode. The frame is
+   *  never focused, so it cannot receive these itself. */
+  | { type: "selKey"; key: string; shift: boolean; ctrl: boolean }
+  /** Drop the selection. */
+  | { type: "selClear" };
 
 /** Frame → host. */
 export type FrameMessage =
   /** Parsed, and the best match already centred - the host's cue to reveal. */
   | { type: "ready" }
-  /** The document's current text selection ("" when cleared). */
-  | { type: "selection"; text: string }
+  /**
+   * The frame's selection state, after every change to it (and, coalesced to one
+   * per frame, after a scroll or zoom that moves `anchor` without changing the
+   * selection). `text` is "" when nothing is selected, and TSV for a grid.
+   *
+   * `anchor` is the focus end in *frame-viewport* pixels - the popover is rendered
+   * host-side, and the frame's own client box is the one space both documents can
+   * agree on. `vw`/`vh` come along so the host can derive the painted scale
+   * without knowing how the zoom is plumbed.
+   */
+  | {
+      type: "sel";
+      text: string;
+      keyboard: boolean;
+      dragging: boolean;
+      anchor: [number, number, number, number] | null;
+      vw: number;
+      vh: number;
+    }
   /** Zoom changed - either an ack for a host `zoom` (echoing its `requestId`) or
    *  an unsolicited report of an in-frame ctrl+wheel. */
   | { type: "zoomed"; factor: number; requestId?: number }
   /** Focus reached the frame; the host should take it back (see the focus-custody
    *  note in `officeBootstrap`). */
   | { type: "refocus" };
+
+/** The frame's published selection state. */
+export type FrameSelState = Extract<FrameMessage, { type: "sel" }>;
 
 /** A frame message plus the envelope fields the bootstrap adds. */
 export type TokenedFrameMessage = FrameMessage & { token: string };
@@ -55,7 +84,7 @@ export function isFrameMessage(data: unknown): data is TokenedFrameMessage {
   if (typeof m.token !== "string") return false;
   return (
     m.type === "ready" ||
-    m.type === "selection" ||
+    m.type === "sel" ||
     m.type === "zoomed" ||
     m.type === "refocus"
   );

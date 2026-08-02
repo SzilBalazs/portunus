@@ -15,6 +15,7 @@ import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
 import { isPreviewable, officeShape, onAccentColor } from "./utils";
+import { officeScroll } from "./components/office/scrollRegistry";
 import { hostFocus } from "./focus";
 import { ColoredIconsContext } from "./coloredIcons";
 import { dispatchLaunch, dispatchShortcut, collectResultActions, isCopyKey, type LaunchContext } from "./providers/registry";
@@ -1132,7 +1133,9 @@ export default function App() {
         const root = document.querySelector<HTMLElement>(
           quickResult ? ".quicklook-overlay [data-selectable]" : ".card [data-selectable]",
         );
-        if (selection.enterKeyboardMode(root)) {
+        // An office preview has no selectable root here - its text is in another
+        // document, so the chord is forwarded to the frame's own engine instead.
+        if (selection.enterKeyboardMode(root) || officeScroll.enterSelect()) {
           e.preventDefault();
           return;
         }

@@ -57,6 +57,9 @@ const BASE_CSS: &str = "\
 .xl-lines td{border:1px solid #dcdcdc;}
 td.xl-num{text-align:right;}
 td.xl-bool,td.xl-err{text-align:center;}
+/* Cells with text take the I-beam; everything else keeps body's grab cursor,
+   because everything else pans. See the `xl-t` note in the cell loop. */
+td.xl-t{cursor:text;}
 th.xl-ch,th.xl-rh,th.xl-corner{background:var(--bg-card,#ececec);color:var(--fg,#1f1f1f);\
 border:1px solid var(--border,#c0c0c0);font-weight:500;font-size:11px;letter-spacing:.02em;\
 padding:0 4px;text-align:center;vertical-align:middle;position:relative;}
@@ -683,6 +686,15 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 ),
                 None => (String::new(), String::new()),
             };
+            // Marks the cell as carrying text. The frame's selection engine keys
+            // both the I-beam cursor and the select-vs-pan decision off this: a
+            // press on a cell with something in it starts a selection, anywhere
+            // else starts a pan (the same rule the PDF text layer follows). CSS
+            // cannot ask whether an element has text, and walking the DOM per
+            // mousemove over a 6000-cell grid is not free, so the renderer says so.
+            if !text.is_empty() {
+                push_class(&mut cls, "xl-t");
+            }
             let class_attr = if cls.is_empty() {
                 String::new()
             } else {

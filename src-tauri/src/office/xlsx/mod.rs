@@ -1111,6 +1111,25 @@ mod tests {
         assert!(doc.html.contains(".xl-sheet{border-collapse:collapse;table-layout:fixed;background:#fff;"));
     }
 
+    #[test]
+    fn only_cells_with_text_are_marked_selectable() {
+        // A1 holds text; B1 falls inside the used range (B2 has a value) but is
+        // itself empty. The frame decides select-vs-pan from `xl-t`, so a cell with
+        // nothing in it must not claim to hold text.
+        let f = single(
+            "sel",
+            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>café</t></is></c></row>\
+             <row r=\"2\"><c r=\"B2\"><v>12</v></c></row></sheetData>",
+            &[],
+        );
+        let doc = f.render(None);
+        let cells = row_cells(&doc.html, 1);
+        assert_eq!(cells.len(), 2, "{}", doc.html);
+        assert!(cells[0].contains("xl-t"), "{}", cells[0]);
+        assert!(!cells[1].contains("xl-t"), "{}", cells[1]);
+        assert!(doc.html.contains("td.xl-t{cursor:text;}"));
+    }
+
     // ── styles ──────────────────────────────────────────────────────────────
 
     #[test]

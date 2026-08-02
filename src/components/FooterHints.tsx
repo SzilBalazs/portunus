@@ -162,7 +162,9 @@ export default memo(function FooterHints({ selected, quicklookOpen = false, clip
   const sel = useSyncExternalStore(selection.subscribe, selection.getSnapshot);
   const kb = useKeybinds();
   const chord: ChordOf = id => kb.builtinShortcuts.get(id)?.[0];
-  const hasSelection = sel.range != null;
+  // `external` covers a selection living in an office frame, which has no host
+  // range to inspect (see ExternalSelection in selection/controller.ts).
+  const hasSelection = sel.range != null || sel.external;
   const selectMode = sel.keyboard;
   // The action panel is reachable from any normal result state, so advertise
   // it on the bar - except where the keys mean something else (clipboard

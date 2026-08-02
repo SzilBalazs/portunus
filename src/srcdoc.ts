@@ -12,6 +12,8 @@
 // They share only `themeVarDecls` and `SANDBOX_SCROLLBAR_CSS`. The CSP, the base
 // stylesheet and the utility classes are per-consumer on purpose.
 
+import { officeSelectionScript, type FrameSelectionOpts } from './components/office/frameSelection';
+
 // ── shared ───────────────────────────────────────────────────────────────────
 
 /**
@@ -148,6 +150,24 @@ export interface OfficeSrcdocOpts {
 /** Wrapper the reader's zoom transform is applied to. */
 const OFFICE_ZOOM_ID = 'ozoom';
 
+/**
+ * What counts as selectable text per variant, and what chrome a drag may cross
+ * without selecting it.
+ *
+ * A sheet is narrow on purpose: `xl-t` is the renderer's mark for "this cell has
+ * something in it", so a press on a filled cell selects and a press on an empty
+ * one pans, and the row/column gutter is excluded outright - its numbers and
+ * letters are chrome, and letting a drag pick them up would put them in the copied
+ * TSV. The prose variants are provisional along with the rest of their scaffolding:
+ * a page is text throughout, so left-drag selects anywhere and panning is
+ * middle-drag only.
+ */
+const SELECTORS: Record<OfficeVariant, FrameSelectionOpts> = {
+  sheet: { text: '.xl-t', exclude: 'th' },
+  doc: { text: '.xl-doc,.od-doc', exclude: '' },
+  slide: { text: '.xl-doc,.od-slide', exclude: '' },
+};
+
 /** Reader zoom bounds. Below 0.4 a sheet is unreadable; above 3 nothing fits. */
 export const OFFICE_ZOOM_MIN = 0.4;
 export const OFFICE_ZOOM_MAX = 3;
@@ -189,7 +209,27 @@ const OFFICE_BASE_CSS =
   `color:#fff;font-weight:600;border-radius:2px}` +
   // Ctrl+H toggle: a class flip on <html>, so it costs no reload and no reflow
   // of the document's own styles.
-  `html.hl-off mark.preview-hl{background:none;color:inherit;font-weight:inherit}`;
+  `html.hl-off mark.preview-hl{background:none;color:inherit;font-weight:inherit}` +
+  // Text selection (frameSelection.ts). Mirrors .sel-overlay / .sel-rect /
+  // .sel-caret in App.css, including the multiply blend the host uses over white
+  // PDF pages and images - office paper is white for the same reason, and the
+  // blend is what keeps dark glyphs legible through the tint.
+  `.osel{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;` +
+  `pointer-events:none;z-index:1}` +
+  // Scale probe: a hidden box of known CSS size, measured to convert painted
+  // client rects into the coordinates the rects are written in. See scaleOf().
+  `.osel .osp{position:absolute;left:0;top:0;width:100px;height:100px;visibility:hidden}` +
+  `.osel .osr{position:absolute;background:color-mix(in srgb,var(--accent) 40%,transparent);` +
+  `mix-blend-mode:multiply;border-radius:2px}` +
+  `.osel .osc{position:absolute;width:2px;background:var(--accent);` +
+  `box-shadow:0 0 4px color-mix(in srgb,var(--accent) 50%,transparent);` +
+  `animation:osel-blink 1.1s steps(1) infinite}` +
+  `.osel .osc.mv{animation:none}` +
+  `@keyframes osel-blink{50%{opacity:0}}` +
+  // The engine keeps a live native selection as the caret's home (WebKit's goal
+  // column for vertical movement lives on it), but draws its own rects on top. So
+  // the native painting has to go, or every selection is tinted twice.
+  `::selection{background:transparent;color:inherit}`;
 
 /**
  * Per-variant scaffold.
@@ -233,7 +273,9 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
   const root =
     `:root{--office-zoom:${clampOfficeZoom(opts.zoom ?? 1)};zoom:var(--ui-zoom,1)}` +
     `body{background:var(--bg-preview)}` +
-    `#${OFFICE_ZOOM_ID}{transform-origin:0 0;transform:scale(var(--office-zoom,1))}`;
+    // `position:relative` is for the selection overlay, which parents itself here
+    // when the document has no inner scroller of its own.
+    `#${OFFICE_ZOOM_ID}{position:relative;transform-origin:0 0;transform:scale(var(--office-zoom,1))}`;
   switch (variant) {
     case 'sheet':
       // No `width: calc(100% / z)` here, and that omission is the difference
@@ -346,7 +388,12 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     // write is coalesced to one per frame. Z is updated synchronously (and echoed
     // straight away) so the accumulated factor and the host's badge never lag
     // behind the gesture - only the style write waits.
-    `var flush=function(){raf=0;root.style.setProperty('--office-zoom',String(Z));fit();};` +
+    // Declared ahead of `flush` because the zoom is one of the two things that move
+    // the selection popover's anchor without changing the selection (the other is
+    // scroll, which the engine watches itself).
+    `var SEL=null;` +
+    `var flush=function(){raf=0;root.style.setProperty('--office-zoom',String(Z));fit();` +
+    `if(SEL)SEL.moved();};` +
     `var setZoom=function(z,rid){` +
     `z=Math.round(Math.max(ZMIN,Math.min(ZMAX,z||1))*100)/100;` +
     `Z=z;if(!raf)raf=requestAnimationFrame(flush);` +
@@ -363,34 +410,28 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     `else if(k==='-'||k==='_')setZoom(Z/${OFFICE_ZOOM_STEP});` +
     `else if(k==='0')setZoom(1);else return;` +
     `e.preventDefault();});` +
-    // ── focus custody ──
-    // The launcher pins focus to the search input (App.tsx cancels every
-    // mousedown that would move it). A subframe breaks that: its mousedown is
-    // dispatched inside *this* document, so the host never sees it and the click
-    // silently focuses the frame, after which every keybind is dead. Cancel it
-    // here, with the same rule and for the same reason. WebKit does not dispatch
-    // mousedown for scrollbar hits, so dragging a scrollbar is unaffected.
+    // ── selection, pan, and focus custody ──
+    // All three belong to one mousedown decision, so frameSelection.ts owns the
+    // handlers outright and this passes it the two things it cannot reach: how to
+    // pan (which scroller moves is a per-variant question, see `hz`) and the body
+    // cursor.
     //
-    // Cancelling the default also frees the primary button up: with no caret and
-    // no native selection to place, a press-and-move is unambiguously a pan.
-    `var drag=null;` +
-    `var endDrag=function(){drag=null;document.body.style.cursor='';};` +
-    `document.addEventListener('mousedown',function(e){e.preventDefault();` +
-    `if(e.button!==0)return;drag={x:e.clientX,y:e.clientY};` +
-    `document.body.style.cursor='grabbing';},true);` +
-    `document.addEventListener('mousemove',function(e){` +
-    `if(!drag)return;` +
-    // Raw pointer deltas, not scaled by Z: the content moves with the cursor, so
-    // the grab point stays under it whatever the zoom.
-    `vp().scrollTop-=e.clientY-drag.y;hz().scrollLeft-=e.clientX-drag.x;` +
-    `drag.x=e.clientX;drag.y=e.clientY;});` +
-    `document.addEventListener('mouseup',endDrag);` +
-    // A release outside the frame never arrives as a mouseup here, and a drag that
-    // outlives the button is a cursor stuck on 'grabbing'.
-    `document.addEventListener('mouseleave',endDrag);` +
-    `window.addEventListener('blur',endDrag);` +
-    // …and if focus lands here anyway (a route preventDefault does not cover,
-    // e.g. the frame being tabbed into), hand it straight back.
+    // Focus custody rides along in its mousedown handler, and is why the engine
+    // hit-tests carets by hand instead of letting the browser select: the launcher
+    // pins focus to the search input (App.tsx cancels every mousedown that would
+    // move it), and a subframe breaks that, because its mousedown is dispatched
+    // inside *this* document where the host never sees it - after which every
+    // keybind is dead. WebKit does not dispatch mousedown for scrollbar hits, so
+    // dragging a scrollbar is unaffected.
+    //
+    // Pan deltas are raw pointer movement, not scaled by Z: the content moves with
+    // the cursor, so the grab point stays under it whatever the zoom.
+    `SEL=${officeSelectionScript(SELECTORS[variant])}(post,vp,hz,` +
+    `function(){return Z;},W,` +
+    `function(dx,dy){vp().scrollTop-=dy;hz().scrollLeft-=dx;},` +
+    `function(c){document.body.style.cursor=c;});` +
+    // …and if focus lands in the frame anyway (a route preventDefault does not
+    // cover, e.g. the frame being tabbed into), hand it straight back.
     `window.addEventListener('focus',function(){post({type:'refocus'});});` +
     `window.addEventListener('message',function(e){` +
     // e.origin is the literal string "null" for an opaque origin and so proves
@@ -407,10 +448,9 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     `case 'hl':root.classList.toggle('hl-off',!d.on);break;` +
     `case 'section':s.scrollTop=0;s.scrollLeft=0;break;` +
     `case 'zoom':setZoom(+d.factor||1,d.requestId);break;` +
+    // Everything else is the selection engine's (selEnter / selKey / selClear).
+    `default:SEL.msg(d);` +
     `}` +
-    `});` +
-    `document.addEventListener('selectionchange',function(){` +
-    `var sel=document.getSelection();post({type:'selection',text:sel?String(sel):''});` +
     `});` +
     // Body has to be sized before the match is centred: scrollIntoView against a
     // viewport whose scroll range is still the unscaled one lands in the wrong

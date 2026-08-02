@@ -46,6 +46,19 @@ export default function SelectionLayer({ actions }: { actions: PopoverActions })
     };
   }, [active, snap.range, snap.keyboard]);
 
+  // An adopted selection (an office frame) draws its own rects, in its own
+  // document - there is no root here to portal an overlay into. The popover is
+  // still ours, so the Copy / Search / entity actions are the same code and the
+  // same look wherever the text came from; its owner supplies the placement.
+  if (snap.external) {
+    const p = snap.externalPopover;
+    if (!p) return null;
+    return createPortal(
+      <SelectionPopover key={p.key} anchor={p.anchor} viewport={p.viewport} actions={actions} />,
+      p.host,
+    );
+  }
+
   if (!snap.root || !active) return null;
 
   // Measure relative to the overlay's own box (see file header).

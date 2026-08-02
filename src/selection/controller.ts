@@ -11,6 +11,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   CaretPos,
+  SelRect,
   allTextNodes,
   caretClientRect,
   caretFromPoint,
@@ -78,6 +79,42 @@ function wordBoundsAt(data: string, offset: number): [number, number] | null {
   return [s - 1, s];
 }
 
+/**
+ * A selection living outside the host DOM - today, inside a sandboxed office
+ * frame, which the caret hit-testing below cannot reach across an opaque origin.
+ *
+ * The frame runs its own copy of this engine and reports the result; adopting it
+ * here is what lets everything downstream stay unaware of the difference. The copy
+ * chord, the search-selection chord, the footer hints and the popover all go
+ * through `hasSelection` / `getText` / `isKeyboardMode` / `copy` / `clear`, and
+ * those answer for an adopted selection exactly as they do for a local one.
+ */
+export interface ExternalSelection {
+  text: string;
+  keyboard: boolean;
+  /** Tell the owner to drop it (the host cannot reach in and do it). */
+  clear(): void;
+  /** Where the popover goes, or null while dragging / in caret mode. The owner
+   *  supplies it because only it can map its coordinates into the host's. */
+  popover: ExternalPopover | null;
+}
+
+/** Placement for an external selection's popover, in `host`'s own coordinates. */
+export interface ExternalPopover {
+  /** Positioned element to portal into. */
+  host: HTMLElement;
+  /**
+   * Identity of the selection this placement belongs to. The popover remounts when
+   * it changes, which is what re-runs the entity classification (and its `calc_eval`
+   * for a maths selection) - so it must NOT be derived from the coordinates, which
+   * move on every scroll frame while the selection itself stands still.
+   */
+  key: string | number;
+  anchor: SelRect;
+  /** Visible box, for the flip/clamp - same space as `anchor`. */
+  viewport: { top: number; bottom: number; left: number; right: number };
+}
+
 export interface SelectionSnapshot {
   /** Active selectable root (portal target for the overlay), null = no selection. */
   root: HTMLElement | null;
@@ -90,6 +127,11 @@ export interface SelectionSnapshot {
   dragging: boolean;
   /** Keyboard select mode active. */
   keyboard: boolean;
+  /** The live selection belongs to another document (see ExternalSelection), so
+   *  there is no `root` to portal an overlay into and no `range` to measure. */
+  external: boolean;
+  /** Popover placement for an external selection; null otherwise. */
+  externalPopover: ExternalPopover | null;
 }
 
 const EMPTY: SelectionSnapshot = {
@@ -98,6 +140,8 @@ const EMPTY: SelectionSnapshot = {
   focus: null,
   dragging: false,
   keyboard: false,
+  external: false,
+  externalPopover: null,
 };
 
 const DRAG_THRESHOLD = 3;
@@ -110,6 +154,7 @@ class SelectionController {
   private anchor: CaretPos | null = null;
   private focus: CaretPos | null = null;
   private keyboard = false;
+  private ext: ExternalSelection | null = null;
 
   // Drag tracking.
   private pending: { root: HTMLElement; x: number; y: number } | null = null;
@@ -137,16 +182,40 @@ class SelectionController {
   getSnapshot = (): SelectionSnapshot => this.snapshot;
 
   hasSelection(): boolean {
+    if (this.ext) return this.ext.text !== "";
     return this.range() !== null;
   }
 
   isKeyboardMode(): boolean {
-    return this.keyboard;
+    return this.keyboard || (this.ext?.keyboard ?? false);
   }
 
   getText(): string {
+    if (this.ext) return this.ext.text;
     const r = this.range();
     return r ? extractText(r) : "";
+  }
+
+  // ── external selections ─────────────────────────────────────────────────────
+
+  /** Publish a selection owned by another document. Adopting one tears down any
+   *  local selection: only one can be live, exactly as two previews cannot both
+   *  hold one. Pass `null` to release (the owner has dropped it or gone away). */
+  adoptExternal(src: ExternalSelection | null): void {
+    if (src) {
+      if (this.root || this.keyboard) {
+        this.cancelDrag();
+        this.root = null;
+        this.anchor = null;
+        this.focus = null;
+        this.exitKeyboard();
+        this.disconnectObserver();
+      }
+      this.ext = src.text === "" && !src.keyboard ? null : src;
+    } else {
+      this.ext = null;
+    }
+    this.emit();
   }
 
   /** Copy the selection. wl-copy backend first (survives the launcher hiding
@@ -161,6 +230,15 @@ class SelectionController {
 
   clear(): void {
     this.cancelDrag();
+    if (this.ext) {
+      const ext = this.ext;
+      // Dropped before the callback, so the owner's answering report (which
+      // re-enters adoptExternal) finds nothing left to release.
+      this.ext = null;
+      ext.clear();
+      this.emit();
+      return;
+    }
     if (!this.root && !this.keyboard) return;
     this.root = null;
     this.anchor = null;
@@ -185,6 +263,8 @@ class SelectionController {
     }
     if (!caret) return false;
     this.cancelDrag();
+    // A local selection and an adopted one cannot both be live.
+    this.ext = null;
     this.root = root;
     this.focus = caret;
     this.anchor = null;
@@ -241,6 +321,7 @@ class SelectionController {
     const newAnchor = cap.anchor !== null ? this.caretAtLinear(root, cap.anchor) : null;
     this.cancelDrag();
     this.disconnectObserver();
+    this.ext = null;
     this.root = root;
     this.focus = newFocus;
     this.anchor = newAnchor;
@@ -643,6 +724,7 @@ class SelectionController {
   /** Install a programmatic (non-drag) selection and publish it. */
   private setSelection(root: HTMLElement, anchor: CaretPos, focus: CaretPos): void {
     this.cancelDrag();
+    this.ext = null;
     this.keyboard = false;
     this.root = root;
     this.anchor = anchor;
@@ -671,6 +753,7 @@ class SelectionController {
       }
       this.dragging = true;
       this.keyboard = false;
+      this.ext = null;
     }
     if (!this.root?.isConnected) {
       this.clear();
@@ -779,7 +862,19 @@ class SelectionController {
   private emit(): void {
     const root = this.root;
     const range = root ? this.range() : null;
-    if (!root || (!range && !this.keyboard)) {
+    if (this.ext) {
+      // No root and no range: SelectionLayer renders nothing (the frame draws its
+      // own rects) while the footer bar and the chords still see a live selection.
+      this.snapshot = {
+        root: null,
+        range: null,
+        focus: null,
+        dragging: false,
+        keyboard: this.ext.keyboard,
+        external: true,
+        externalPopover: this.ext.popover,
+      };
+    } else if (!root || (!range && !this.keyboard)) {
       this.snapshot = EMPTY;
     } else {
       // Publish the live range + focus; SelectionLayer measures rects from them
@@ -791,6 +886,8 @@ class SelectionController {
         focus: this.focus,
         dragging: this.dragging,
         keyboard: this.keyboard,
+        external: false,
+        externalPopover: null,
       };
     }
     this.listeners.forEach(l => l());

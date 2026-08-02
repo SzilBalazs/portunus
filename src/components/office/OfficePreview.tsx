@@ -7,7 +7,7 @@ import { hostFocus } from "../../focus";
 import { selection } from "../../selection/controller";
 import OfficeFrame from "./OfficeFrame";
 import type { OfficeFrameHandle } from "./OfficeFrame";
-import type { HostMessage } from "./protocol";
+import type { FrameSelState, HostMessage } from "./protocol";
 import { officeScroll } from "./scrollRegistry";
 import { useOfficeHtml } from "./useOfficeHtml";
 
@@ -50,9 +50,9 @@ const subscribeTheme = (cb: () => void) => {
   return () => void themeListeners.delete(cb);
 };
 
-/** Last text selected inside an office frame, for a future copy action. Same
- *  module-singleton idiom as `pdfView`; the host DOM cannot see into the frame. */
-export const officeSelection = { text: "" };
+/** Keys the frame's selection engine needs forwarded: it is never focused, so it
+ *  cannot receive them itself (see the focus-custody note in `officeBootstrap`). */
+const SEL_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
 
 // ── dispatcher ───────────────────────────────────────────────────────────────
 
@@ -161,6 +161,70 @@ function OfficeHtmlPreview({
   const send = useCallback((msg: HostMessage) => frameRef.current?.send(msg) ?? false, []);
   useEffect(() => officeScroll.register(send), [send]);
 
+  // ── selection ──────────────────────────────────────────────────────────────
+  // The frame runs its own copy of the selection engine (frameSelection.ts) and
+  // reports the result; the host adopts it so the copy and search-selection
+  // chords, the footer bar and the popover behave as they do for any other
+  // preview. See `adoptExternal` in selection/controller.ts.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const selRef = useRef<FrameSelState | null>(null);
+  // Bumped only when the selected *text* changes, so the popover survives the
+  // stream of anchor restatements a scroll produces (see ExternalPopover.key).
+  const selEpoch = useRef(0);
+
+  const onSel = useCallback((s: FrameSelState) => {
+    if (selRef.current?.text !== s.text) selEpoch.current++;
+    selRef.current = s;
+    // The popover is host DOM, so the frame's viewport coordinates have to be
+    // mapped into the wrap's. The scale is derived from the frame's painted box
+    // against the viewport width it reported, which stays right however the
+    // launcher's UI zoom and the reader's zoom happen to be plumbed.
+    let popover = null;
+    const wrap = wrapRef.current;
+    const fr = frameRef.current?.rect();
+    const show = s.text !== "" && !s.dragging && !s.keyboard && s.anchor;
+    if (show && wrap && fr && s.vw > 0 && s.vh > 0) {
+      const wr = wrap.getBoundingClientRect();
+      const kx = fr.width / s.vw;
+      const ky = fr.height / s.vh;
+      const [ax, ay, aw, ah] = s.anchor!;
+      popover = {
+        host: wrap,
+        key: selEpoch.current,
+        anchor: {
+          x: fr.left - wr.left + ax * kx,
+          y: fr.top - wr.top + ay * ky,
+          w: aw * kx,
+          h: ah * ky,
+        },
+        viewport: {
+          top: fr.top - wr.top,
+          bottom: fr.bottom - wr.top,
+          left: fr.left - wr.left,
+          right: fr.right - wr.left,
+        },
+      };
+    }
+    selection.adoptExternal({
+      text: s.text,
+      keyboard: s.keyboard,
+      clear: () => void send({ type: "selClear" }),
+      popover,
+    });
+  }, [send]);
+
+  // A new document has nothing selected in it, and the frame reports nothing on
+  // load - so the release has to happen here. Unmount included: the preview can
+  // go away with a selection live in it.
+  // Guarded on actually owning one, so the side panel unmounting under an open
+  // Quicklook cannot drop the overlay's selection.
+  const releaseSel = useCallback(() => {
+    const s = selRef.current;
+    selRef.current = null;
+    if (s && (s.text !== "" || s.keyboard)) selection.adoptExternal(null);
+  }, []);
+  useEffect(() => releaseSel, [releaseSel]);
+
   const setZoom = useCallback((z: number) => {
     const next = clampOfficeZoom(z);
     zoomRef.current = next;
@@ -195,10 +259,22 @@ function OfficeHtmlPreview({
   // what keeps this ref in step.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.metaKey || !document.hasFocus()) return;
+      if (e.altKey || e.metaKey || !document.hasFocus()) return;
       // Only the topmost mount acts: the side panel stays mounted underneath an
       // open Quicklook, and both install this listener.
       if (!officeScroll.isTop(send)) return;
+      // Keyboard caret mode owns the movement keys outright - including Ctrl+arrows,
+      // which mean word-move there, exactly as they do in the host engine, and so
+      // never reach the section flip below. Escape is deliberately not forwarded:
+      // App.tsx already dismisses a live selection before anything else, and for an
+      // adopted one that routes back into the frame as `selClear`.
+      if (selRef.current?.keyboard && SEL_KEYS.has(e.key)) {
+        send({ type: "selKey", key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey });
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (!e.ctrlKey) return;
       // In keyboard select mode Ctrl+arrows mean word-move, as they do for the PDF
       // reader's page flip.
       const navigable = count > 1 && !selection.isKeyboardMode();
@@ -266,7 +342,7 @@ function OfficeHtmlPreview({
 
   return (
     <div className="office-preview">
-      <div className="office-frame-wrap">
+      <div className="office-frame-wrap" ref={wrapRef}>
         {built && (
           <OfficeFrame
             ref={frameRef}
@@ -277,8 +353,9 @@ function OfficeHtmlPreview({
               paintedRef.current = true;
               setShowSkeleton(false);
               setReadyTick(t => t + 1);
+              releaseSel();
             }}
-            onSelection={text => { officeSelection.text = text; }}
+            onSel={onSel}
             onZoomed={z => {
               if (z === zoomRef.current) return;
               zoomRef.current = z;
