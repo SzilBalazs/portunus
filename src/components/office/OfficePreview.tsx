@@ -1,23 +1,77 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { OfficeShape } from "../../types";
-import { buildOfficeSrcdoc, clampOfficeZoom, randomToken, OFFICE_ZOOM_STEP } from "../../srcdoc";
+import { officeShape } from "../../utils";
+import {
+  buildOfficeSrcdoc,
+  clampOfficeZoom,
+  randomToken,
+  OFFICE_ZOOM_MIN,
+  OFFICE_ZOOM_STEP,
+} from "../../srcdoc";
 import { hostFocus } from "../../focus";
 import { selection } from "../../selection/controller";
 import { probeFrame } from "../../selection/geometry";
 import OfficeFrame from "./OfficeFrame";
 import type { OfficeFrameHandle } from "./OfficeFrame";
 import type { FrameSelState, HostMessage } from "./protocol";
+import { getOfficeDoc, officeKey, peekOfficeDoc } from "./officeCache";
 import { officeScroll } from "./scrollRegistry";
 import { useOfficeHtml } from "./useOfficeHtml";
 
 /**
- * Extensions the Rust HTML renderer handles today. Everything else keeps going
- * through the markdown / grid path (`fallback`); later backend stages move
- * `docx`, `pptx` and the ODF formats over by adding them here.
+ * Extensions the Rust HTML renderer handles today, per shape. Everything else
+ * keeps going through the markdown / grid path (`fallback`); later backend stages
+ * move `docx` and the ODF formats over by adding them here.
+ *
+ * Keyed by shape rather than a flat set because the two are independent: `ods` is
+ * a sheet the renderer cannot produce yet, and answering with the HTML frame would
+ * show its error card instead of the legacy grid.
  */
-const HTML_RENDERED_EXTS = new Set(["xlsx"]);
+const HTML_RENDERED: Record<OfficeShape, ReadonlySet<string>> = {
+  sheet: new Set(["xlsx"]),
+  slide: new Set(["pptx"]),
+  doc: new Set<string>(),
+};
+
+/**
+ * Whether this file gets the rendered-HTML preview rather than the markdown / grid
+ * fallback — i.e. whether it draws its own match marks, honours Ctrl+H, and flips
+ * sections with Ctrl+←/→.
+ *
+ * Exported because the footer hint bar and the action panel have to agree with the
+ * preview about which files those chords do something for, and `HTML_RENDERED` is
+ * the single fact they both need.
+ */
+export function officeRendersHtml(filename: string): boolean {
+  const shape = officeShape(filename);
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return shape !== null && HTML_RENDERED[shape].has(ext);
+}
+
+/** A fitted slide keeps a hair of letterbox rather than touching the panel edge. */
+const SLIDE_FIT = 0.98;
+
+/**
+ * Zoom floor for a document whose contain-fit factor is `fit`.
+ *
+ * A slide is a fixed canvas: fitting 1280px of it into a 340px side panel is a
+ * factor of ~0.26, well under the shared OFFICE_ZOOM_MIN, and a floor above the
+ * fitted zoom would make the default state unreachable. Half the fit leaves room
+ * to zoom out a step or two from there.
+ */
+function zoomFloor(fit: number): number {
+  return fit > 0 ? Math.min(OFFICE_ZOOM_MIN, fit * 0.5) : OFFICE_ZOOM_MIN;
+}
 
 /** How long a re-render may take before the skeleton covers the stale document. */
 const SKELETON_DELAY_MS = 140;
@@ -76,7 +130,7 @@ interface Props {
  */
 export default function OfficePreview({ path, filename, shape, terms, highlight, fallback }: Props) {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  if (shape !== "sheet" || !HTML_RENDERED_EXTS.has(ext)) return <>{fallback}</>;
+  if (!HTML_RENDERED[shape].has(ext)) return <>{fallback}</>;
   return <OfficeHtmlPreview path={path} filename={filename} terms={terms} highlight={highlight} />;
 }
 
@@ -102,13 +156,28 @@ function OfficeHtmlPreview({
   // effect, for the reason spelled out in useOfficeHtml: an effect commits the
   // new path paired with the old section first.
   const pathRef = useRef(path);
+  const userZoomed = useRef(false);
+  // Declared up here only because the path-change reset below runs during render
+  // and has to be able to clear them; the fit machinery itself lives further down.
+  const [fit, setFit] = useState(0);
+  const fitRef = useRef(0);
+  const naturalRef = useRef<[number, number] | null>(null);
   if (pathRef.current !== path) {
     pathRef.current = path;
     setSection(null);
+    // A new file opens at its own natural zoom - for a slide, its own fit, which
+    // is a property of *this* canvas and has to be measured again.
+    userZoomed.current = false;
+    fitRef.current = 0;
+    setFit(0);
   }
   const { doc, error, loading } = useOfficeHtml(path, section, terms);
+  // The renderer is the authority on what it produced, so the variant comes from
+  // the document rather than from the extension.
+  const variant = doc?.shape ?? "sheet";
 
   const frameRef = useRef<OfficeFrameHandle>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   // Read inside the srcdoc memo without joining its deps: the highlight state is
   // baked in for the first paint, then driven by message (see below) so Ctrl+H
   // never reloads the document.
@@ -129,9 +198,65 @@ function OfficeHtmlPreview({
   }, []);
   useEffect(() => () => window.clearTimeout(badgeTimer.current), []);
 
+  // ── slide fit ──────────────────────────────────────────────────────────────
+  // A slide has a fixed canvas, so "100%" is not a sensible opening zoom: a 1280px
+  // canvas in a 340px panel would show one corner of it. The host measures the wrap
+  // against the canvas and opens at the contain-fit factor instead, and loosens the
+  // frame's zoom floor to match (see zoomFloor).
+  //
+  // Held in state *and* a ref: the state drives the re-fit effect, the ref lets the
+  // srcdoc memo read the current value without joining its deps - a resize must
+  // never rebuild the document, which is a frame navigation.
+  naturalRef.current = variant === "slide" ? doc?.natural ?? null : null;
+  // A zero from state means "not measured yet", not "does not fit", so it must not
+  // clobber a measurement the srcdoc memo already took for this document.
+  if (fit > 0) fitRef.current = fit;
+  if (!naturalRef.current) fitRef.current = 0;
+
+  // Deliberately synchronous and callable during render: the *first* document of a
+  // deck has to be built with its fit already known. Waiting for the layout effect
+  // means the document is baked at 100%, paints one frame of a slide four times too
+  // big, and only then gets a `zoom` message - which is the flash.
+  const computeFit = useCallback(() => {
+    const el = wrapRef.current;
+    const nat = naturalRef.current;
+    if (!el || !nat || nat[0] <= 0 || nat[1] <= 0) return 0;
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (w <= 0 || h <= 0) return 0; // not laid out yet; the observer will call back
+    return Math.round(Math.min(w / nat[0], h / nat[1]) * SLIDE_FIT * 100) / 100;
+  }, []);
+
+  const measureFit = useCallback(() => {
+    const z = computeFit();
+    if (z <= 0 && naturalRef.current) return; // mid-layout, not "no fit"
+    setFit(prev => (Math.abs(prev - z) < 0.005 ? prev : z));
+  }, [computeFit]);
+
+  useLayoutEffect(() => {
+    measureFit();
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measureFit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureFit, doc]);
+
   const built = useMemo(() => {
     if (!doc) return null;
     const token = randomToken();
+    // Baked in rather than sent after `ready`: a slide flip that opened at 100% and
+    // then snapped to fit would flash the canvas at four times its size. Measured
+    // here rather than read from `fit` because the state is one render behind on the
+    // first document of a deck - the wrap is already laid out (the skeleton was in
+    // it), so the measurement is available now.
+    if (doc.shape === "slide" && fitRef.current <= 0) fitRef.current = computeFit();
+    const floor = zoomFloor(fitRef.current);
+    const open =
+      doc.shape === "slide" && !userZoomed.current && fitRef.current > 0
+        ? fitRef.current
+        : clampOfficeZoom(zoomRef.current, floor);
+    zoomRef.current = open;
     return {
       token,
       srcdoc: buildOfficeSrcdoc(doc.html, doc.shape, {
@@ -140,7 +265,8 @@ function OfficeHtmlPreview({
         hlOff: !hlRef.current,
         natural: doc.natural,
         page: doc.page,
-        zoom: zoomRef.current,
+        zoom: open,
+        zoomMin: floor,
       }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,7 +293,6 @@ function OfficeHtmlPreview({
   // reports the result; the host adopts it so the copy and search-selection
   // chords, the footer bar and the popover behave as they do for any other
   // preview. See `adoptExternal` in selection/controller.ts.
-  const wrapRef = useRef<HTMLDivElement>(null);
   const probeRef = useRef<HTMLElement>(null);
   const selRef = useRef<FrameSelState | null>(null);
   // Bumped only when the selected *text* changes, so the popover survives the
@@ -235,11 +360,39 @@ function OfficeHtmlPreview({
   useEffect(() => releaseSel, [releaseSel]);
 
   const setZoom = useCallback((z: number) => {
-    const next = clampOfficeZoom(z);
+    const next = clampOfficeZoom(z, zoomFloor(fitRef.current));
+    // From here on the zoom is the user's: a panel resize re-fits only until they
+    // take it over, or the reader would undo their zoom on every layout change.
+    userZoomed.current = true;
     zoomRef.current = next;
     send({ type: "zoom", factor: next });
     showZoomBadge(next);
   }, [send, showZoomBadge]);
+
+  // Ctrl+0. For a slide "actual size" is the fit, not 100%: nobody asks to see a
+  // sixth of a slide.
+  const resetZoom = useCallback(() => {
+    userZoomed.current = false;
+    const z = fitRef.current > 0 ? fitRef.current : 1;
+    zoomRef.current = z;
+    send({ type: "zoom", factor: z });
+    showZoomBadge(z);
+  }, [send, showZoomBadge]);
+
+  // Re-fit on a resize (and on a buffer that came up carrying a stale baked zoom),
+  // until the user takes the zoom over. Silent: an automatic fit is not a gesture,
+  // so it raises no badge.
+  //
+  // `zoomRef` is only advanced once the message actually went out: before the first
+  // `ready` there is no frame to receive it, and recording the zoom anyway would
+  // make this effect a no-op on the retry that `readyTick` triggers - which is how
+  // the reader ends up stuck at the baked zoom.
+  useEffect(() => {
+    if (fit <= 0 || userZoomed.current) return;
+    if (Math.abs(zoomRef.current - fit) < 0.005) return;
+    if (!send({ type: "zoom", factor: fit })) return;
+    zoomRef.current = fit;
+  }, [fit, readyTick, send]);
 
   // ── sections ───────────────────────────────────────────────────────────────
   // The section list comes from the rendered document, so while a switch is in
@@ -289,7 +442,7 @@ function OfficeHtmlPreview({
       const navigable = count > 1 && !selection.isKeyboardMode();
       if (e.key === "=" || e.key === "+") setZoom(zoomRef.current * OFFICE_ZOOM_STEP);
       else if (e.key === "-" || e.key === "_") setZoom(zoomRef.current / OFFICE_ZOOM_STEP);
-      else if (e.key === "0") setZoom(1);
+      else if (e.key === "0") resetZoom();
       else if (!navigable) return;
       else if (e.key === "ArrowLeft") gotoSection(active - 1);
       else if (e.key === "ArrowRight") gotoSection(active + 1);
@@ -301,7 +454,28 @@ function OfficeHtmlPreview({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [send, setZoom, gotoSection, active, count]);
+  }, [send, setZoom, resetZoom, gotoSection, active, count]);
+
+  // Slides are stepped through one at a time, so the neighbours are almost always
+  // what comes next; render them ahead so Ctrl+→ flips without a skeleton. Bounded
+  // to ±1, cache-deduped and best-effort. Sheets are deliberately left out: a
+  // workbook's sheets are picked rather than stepped, and each can be megabytes.
+  const termsRef = useRef(terms);
+  termsRef.current = terms;
+  const termsKey = terms.join(" ");
+  useEffect(() => {
+    if (variant !== "slide" || count < 2) return;
+    const t = setTimeout(() => {
+      for (const i of [active + 1, active - 1]) {
+        if (i < 0 || i >= count) continue;
+        if (peekOfficeDoc(officeKey(path, i, termsRef.current))) continue;
+        void getOfficeDoc(path, i, termsRef.current).catch(() => {});
+      }
+    }, 200);
+    return () => clearTimeout(t);
+    // termsKey stands in for the terms array (stable string identity).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant, path, active, count, termsKey]);
 
   // Skeleton is an *overlay* on the still-painting stale frame, never a reason to
   // blank it (`srcDoc=null` would be two extra navigations, i.e. two flashes).
@@ -378,9 +552,17 @@ function OfficeHtmlPreview({
         {zoomLabel !== null && (
           <div className="office-zoom-badge">{Math.round(zoomLabel * 100)}%</div>
         )}
+        {/* A deck gets a position readout rather than a tab strip: slides are
+            stepped through, and thirty tabs of "Slide 17" would say nothing. The
+            rendered slide's own title is the tooltip. */}
+        {variant === "slide" && count > 1 && (
+          <span className="office-slide-label" title={sections[active] || undefined}>
+            {active + 1} / {count}
+          </span>
+        )}
         {showSkeleton && <div className="office-skeleton" />}
       </div>
-      {count > 1 && (
+      {variant !== "slide" && count > 1 && (
         // Below the document, where a spreadsheet's sheet tabs live. `tabIndex={-1}`
         // and no focus outline because the launcher keeps focus on the search input
         // - cancelling the mousedown does not cancel the click, so these still work.

@@ -69,11 +69,31 @@ pub fn css_font_stack(name: &str) -> String {
     // it does not get dignified with a metric substitution — just the quoted
     // remnant and a generic fallback.
     if !dirty {
-        if let Some(stack) = alias(&clean.to_lowercase()) {
+        let lower = clean.to_lowercase();
+        if let Some(stack) = alias(&lower) {
             return stack.to_string();
+        }
+        // An unknown *condensed* family falls back to a narrow one rather than to
+        // the default sans. The width difference is not cosmetic: a line authored
+        // to fit a fixed slide box in a condensed face wraps in a normal-width
+        // substitute, and the extra line is what pushes text out of its box.
+        if is_condensed(&lower) {
+            return format!(
+                "\"{}\", \"Liberation Sans Narrow\", \"Arial Narrow\", \"DejaVu Sans Condensed\", sans-serif",
+                clean
+            );
         }
     }
     format!("\"{}\", sans-serif", clean)
+}
+
+/// Whether a family name says "narrow" in the way font vendors spell it. Matched
+/// on word boundaries so a family that merely contains the letters (say
+/// "Concorde") is not squeezed.
+fn is_condensed(lower: &str) -> bool {
+    lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| {
+        matches!(w, "cond" | "condensed" | "narrow" | "cn")
+    })
 }
 
 fn alias(lower: &str) -> Option<&'static str> {
@@ -374,6 +394,21 @@ mod tests {
         // Newlines and backslash escapes are rejected the same way.
         assert_eq!(css_font_stack("Widget\\27 ;color:red"), "\"Widget\", sans-serif");
         assert_eq!(css_font_stack("Widget\n</style>"), "\"Widget\", sans-serif");
+    }
+
+    #[test]
+    fn unknown_condensed_families_fall_back_to_a_narrow_stack() {
+        // A condensed face substituted by a normal-width one wraps lines the
+        // author's fixed-size slide box was never sized for.
+        let out = css_font_stack("Trade Gothic Next Cond");
+        assert!(out.starts_with("\"Trade Gothic Next Cond\""), "{out}");
+        assert!(out.contains("Liberation Sans Narrow"), "{out}");
+        assert!(css_font_stack("Helvetica Neue Condensed").contains("Narrow"));
+        assert!(css_font_stack("Widget Narrow").contains("Narrow"));
+        // A known family keeps its metric clone, and a name that merely contains
+        // the letters is not squeezed.
+        assert_eq!(css_font_stack("Calibri"), "Carlito, Lato, sans-serif");
+        assert_eq!(css_font_stack("Concorde"), "\"Concorde\", sans-serif");
     }
 
     #[test]

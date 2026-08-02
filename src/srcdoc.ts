@@ -145,10 +145,28 @@ export interface OfficeSrcdocOpts {
    * switch or a new file does not visibly snap from 100% back to the user's zoom.
    */
   zoom?: number;
+  /**
+   * Lower zoom bound for this document. A slide is a fixed canvas that has to be
+   * *shrunk* to fit a 340px side panel - often past OFFICE_ZOOM_MIN - so the floor
+   * is per-document rather than a constant. Omitted means OFFICE_ZOOM_MIN.
+   */
+  zoomMin?: number;
 }
 
 /** Wrapper the reader's zoom transform is applied to. */
 const OFFICE_ZOOM_ID = 'ozoom';
+
+/** Hidden viewport-sized probe the slide scaffold measures itself against. */
+const OFFICE_VP_ID = 'ovp';
+
+/**
+ * Slack left when padding the slide wrapper out to the viewport. A wrapper sized
+ * to the exact viewport makes body exactly the viewport too, which is the size at
+ * which a scrollbar's appearance shrinks the client box, shrinks the wrapper,
+ * removes the scrollbar, and starts again - so the fitted state deliberately sits
+ * one scrollbar short of the edge.
+ */
+const OFFICE_VP_SLACK = 12;
 
 /**
  * What counts as selectable text per variant, and what chrome a drag may cross
@@ -158,14 +176,16 @@ const OFFICE_ZOOM_ID = 'ozoom';
  * something in it", so a press on a filled cell selects and a press on an empty
  * one pans, and the row/column gutter is excluded outright - its numbers and
  * letters are chrome, and letting a drag pick them up would put them in the copied
- * TSV. The prose variants are provisional along with the rest of their scaffolding:
- * a page is text throughout, so left-drag selects anywhere and panning is
- * middle-drag only.
+ * TSV. A slide is the same idea one level up: `pp-tb` is a shape's text box and
+ * `pp-tbl` its table, so a press inside either selects and a press on the canvas,
+ * a picture or a placeholder pans. The doc variant is provisional along with the
+ * rest of its scaffolding: a page is text throughout, so left-drag selects
+ * anywhere and panning is middle-drag only.
  */
 const SELECTORS: Record<OfficeVariant, FrameSelectionOpts> = {
   sheet: { text: '.xl-t', exclude: 'th' },
   doc: { text: '.xl-doc,.od-doc', exclude: '' },
-  slide: { text: '.xl-doc,.od-slide', exclude: '' },
+  slide: { text: '.pp-tb,.pp-tbl', exclude: '' },
 };
 
 /** Reader zoom bounds. Below 0.4 a sheet is unreadable; above 3 nothing fits. */
@@ -173,9 +193,10 @@ export const OFFICE_ZOOM_MIN = 0.4;
 export const OFFICE_ZOOM_MAX = 3;
 export const OFFICE_ZOOM_STEP = 1.1;
 
-export function clampOfficeZoom(z: number): number {
+export function clampOfficeZoom(z: number, min = OFFICE_ZOOM_MIN): number {
   if (!Number.isFinite(z)) return 1;
-  return Math.round(Math.min(OFFICE_ZOOM_MAX, Math.max(OFFICE_ZOOM_MIN, z)) * 100) / 100;
+  const lo = Number.isFinite(min) && min > 0 ? Math.min(min, OFFICE_ZOOM_MIN) : OFFICE_ZOOM_MIN;
+  return Math.round(Math.min(OFFICE_ZOOM_MAX, Math.max(lo, z)) * 100) / 100;
 }
 
 /**
@@ -271,7 +292,7 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
   // that propagation gets murky. An ordinary block in between keeps the viewport
   // an ordinary scroller.
   const root =
-    `:root{--office-zoom:${clampOfficeZoom(opts.zoom ?? 1)};zoom:var(--ui-zoom,1)}` +
+    `:root{--office-zoom:${clampOfficeZoom(opts.zoom ?? 1, opts.zoomMin)};zoom:var(--ui-zoom,1)}` +
     `body{background:var(--bg-preview)}` +
     // `position:relative` is for the selection overlay, which parents itself here
     // when the document has no inner scroller of its own.
@@ -305,17 +326,32 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
         `.xl-doc,.od-doc{width:${w}px;max-width:100%;padding:${py}px ${px}px;background:#fff;color:#000}`
       );
     }
-    case 'slide': {
-      // Provisional until the pptx renderer lands (backend stage 3): a fixed
-      // canvas, centred in the (pre-scale) viewport.
-      const [w, h] = opts.natural ?? [960, 540];
+    case 'slide':
+      // A slide is a fixed canvas (the renderer emits its px size inline), so the
+      // wrapper is content-sized exactly as the sheet's is - and for the same
+      // reason: no zoom-dependent width, so a wheel tick relays out nothing.
+      //
+      // Centring and the scroll range both come from the wrapper's *minimum* size,
+      // which the bootstrap sets from the measured viewport (see `pad`): CSS cannot
+      // express "at least the viewport, in pre-scale px" without a percentage of
+      // body, and body is sized from this wrapper, which would be circular.
       return (
         root +
         `#${OFFICE_ZOOM_ID}{display:flex;align-items:center;justify-content:center;` +
-        `width:calc(100% / var(--office-zoom,1));min-height:calc(100vh / var(--office-zoom,1))}` +
-        `.xl-doc,.od-slide{position:relative;width:${w}px;height:${h}px;background:#fff;color:#000}`
+        `width:max-content}` +
+        // The canvas keeps its authored size whatever the flex box does around it,
+        // and sits on the chrome backdrop as a sheet of paper.
+        `.pp-doc{flex:none;box-shadow:0 1px 10px rgba(0,0,0,.35)}` +
+        // Everything outside a text box pans, so the whole canvas offers the grab
+        // cursor and the renderer's `cursor:text` rules take it back where text is.
+        `body{cursor:grab}` +
+        // Viewport probe: `position:fixed` with 100% of each axis *is* the viewport
+        // by construction, so its layout box is the viewport expressed in the same
+        // pre-scale px the wrapper is laid out in - whatever the root's own `zoom`
+        // does to the mapping between those px and painted ones.
+        `#${OFFICE_VP_ID}{position:fixed;left:0;top:0;width:100%;height:100%;` +
+        `visibility:hidden;pointer-events:none}`
       );
-    }
   }
 }
 
@@ -337,11 +373,17 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
 function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string {
   const token = JSON.stringify(opts.token);
   const mark = JSON.stringify(opts.bestMarkId ?? null);
-  const zoom = clampOfficeZoom(opts.zoom ?? 1);
-  // Only the sheet wrapper is laid out independently of body's width, so only it
-  // can have body sized from it without going circular. The other two variants
-  // still carry the zoom-dependent width and size themselves.
-  const fits = variant === 'sheet';
+  const zoom = clampOfficeZoom(opts.zoom ?? 1, opts.zoomMin);
+  const zmin = clampOfficeZoom(opts.zoomMin ?? OFFICE_ZOOM_MIN, opts.zoomMin);
+  // The sheet and slide wrappers are laid out independently of body's width, so
+  // body can be sized from them without going circular. The doc variant still
+  // carries a zoom-dependent width and sizes itself.
+  const fits = variant !== 'doc';
+  // ...and only the slide wrapper needs padding out to the viewport first: a sheet
+  // is scrolled from its top-left corner, a slide is centred in the letterbox.
+  const pads = variant === 'slide';
+  // Only slides carry fixed-size text boxes that PowerPoint shrinks text to fit.
+  const autofits = variant === 'slide';
   return (
     `(function(){` +
     `var T=${token};` +
@@ -373,14 +415,24 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     // host mirrors the value so it survives a document swap, so every change is
     // echoed back as `zoomed`.
     `var W=document.getElementById(${JSON.stringify(OFFICE_ZOOM_ID)});` +
-    `var Z=${zoom},ZMIN=${OFFICE_ZOOM_MIN},ZMAX=${OFFICE_ZOOM_MAX},raf=0;` +
+    `var VP=document.getElementById(${JSON.stringify(OFFICE_VP_ID)});` +
+    `var Z=${zoom},ZMIN=${zmin},ZMAX=${OFFICE_ZOOM_MAX},raf=0;` +
     // A transform does not affect layout, so body keeps the *unscaled* box of its
     // content and the viewport happily scrolls over the empty difference. Sizing
     // body to the scaled wrapper is what removes that phantom region.
     // offsetWidth/offsetHeight are the untransformed layout box, which is exactly
     // the number to multiply.
+    // A slide is padded out to the viewport first (in pre-scale px, hence the
+    // division by Z), which is what centres a fitted canvas and what gives a
+    // zoomed-in one a scroll range to pan through.
     (fits
-      ? `var fit=function(){if(!W)return;var b=document.body.style;` +
+      ? `var fit=function(){if(!W)return;` +
+        (pads
+          ? `if(VP){var s=${OFFICE_VP_SLACK};` +
+            `W.style.minWidth=Math.max(0,Math.floor((VP.offsetWidth-s)/Z))+'px';` +
+            `W.style.minHeight=Math.max(0,Math.floor((VP.offsetHeight-s)/Z))+'px';}`
+          : '') +
+        `var b=document.body.style;` +
         `b.width=Math.ceil(W.offsetWidth*Z)+'px';` +
         `b.height=Math.ceil(W.offsetHeight*Z)+'px';};`
       : `var fit=function(){};`) +
@@ -398,6 +450,11 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     `z=Math.round(Math.max(ZMIN,Math.min(ZMAX,z||1))*100)/100;` +
     `Z=z;if(!raf)raf=requestAnimationFrame(flush);` +
     `post({type:'zoomed',factor:z,requestId:rid});};` +
+    // The letterbox is measured, so it has to be re-measured when the frame is
+    // resized (panel width drag, Quicklook opening over the side preview).
+    (pads
+      ? `window.addEventListener('resize',function(){if(!raf)raf=requestAnimationFrame(flush);});`
+      : '') +
     `window.addEventListener('wheel',function(e){` +
     `if(!e.ctrlKey)return;e.preventDefault();` +
     `setZoom(Z*(e.deltaY<0?${OFFICE_ZOOM_STEP}:1/${OFFICE_ZOOM_STEP}));` +
@@ -452,6 +509,28 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     `default:SEL.msg(d);` +
     `}` +
     `});` +
+    // ── autofit ──
+    // PowerPoint's "shrink text on overflow" bakes a font scale computed against
+    // *its* fonts. The preview substitutes families it does not have, so the same
+    // text needs a different scale - and measurement only exists here. Every size
+    // inside such a box is written as `calc(… * var(--af,1))`, so one custom
+    // property re-fits the whole box.
+    //
+    // The inner block is what gets measured: a bottom-anchored box overflows
+    // upwards, where scrollHeight cannot see it.
+    (autofits
+      ? `var afit=function(){` +
+        `var xs=document.querySelectorAll('.pp-tb[data-af]');` +
+        `for(var i=0;i<xs.length;i++){var e=xs[i],c=e.firstElementChild;` +
+        `if(!c)continue;var h=e.clientHeight;if(!h)continue;` +
+        `if(c.offsetHeight<=h+1)continue;` +
+        // Largest scale that still fits, to within a few percent. PowerPoint's own
+        // floor is a quarter of the authored size.
+        `var lo=0.25,hi=1;for(var k=0;k<6;k++){var m=(lo+hi)/2;` +
+        `e.style.setProperty('--af',String(m));` +
+        `if(c.offsetHeight<=h+1)lo=m;else hi=m;}` +
+        `e.style.setProperty('--af',String(lo));}};afit();`
+      : '') +
     // Body has to be sized before the match is centred: scrollIntoView against a
     // viewport whose scroll range is still the unscaled one lands in the wrong
     // place.
@@ -503,7 +582,9 @@ export function buildOfficeSrcdoc(
     OFFICE_BASE_CSS +
     officeVariantCss(variant, opts) +
     SANDBOX_SCROLLBAR_CSS +
-    `</style></head><body><div id="${OFFICE_ZOOM_ID}">${html}</div>` +
+    `</style></head><body>` +
+    (variant === 'slide' ? `<i id="${OFFICE_VP_ID}"></i>` : '') +
+    `<div id="${OFFICE_ZOOM_ID}">${html}</div>` +
     `<script nonce="${nonce}">${officeBootstrap(variant, opts)}</script>` +
     `</body></html>`
   );

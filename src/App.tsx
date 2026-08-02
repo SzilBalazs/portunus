@@ -14,7 +14,8 @@ import ExtensionFormModal from "./components/ExtensionFormModal";
 import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
-import { isPreviewable, officeShape, onAccentColor } from "./utils";
+import { isPreviewable, onAccentColor } from "./utils";
+import { officeRendersHtml } from "./components/office/OfficePreview";
 import { officeScroll } from "./components/office/scrollRegistry";
 import { hostFocus } from "./focus";
 import { ColoredIconsContext } from "./coloredIcons";
@@ -1446,11 +1447,11 @@ export default function App() {
             run: () => toggleQuickLook(result),
           });
         }
-        // The previews that render their own marks and honour Ctrl+H: PDF, and the
-        // rendered spreadsheet. The other office shapes still use the markdown
-        // fallback, so offering the toggle there would do nothing.
+        // The previews that render their own marks and honour Ctrl+H: PDF, and any
+        // office file the HTML renderer covers. The formats still on the markdown
+        // fallback do neither, so offering the toggle there would do nothing.
         const canHighlight =
-          result.title.toLowerCase().endsWith(".pdf") || officeShape(result.title) === "sheet";
+          result.title.toLowerCase().endsWith(".pdf") || officeRendersHtml(result.title);
         if (inContents && canHighlight) {
           acts.push({
             id: "app:highlight",

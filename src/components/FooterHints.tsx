@@ -2,6 +2,7 @@ import { memo, ReactNode, useSyncExternalStore } from "react";
 import { SearchResult } from "../types";
 import { EnterIcon, DeleteIcon } from "../icons";
 import { isPreviewable, officeShape } from "../utils";
+import { officeRendersHtml } from "./office/OfficePreview";
 import { selection } from "../selection/controller";
 import { shortcutParts, type Shortcut } from "../actions/shortcut";
 import { effectiveActionShortcut, useKeybinds } from "../keybinds/store";
@@ -45,6 +46,7 @@ const Hint = ({ s, children }: { s: Shortcut | undefined; children: ReactNode })
 const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
 const SheetNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> sheet</span>;
+const SlideNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> slide</span>;
 
 function hints(
   selected: SearchResult | null,
@@ -79,10 +81,13 @@ function hints(
     <span className="hint"><kbd>Esc</kbd> dismiss</span>
   </>;
   const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
-  // Spreadsheets flip sheets with the same chord a PDF flips pages, and their
-  // rendered preview honours the same highlight toggle. Only sheets, because the
-  // other office shapes still go through the markdown fallback, which does neither.
-  const isSheet = (selected && officeShape(selected.title) === "sheet") ?? false;
+  // An office file whose preview is *rendered* flips sections with the same chord a
+  // PDF flips pages and honours the same highlight toggle; one still on the markdown
+  // fallback does neither, so the gate is the renderer's coverage, not the shape.
+  const rendered = (selected && officeRendersHtml(selected.title)) ?? false;
+  const officeKind = selected ? officeShape(selected.title) : null;
+  const isSheet = rendered && officeKind === "sheet";
+  const isSlide = rendered && officeKind === "slide";
   const Peek = () =>
     selected && isPreviewable(selected)
       ? <Hint s={chord("builtin:quick-look")}>peek</Hint>
@@ -94,7 +99,8 @@ function hints(
       <Open />
       {isPdf && <PdfPageNav />}
       {isSheet && <SheetNav />}
-      {(isPdf || isSheet) && (
+      {isSlide && <SlideNav />}
+      {(isPdf || rendered) && (
         <Hint s={chord("builtin:highlight")}>highlight {pdfHighlight ? "off" : "on"}</Hint>
       )}
       <Peek />
@@ -136,6 +142,7 @@ function hints(
         )}
         {isPdf && <PdfPageNav />}
         {isSheet && <SheetNav />}
+        {isSlide && <SlideNav />}
         <Peek />
       </>
     );

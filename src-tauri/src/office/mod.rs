@@ -11,6 +11,7 @@ mod media;
 mod numfmt;
 mod opc;
 mod pkg;
+mod pptx;
 mod text;
 mod xlsx;
 mod xml;
@@ -75,9 +76,10 @@ pub fn render(path: &str, section: Option<u32>, terms: &[String]) -> Result<Offi
         .to_ascii_lowercase();
     match ext.as_str() {
         "xlsx" => xlsx::render(path, section, terms),
+        "pptx" => pptx::render(path, section, terms),
         // Later stages fill these in; until then the frontend keeps using the
         // markdown/grid path for them.
-        "docx" | "pptx" | "odt" | "ods" | "odp" => {
+        "docx" | "odt" | "ods" | "odp" => {
             Err(format!("office: no HTML renderer yet for {ext}"))
         }
         other => Err(format!("unsupported office extension: {other}")),

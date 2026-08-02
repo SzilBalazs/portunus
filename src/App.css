@@ -2589,6 +2589,23 @@ mark.preview-hl {
   to { opacity: 1; }
 }
 
+/* Slide position readout. Same corner, same typography as .pdf-page-label - a deck
+   and a PDF are read the same way, so they should say where you are the same way. */
+.office-slide-label {
+  position: absolute;
+  z-index: 2;
+  bottom: 8px;
+  right: 8px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font: 600 10px/1.4 "JetBrains Mono", "Fira Code", monospace;
+  color: #fff;
+  background: color-mix(in srgb, var(--bg-deep) 94%, #000);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
 /* Renderer failure, shown instead of an empty frame. */
 .office-msg {
   padding: 10px 12px;
