@@ -1,4 +1,5 @@
 import { extensionByKind } from "./extensions/meta";
+import type { OfficeShape } from "./types";
 
 export function shortenPath(path: string): string {
   return path.replace(/^\/home\/[^/]+/, "~").replace(/^\/root/, "~");
@@ -151,15 +152,24 @@ export function isCsv(filename: string): boolean {
   return ext === "csv" || ext === "tsv";
 }
 
-const OFFICE_TEXT_EXTS = new Set(["docx", "pptx", "odt", "odp"]);
-const SPREADSHEET_EXTS = new Set(["xlsx", "ods"]);
+// Office families, split by the shape the renderer produces rather than by
+// container format: the OPC and ODF members of each pair preview identically.
+// Mirrors `office::Shape` and `office::OFFICE_EXTENSIONS`.
+const OFFICE_DOC_EXTS = new Set(["docx", "odt"]);
+const OFFICE_SHEET_EXTS = new Set(["xlsx", "ods"]);
+const OFFICE_SLIDE_EXTS = new Set(["pptx", "odp"]);
 
-export function isOfficeText(filename: string): boolean {
-  return OFFICE_TEXT_EXTS.has(filename.split(".").pop()?.toLowerCase() ?? "");
+/** The shape an office file previews as, or null when it isn't an office file. */
+export function officeShape(filename: string): OfficeShape | null {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (OFFICE_DOC_EXTS.has(ext)) return "doc";
+  if (OFFICE_SHEET_EXTS.has(ext)) return "sheet";
+  if (OFFICE_SLIDE_EXTS.has(ext)) return "slide";
+  return null;
 }
 
-export function isSpreadsheet(filename: string): boolean {
-  return SPREADSHEET_EXTS.has(filename.split(".").pop()?.toLowerCase() ?? "");
+export function isOffice(filename: string): boolean {
+  return officeShape(filename) !== null;
 }
 
 const TEXT_PREVIEW_LANGS: Record<string, string> = {
@@ -208,8 +218,7 @@ export function isFilePreviewable(filename: string): boolean {
     isImagePreviewable(filename) ||
     isSvg(filename) ||
     isCsv(filename) ||
-    isOfficeText(filename) ||
-    isSpreadsheet(filename) ||
+    isOffice(filename) ||
     textPreviewLang(filename) !== null
   );
 }
@@ -235,6 +244,10 @@ export function fileKind(title: string, isFolder: boolean): string {
     rs: "Rust Source", py: "Python Source", go: "Go Source",
     docx: "Word Document", xlsx: "Excel Spreadsheet",
     pptx: "PowerPoint Presentation",
+    // Legacy binary formats: no preview renderer, but the No-preview card should
+    // still name the document rather than shrug and say "File".
+    doc: "Word Document", xls: "Excel Spreadsheet",
+    ppt: "PowerPoint Presentation", rtf: "Rich Text Document",
     odt: "OpenDocument Text", ods: "OpenDocument Spreadsheet",
     odp: "OpenDocument Presentation",
     java: "Java Source", rb: "Ruby Source",

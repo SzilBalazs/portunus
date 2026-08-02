@@ -591,6 +591,36 @@ export interface PdfTextLayerData {
   lines: PdfTextLine[];
 }
 
+/** Which renderer produced an office document, and therefore how the frontend
+ *  presents it: a flowing page column, a scrolling sheet, or a fixed-geometry
+ *  slide. Mirrors the backend `office::Shape`. */
+export type OfficeShape = "doc" | "sheet" | "slide";
+
+/** One rendered section of an office document, from `render_office_doc`
+ *  (preview.rs). Mirrors `office::OfficeDoc` (serialized camelCase). */
+export interface OfficeDoc {
+  /** Body fragment, escaped by construction, carrying its own `<style>` block.
+   *  Self-contained apart from the theme custom properties the host injects. */
+  html: string;
+  shape: OfficeShape;
+  /** Sheet names / slide titles. Length is the section count. */
+  sections: string[];
+  /** Which section `html` covers. */
+  section: number;
+  /** Slide canvas size in CSS px at 96dpi; null for docs and sheets. */
+  natural: [number, number] | null;
+  /** docx page width and padding in CSS px; null for sheets and slides. */
+  page: [number, number, number] | null;
+  /** Id of the mark to scroll to. Marks carry stable `pm-N` ids and the best
+   *  cluster is only known once the section is rendered, so the winner is
+   *  reported here rather than as a fixed id in the markup. */
+  bestMarkId: string | null;
+  truncated: boolean;
+  /** Degradation notes for a muted footer - charts without a raster fallback,
+   *  clipped rows, missing parts. Surfaced rather than hidden. */
+  notes: string[];
+}
+
 /** One OCR'd word, from `image_text_layer` / `clipboard_image_text_layer`.
  *  Original case; group by `line` to reconstruct reading order. */
 export interface OcrWord {

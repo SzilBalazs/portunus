@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { getPreview } from '../providers/registry';
 import { selection } from '../selection/controller';
+import { officeScroll } from './office/scrollRegistry';
 import type { SearchResult } from '../types';
 
 interface Props {
@@ -39,7 +40,15 @@ export default function QuickLook({ result, onLaunch, onClose, terms, highlight 
       // Don't hijack Ctrl/Meta/Alt combos - those drive PDF page-flip & zoom.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const vp = innerRef.current?.querySelector<HTMLElement>(VIEWPORT_SELECTOR);
-      if (!vp) return;
+      // No DOM scroller: an office preview's viewport lives inside its sandboxed
+      // iframe, so the key is forwarded to it over postMessage instead.
+      if (!vp) {
+        if (officeScroll.handleKey(e.key, e.shiftKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
       const line = 80;
       const pageStep = vp.clientHeight * 0.9;
       switch (e.key) {

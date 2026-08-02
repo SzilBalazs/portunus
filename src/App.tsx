@@ -15,6 +15,7 @@ import { deriveContentTerms } from "./highlight";
 import FooterHints from "./components/FooterHints";
 import { pdfView } from "./components/FilePreview";
 import { isPreviewable, onAccentColor } from "./utils";
+import { hostFocus } from "./focus";
 import { ColoredIconsContext } from "./coloredIcons";
 import { dispatchLaunch, dispatchShortcut, collectResultActions, isCopyKey, type LaunchContext } from "./providers/registry";
 import { getKeybinds, matchesBuiltin, useKeybinds } from "./keybinds/store";
@@ -432,6 +433,16 @@ export default function App() {
     if (!showOnboardingRef.current) inputRef.current?.focus();
     invoke<Config>("get_config").then(cfg => { setContentEnabled(cfg.content.enabled); setColoredIcons(cfg.files.colored_icons); configRef.current = cfg; });
   });
+
+  // Sandboxed office previews cannot be covered by the card's mousedown rule
+  // below (their events never reach this document), so they ask for focus back
+  // over postMessage. Quicklook runs with the input deliberately blurred - there
+  // the goal is only to get focus *out* of the frame so window keybinds fire.
+  useEffect(() =>
+    hostFocus.register(() => {
+      if (quicklookRef.current) (document.activeElement as HTMLElement | null)?.blur();
+      else inputRef.current?.focus();
+    }), []);
 
   useEffect(() => {
     const win = getCurrentWindow();

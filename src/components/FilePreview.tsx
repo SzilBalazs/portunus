@@ -2,7 +2,8 @@ import { useState, useEffect, useLayoutEffect, useRef, useContext, useCallback, 
 import type { ReactNode, MouseEvent as ReactMouseEvent, CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchResult } from "../types";
-import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, isOfficeText, isSpreadsheet, fileCategory, folderSummary } from "../utils";
+import { formatBytes, formatDate, fileKind, textPreviewLang, isImagePreviewable, isSvg, isCsv, officeShape, fileCategory, folderSummary } from "../utils";
+import OfficePreview from "./office/OfficePreview";
 import { ColoredIconsContext } from "../coloredIcons";
 import { cellMatches, tokenize, keyOf, ensureKeys, loadQueryKeys, warmHighlightKeys } from "../highlight";
 import MarkdownView from "./MarkdownView";
@@ -1344,15 +1345,14 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], hi
   const isImage = isImagePreviewable(result.title);
   const isSvgFile = isSvg(result.title);
   const isCsvFile = isCsv(result.title);
-  const isOfficeTextFile = isOfficeText(result.title);
-  const isSpreadsheetFile = isSpreadsheet(result.title);
-  const textLang = !isImage && !isSvgFile && !isCsvFile && !isOfficeTextFile && !isSpreadsheetFile
+  const office = officeShape(result.title);
+  const textLang = !isImage && !isSvgFile && !isCsvFile && !office
     ? textPreviewLang(result.title)
     : null;
   // No renderer matched (archive, video, audio, unknown binary). Show an explicit
   // placeholder instead of a blank body. Quicklook is gated off these upstream, so
   // this only ever appears in the side panel.
-  const hasPreview = isPdf || isImage || isSvgFile || isCsvFile || isOfficeTextFile || isSpreadsheetFile || !!textLang;
+  const hasPreview = isPdf || isImage || isSvgFile || isCsvFile || !!office || !!textLang;
 
   const [copied, setCopied] = useState(false);
 
@@ -1448,8 +1448,23 @@ export default function FilePreview({ result, onLaunch, onReveal, terms = [], hi
       {isImage && <ImagePreview path={filePath} terms={terms} highlight={highlight} quicklook={quicklook} />}
       {isSvgFile && <SvgPreview path={filePath} />}
       {isCsvFile && <CsvPreview path={filePath} delim={result.title.toLowerCase().endsWith(".tsv") ? "\t" : ","} terms={terms} />}
-      {isOfficeTextFile && <OfficeTextPreview path={filePath} terms={terms} />}
-      {isSpreadsheetFile && <SpreadsheetPreview path={filePath} terms={terms} />}
+      {office && (
+        <OfficePreview
+          path={filePath}
+          filename={result.title}
+          shape={office}
+          terms={terms}
+          highlight={highlight}
+          // Formats the HTML renderer doesn't cover yet keep the markdown / grid
+          // path. OfficePreview owns the choice; the elements are built here only
+          // because these two renderers live in this file.
+          fallback={
+            office === "sheet"
+              ? <SpreadsheetPreview path={filePath} terms={terms} />
+              : <OfficeTextPreview path={filePath} terms={terms} />
+          }
+        />
+      )}
       {textLang === "markdown" && <MarkdownPreview path={filePath} terms={terms} />}
       {textLang && textLang !== "markdown" && <TextPreview path={filePath} lang={textLang} terms={terms} />}
       {!hasPreview && (

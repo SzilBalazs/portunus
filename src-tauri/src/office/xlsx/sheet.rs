@@ -57,11 +57,19 @@ const BASE_CSS: &str = "\
 .xl-lines td{border:1px solid #dcdcdc;}
 td.xl-num{text-align:right;}
 td.xl-bool,td.xl-err{text-align:center;}
-th.xl-ch,th.xl-rh,th.xl-corner{background:var(--bg-deep,#ececec);color:var(--fg-mute,#6b6b6b);\
-border:1px solid var(--line,#d0d0d0);font-weight:400;font-size:11px;padding:0 4px;\
-text-align:center;position:relative;}
+th.xl-ch,th.xl-rh,th.xl-corner{background:var(--bg-card,#ececec);color:var(--fg,#1f1f1f);\
+border:1px solid var(--border,#c0c0c0);font-weight:500;font-size:11px;letter-spacing:.02em;\
+padding:0 4px;text-align:center;vertical-align:middle;position:relative;}
 th.xl-rh{text-align:right;}
 th.xl-corner{width:46px;}
+/* The gutter's colour is painted once behind the whole strip, on the column and
+   the header row group, not only on the cells. Cell boxes are scaled by the
+   reader's zoom, so adjacent edges land on fractional device pixels and the seam
+   between two rows shows whatever is underneath — which for the row gutter is the
+   sheet's paper white, i.e. a flickering hairline that moves as you zoom. Table
+   paint order is table, columns, row groups, rows, cells, so a column background
+   sits directly under the cells with no seams of its own. */
+col.xl-cg,.xl-sheet thead{background:var(--bg-card,#ececec);}
 .xl-drawings{position:absolute;left:46px;top:21px;width:0;height:0;pointer-events:none;}
 .xl-dw{position:absolute;}
 .xl-ph{position:absolute;display:flex;align-items:center;justify-content:center;\
@@ -278,23 +286,83 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 continue;
             }
             implied_row = r;
-            if r > super::MAX_ROWS {
-                rows_clipped = true;
-                continue;
-            }
-            last_row = last_row.max(r);
-            row_nodes[r as usize] = Some(rn);
+            // The extent is taken from cells that *show* something, not from cells
+            // that merely exist. Excel writes the used range out in full, so a
+            // one-page form routinely carries a thousand rows of `<c s="4"/>` with
+            // no value and an xf that paints nothing — 30k cells of nothing, which
+            // dominates both the payload and every relayout the preview does.
+            let mut inked = false;
             let mut implied_col: usize = 0;
             for cn in elems(rn).filter(|n| n.tag_name().name() == "c") {
                 let Some(c) = cell_col(cn, implied_col) else {
                     continue;
                 };
                 implied_col = c + 1;
+                if !cell_inked(cn, styles) {
+                    continue;
+                }
+                inked = true;
                 if c >= super::MAX_COLS {
                     cols_clipped = true;
                     continue;
                 }
                 ncols = ncols.max(c + 1);
+            }
+            if !inked {
+                continue;
+            }
+            if r > super::MAX_ROWS {
+                rows_clipped = true;
+                continue;
+            }
+            last_row = last_row.max(r);
+        }
+    }
+
+    // A merge anchored inside the inked extent drags the rest of its range in with
+    // it: half a merged title is worse than a few blank tracks. Runs before the
+    // node lookup below, which needs the final extent.
+    //
+    // Bounded, because whole-column and whole-row merges are common (`A1:B1048576`
+    // is how "merge across a column" is stored) and one of those would undo the
+    // whole trim. A merge that reaches further than this is not a title block; it
+    // gets clamped to the extent by `parse_merge` instead, as before.
+    const MERGE_EXTEND_ROWS: u32 = 64;
+    const MERGE_EXTEND_COLS: usize = 32;
+    if last_row > 0 && ncols > 0 {
+        if let Some(list) = child(root, "mergeCells") {
+            for m in elems(list)
+                .filter(|n| n.tag_name().name() == "mergeCell")
+                .take(MAX_MERGES)
+            {
+                let Some((r0, c0, r1, c1)) = merge_bounds(xml::attr_local(m, "ref").unwrap_or(""))
+                else {
+                    continue;
+                };
+                if r0 <= last_row && r1 > last_row && r1 - last_row <= MERGE_EXTEND_ROWS {
+                    rows_clipped |= r1 > super::MAX_ROWS;
+                    last_row = r1.min(super::MAX_ROWS);
+                }
+                if c0 < ncols && c1 >= ncols && c1 + 1 - ncols <= MERGE_EXTEND_COLS {
+                    cols_clipped |= c1 >= super::MAX_COLS;
+                    ncols = (c1 + 1).min(super::MAX_COLS);
+                }
+            }
+        }
+    }
+
+    // Node lookup, once the extent is settled. A blank row inside the extent still
+    // needs its node — its height and `customFormat` apply either way.
+    if let Some(data) = child(root, "sheetData") {
+        let mut implied_row: u32 = 0;
+        for rn in elems(data).filter(|n| n.tag_name().name() == "row") {
+            let r = u32_attr(rn, "r").unwrap_or(implied_row + 1);
+            if r == 0 || r > super::MAX_ROW_NUMBER {
+                continue;
+            }
+            implied_row = r;
+            if r <= last_row {
+                row_nodes[r as usize] = Some(rn);
             }
         }
     }
@@ -810,12 +878,17 @@ fn clip(mut s: String) -> String {
 /// `A1:C3` → a merge clamped to the emitted grid. A range that runs past the
 /// emitted bounds (a merge down a whole column) is clipped rather than dropped, so
 /// its visible part still spans.
-fn parse_merge(r: &str, nrows: u32, ncols: usize) -> Option<Merge> {
+/// A merge's normalized `(r0, c0, r1, c1)`, unclamped — rows 1-based, columns
+/// 0-based. Used before the sheet's extent is known, to let a merge extend it.
+fn merge_bounds(r: &str) -> Option<(u32, usize, u32, usize)> {
     let (a, b) = r.split_once(':')?;
     let (r0, c0) = parse_ref(a)?;
     let (r1, c1) = parse_ref(b)?;
-    let (r0, r1) = (r0.min(r1), r0.max(r1));
-    let (c0, c1) = (c0.min(c1), c0.max(c1));
+    Some((r0.min(r1), c0.min(c1), r0.max(r1), c0.max(c1)))
+}
+
+fn parse_merge(r: &str, nrows: u32, ncols: usize) -> Option<Merge> {
+    let (r0, c0, r1, c1) = merge_bounds(r)?;
     if r0 > nrows || c0 >= ncols {
         return None;
     }
@@ -833,6 +906,32 @@ fn parse_ref(s: &str) -> Option<(u32, usize)> {
     let col = col_letter_to_index(letters)?;
     let row: u32 = digits.trim_start_matches('$').parse().ok()?;
     (row > 0).then_some((row, col))
+}
+
+/// Whether a cell contributes to the sheet's visible extent.
+///
+/// A cell counts when it carries a value (`<v>`, `<is>`, a formula) or when its
+/// xf paints something an empty cell would still show — a fill or a border. It
+/// does *not* count for a font, an alignment or a number format: those are
+/// invisible without text, and Excel stamps them across the whole used range.
+fn cell_inked(cell: roxmltree::Node<'_, '_>, styles: &super::styles::Styles) -> bool {
+    for n in elems(cell) {
+        match n.tag_name().name() {
+            "v" | "f" => return true,
+            // An `<is>` holding only empty runs is still an empty cell.
+            "is" => {
+                if n.descendants().any(|d| {
+                    d.text()
+                        .map(|t| !t.trim().is_empty())
+                        .unwrap_or(false)
+                }) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    u32_attr(cell, "s").is_some_and(|s| styles.paints(s))
 }
 
 /// A cell's 0-based column from its `r` attribute, falling back to the position

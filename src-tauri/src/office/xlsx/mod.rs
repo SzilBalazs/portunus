@@ -21,10 +21,14 @@ use styles::Styles;
 pub const MAX_ROW_NUMBER: u32 = 1_048_576;
 const MAX_COL_NUMBER: usize = 16_384;
 
-/// Emission bounds. Generous but finite: past these the grid is clipped and a
-/// note says so. The `Writer`'s byte cap is the real backstop — these only keep
-/// the row/column loops from walking a million-row sheet.
-pub const MAX_ROWS: u32 = 2000;
+/// Emission bounds. Past these the grid is clipped and a note says so. The
+/// `Writer`'s byte cap is the real backstop — these keep the row/column loops
+/// from walking a million-row sheet, and keep the DOM small enough that the
+/// reader's zoom stays smooth (every cell is a box the frame has to lay out).
+///
+/// The row cap is deliberately tight. A preview is for recognising a file, not
+/// reading it; the honest note beats a grid nobody can scroll.
+pub const MAX_ROWS: u32 = 200;
 pub const MAX_COLS: usize = 200;
 
 /// Byte cap for the emitted body HTML.
@@ -1050,7 +1054,7 @@ mod tests {
         assert!(doc.html.contains(">AA</th>"));
         assert!(doc.html.contains(">1</th>"));
         // Chrome uses theme tokens; the sheet surface stays paper white.
-        assert!(doc.html.contains("var(--bg-deep"), "{}", doc.html);
+        assert!(doc.html.contains("var(--bg-card"), "{}", doc.html);
         assert!(doc.html.contains(".xl-sheet{border-collapse:collapse;table-layout:fixed;background:#fff;"));
     }
 
@@ -1146,6 +1150,47 @@ mod tests {
     }
 
     // ── bounds and robustness ───────────────────────────────────────────────
+
+    #[test]
+    fn trailing_styled_but_blank_rows_are_not_part_of_the_extent() {
+        // What Excel actually writes: the used range padded out with cells that
+        // carry a style and nothing else. Here xf 1 is a font-only style (paints
+        // nothing on an empty cell) and xf 2 has a border (paints, so it counts).
+        let mut body = String::from(
+            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>café</t></is></c></row>\
+             <row r=\"2\"><c r=\"A2\" s=\"2\"/></row>",
+        );
+        for r in 3..=900 {
+            body.push_str(&format!("<row r=\"{r}\"><c r=\"A{r}\" s=\"1\"/></row>"));
+        }
+        body.push_str("</sheetData>");
+        let f = single(
+            "blank-tail",
+            &body,
+            &[(
+                "xl/styles.xml",
+                styles_xml(
+                    "<borders count=\"2\"><border/>\
+                     <border><left style=\"thin\"/></border></borders>\
+                     <cellXfs count=\"3\"><xf/>\
+                     <xf fontId=\"0\" applyFont=\"1\"/>\
+                     <xf borderId=\"1\" applyBorder=\"1\"/></cellXfs>",
+                ),
+            )],
+        );
+        let doc = f.render(None);
+        // Row 2 paints a border, so it is in. Rows 3+ show nothing and are not.
+        assert!(doc.html.contains(">2</th>"), "{}", doc.html);
+        assert!(!doc.html.contains(">3</th>"), "{}", doc.html);
+        // 898 rows of nothing is not "clipped" - there was nothing there to clip.
+        assert!(!doc.truncated);
+        assert!(
+            !doc.notes.iter().any(|n| n.contains("rows are shown")),
+            "{:?}",
+            doc.notes
+        );
+        balanced(&doc.html);
+    }
 
     #[test]
     fn clipping_past_the_row_cap_sets_truncated_and_notes_it() {

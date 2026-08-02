@@ -2481,6 +2481,127 @@ mark.preview-hl {
   background: transparent;
 }
 
+/* ---------- office preview (rendered docx / xlsx / pptx) ---------- */
+
+/* Sits next to .ext-preview-html deliberately: both host a sandboxed iframe and
+   both need the same two WebKitGTK workarounds, described in full above -
+   clip-path on the wrapper (overflow:hidden alone does not clip a composited
+   iframe layer) and zoom cancellation on the frame (a zoomed frame gets a layout
+   viewport that disagrees with its painted box). Change one, check the other. */
+
+.office-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.office-frame-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  /* `round` so the clip follows the radius - a plain inset(0) would square the
+     frame's corners back off. */
+  clip-path: inset(0 round 4px);
+}
+
+.office-frame {
+  zoom: var(--ui-zoom-inv, 1);
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Same 1px of clipped slack as .ext-preview-html, for the same rounding reason. */
+  width: calc(100% + 1px);
+  height: calc(100% + 1px);
+  display: block;
+  border: none;
+  background: var(--bg-preview);
+}
+
+/* The buffer being navigated. `visibility`, never `display:none`: display:none
+   takes the frame out of layout, which lets WebKit defer the very load we are
+   trying to get out of the way, and leaves it a zero-sized viewport so the
+   in-frame scrollIntoView centres nothing. */
+.office-frame.is-back {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Overlay on the still-painting previous document, so a re-render never blanks.
+   Same shimmer as .pdf-skeleton. */
+.office-skeleton {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg-skeleton);
+  transition: opacity 0.22s ease;
+}
+
+.office-skeleton::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: pdf-shimmer 1.6s linear infinite;
+}
+
+/* Transient zoom readout. Sits above both buffers and outside the frame's
+   clip-path, so it stays crisp regardless of the document's own zoom. */
+.office-zoom-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  animation: office-badge-in 0.12s ease;
+}
+
+@keyframes office-badge-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Renderer failure, shown instead of an empty frame. */
+.office-msg {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--fg-mute);
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+
+/* Honest degradation notes (clipped rows, charts without a raster fallback,
+   hidden sheets) - a muted footer under the document, not a hidden detail. */
+.office-notes {
+  flex: none;
+  padding: 6px 2px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.office-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-mute);
+}
+
 /* ---------- action panel (Alt+Enter) ---------- */
 
 /* Rises from the footer it's anchored to: rows scroll on top, the filter

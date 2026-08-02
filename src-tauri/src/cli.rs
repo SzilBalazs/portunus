@@ -17,6 +17,46 @@ pub fn handle_cli_args() -> bool {
         std::process::exit(crate::native_host::run(&args[2..]));
     }
 
+    // `portunus render-office <file> [section]` - dump the rendered HTML for one
+    // office document to stdout. Development aid: unit tests cannot judge visual
+    // fidelity, so this is how a renderer gets compared against LibreOffice
+    // (`portunus render-office x.xlsx > /tmp/x.html` and open it in a browser).
+    if args.get(1).map(String::as_str) == Some("render-office") {
+        let Some(path) = args.get(2) else {
+            eprintln!("usage: portunus render-office <file> [section]");
+            std::process::exit(2);
+        };
+        let section = args.get(3).and_then(|s| s.parse::<u32>().ok());
+        match crate::office::render(path, section, &[]) {
+            Ok(doc) => {
+                // Notes and section list go to stderr so stdout stays pipeable
+                // straight into a file.
+                eprintln!(
+                    "shape={:?} section={}/{} truncated={}",
+                    doc.shape,
+                    doc.section,
+                    doc.sections.len(),
+                    doc.truncated
+                );
+                for (i, name) in doc.sections.iter().enumerate() {
+                    eprintln!("  [{i}] {name}");
+                }
+                for n in &doc.notes {
+                    eprintln!("note: {n}");
+                }
+                println!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>{}</title>{}",
+                    path, doc.html
+                );
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("portunus: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // --reload-extension <name>: targeted hot-reload of one extension.
     if let Some(pos) = args.iter().position(|a| a == "--reload-extension") {
         let Some(name) = args.get(pos + 1) else {
@@ -65,7 +105,10 @@ SUBCOMMANDS:
   native-host <name>  Relay browser native messaging to the extension message
                       bus (normally spawned by the browser, not by hand)
   native-host install <name> --ff-ext-id <id@domain>
-                      Write the wrapper script + Firefox manifest for <name>", env!("CARGO_PKG_VERSION"));
+                      Write the wrapper script + Firefox manifest for <name>
+  render-office <file> [section]
+                      Print an office document's rendered preview HTML to stdout
+                      (development aid for comparing fidelity against LibreOffice)", env!("CARGO_PKG_VERSION"));
         return true;
     }
 

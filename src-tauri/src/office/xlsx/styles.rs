@@ -42,6 +42,12 @@ pub struct CellStyle {
     /// transforms do not apply to `display:table-cell`, so rotated text needs one
     /// wrapper element — and only rotated cells pay for it.
     pub inner: String,
+    /// The xf puts visible ink on an *empty* cell: a fill or a border. Fonts and
+    /// alignment do not count, because they show nothing without text.
+    ///
+    /// This is what separates a sheet's real extent from the trailing block of
+    /// styled-but-blank cells Excel writes out to the bottom of the used range.
+    pub paints: bool,
 }
 
 impl CellStyle {
@@ -50,6 +56,7 @@ impl CellStyle {
             fmt: Rc::new(Format::parse("General")),
             css: String::new(),
             inner: String::new(),
+            paints: false,
         }
     }
 }
@@ -114,14 +121,17 @@ impl Styles {
                 let num_id = pick(r.apply_numfmt, r.num_id, inherit.and_then(|b| b.num_id));
 
                 let mut css = String::new();
+                let mut paints = false;
                 if let Some(d) = font_id.and_then(|i| fonts.get(i as usize)) {
                     css.push_str(d);
                 }
                 if let Some(d) = fill_id.and_then(|i| fills.get(i as usize)) {
                     css.push_str(d);
+                    paints |= !d.is_empty();
                 }
                 if let Some(d) = border_id.and_then(|i| borders.get(i as usize)) {
                     css.push_str(d);
+                    paints |= !d.is_empty();
                 }
                 // Alignment inherits as a whole block, not per attribute: the
                 // element is either present on the cellXf or taken from the named
@@ -148,7 +158,12 @@ impl Styles {
                     .entry(id)
                     .or_insert_with(|| Rc::new(format_for(id, &numfmts)))
                     .clone();
-                xfs.push(CellStyle { fmt, css, inner });
+                xfs.push(CellStyle {
+                    fmt,
+                    css,
+                    inner,
+                    paints,
+                });
             }
         }
 
@@ -170,6 +185,12 @@ impl Styles {
             .get(id as usize)
             .map(|x| !x.css.is_empty() || !x.inner.is_empty())
             .unwrap_or(false)
+    }
+
+    /// True when an *empty* cell of this style still shows something (see
+    /// `CellStyle::paints`).
+    pub fn paints(&self, id: u32) -> bool {
+        self.xfs.get(id as usize).map(|x| x.paints).unwrap_or(false)
     }
 
     /// True when cells of this style need the inner `<span>` wrapper.
