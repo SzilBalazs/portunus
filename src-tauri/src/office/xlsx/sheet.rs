@@ -115,6 +115,11 @@ struct Merge {
     r1: u32,
     c0: usize,
     c1: usize,
+    /// Where the span is actually emitted: the first *visible* row and column of
+    /// the range. Usually `(r0, c0)`, but a merge can be anchored in a hidden row
+    /// or column, and that cell is never emitted — see `resolve_anchors`.
+    ar: u32,
+    ac: usize,
 }
 
 /// Deduplicated numeric class values (`width`, `height`): most columns of a sheet
@@ -426,6 +431,10 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
         row_top[nrows as usize + 1] = y;
     }
     let grid = Grid { col_left, row_top };
+    resolve_anchors(&mut merges, &row_hidden, &cols);
+    // Whether any merge's span moved off its stored top-left cell. Almost never
+    // true, and the value-borrowing pass below is skipped entirely when it is not.
+    let displaced = merges.iter().any(|m| m.ar != m.r0 || m.ac != m.c0);
 
     // Frozen panes are the only reason to switch the table to separate borders
     // (`position:sticky` does nothing under `border-collapse:collapse`), and that
@@ -527,7 +536,7 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 continue;
             }
             for c in m.c0..=m.c1.min(ncols - 1) {
-                if r == m.r0 && c == m.c0 {
+                if r == m.ar && c == m.ac {
                     // Spans count *emitted* tracks only: hidden rows/columns are
                     // not in the table, so counting them would push the rest of the
                     // row sideways.
@@ -561,6 +570,32 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 implied_col = c + 1;
                 if c < ncols {
                     cells[c] = Some(cn);
+                }
+            }
+        }
+
+        // A merged range stores its value in the top-left cell only. When that cell
+        // is in a hidden row or column the span is emitted somewhere else, so the
+        // visible anchor borrows the value — otherwise a merged title above a hidden
+        // row, or spanning a hidden helper column, renders blank.
+        if displaced {
+            for m in &merges {
+                if r != m.ar || (m.ar == m.r0 && m.ac == m.c0) || cells[m.ac].is_some() {
+                    continue;
+                }
+                let Some(src) = row_nodes[m.r0 as usize] else {
+                    continue;
+                };
+                let mut implied = 0usize;
+                for cn in elems(src).filter(|n| n.tag_name().name() == "c") {
+                    let Some(c) = cell_col(cn, implied) else {
+                        continue;
+                    };
+                    implied = c + 1;
+                    if c == m.c0 {
+                        cells[m.ac] = Some(cn);
+                        break;
+                    }
                 }
             }
         }
@@ -897,7 +932,31 @@ fn parse_merge(r: &str, nrows: u32, ncols: usize) -> Option<Merge> {
         r1: r1.min(nrows),
         c0,
         c1: c1.min(ncols.saturating_sub(1)),
+        // Provisional; `resolve_anchors` corrects these once visibility is known.
+        ar: r0,
+        ac: c0,
     })
+}
+
+/// Move each merge's anchor to the first visible row/column of its range, and drop
+/// merges with nothing visible at all.
+///
+/// The row loop emits a span at the anchor and suppresses every other cell of the
+/// range. If the stored anchor sits in a hidden row or column that cell is never
+/// emitted, so the row is one `<td>` short of its headers and everything after it
+/// slides left — for a merge hidden at the top of a sheet, that is the whole grid.
+fn resolve_anchors(merges: &mut Vec<Merge>, row_hidden: &[bool], cols: &[ColInfo]) {
+    merges.retain_mut(|m| {
+        let Some(ar) = (m.r0..=m.r1).find(|r| !row_hidden[*r as usize]) else {
+            return false;
+        };
+        let Some(ac) = (m.c0..=m.c1).find(|c| !cols[*c].hidden) else {
+            return false;
+        };
+        m.ar = ar;
+        m.ac = ac;
+        true
+    });
 }
 
 fn parse_ref(s: &str) -> Option<(u32, usize)> {

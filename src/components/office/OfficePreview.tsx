@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { OfficeShape } from "../../types";
 import { buildOfficeSrcdoc, clampOfficeZoom, randomToken, OFFICE_ZOOM_STEP } from "../../srcdoc";
 import { hostFocus } from "../../focus";
+import { selection } from "../../selection/controller";
 import OfficeFrame from "./OfficeFrame";
 import type { OfficeFrameHandle } from "./OfficeFrame";
 import type { HostMessage } from "./protocol";
@@ -90,9 +91,20 @@ function OfficeHtmlPreview({
   highlight,
 }: Omit<Props, "fallback" | "shape">) {
   const epoch = useSyncExternalStore(subscribeTheme, () => themeEpoch);
-  // Section switching has no UI yet: `null` means "whichever sheet the backend
-  // considers the default" (first non-hidden). A sheet tab bar sets this.
-  const [section] = useState<number | null>(null);
+  // `null` means "whichever section the backend considers the default" (for a
+  // workbook, the first non-hidden sheet). The tab strip sets it to an index.
+  const [section, setSection] = useState<number | null>(null);
+  // Reset on a file change. PreviewPanel keys by `result.kind` and every file
+  // result shares one kind, so this component instance is reused across results -
+  // without this, sheet 3 of the last workbook would be requested for the next
+  // file, which very likely does not have one. Assigned during render, not in an
+  // effect, for the reason spelled out in useOfficeHtml: an effect commits the
+  // new path paired with the old section first.
+  const pathRef = useRef(path);
+  if (pathRef.current !== path) {
+    pathRef.current = path;
+    setSection(null);
+  }
   const { doc, error, loading } = useOfficeHtml(path, section, terms);
 
   const frameRef = useRef<OfficeFrameHandle>(null);
@@ -156,24 +168,55 @@ function OfficeHtmlPreview({
     showZoomBadge(next);
   }, [send, showZoomBadge]);
 
-  // Ctrl +/-/0. The frame runs the same handler for the case where focus slipped
-  // inside it, and ctrl+wheel is handled there outright (the wheel event is
-  // delivered to the frame, never to the host) - both report back through
-  // `onZoomed`, which is what keeps this ref in step.
+  // ── sections ───────────────────────────────────────────────────────────────
+  // The section list comes from the rendered document, so while a switch is in
+  // flight it is the *previous* document's - which is the same file, so the strip
+  // stays correct. The highlight follows the requested index rather than
+  // `doc.section`, so a click responds on the click and not one render later.
+  const sections = doc?.sections ?? [];
+  const count = sections.length;
+  const active = Math.min(section ?? doc?.section ?? 0, Math.max(count - 1, 0));
+  const gotoSection = useCallback(
+    (i: number) => setSection(Math.min(Math.max(i, 0), Math.max(count - 1, 0))),
+    [count],
+  );
+
+  // Keep the selected tab reachable in a workbook with more sheets than fit.
+  const activeTabRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
+
+  // Ctrl +/-/0 zooms; Ctrl+arrows and Ctrl+Home/End move between sections.
+  //
+  // The frame runs the same zoom handler for the case where focus slipped inside
+  // it, and ctrl+wheel is handled there outright (the wheel event is delivered to
+  // the frame, never to the host) - both report back through `onZoomed`, which is
+  // what keeps this ref in step.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.altKey || e.metaKey || !document.hasFocus()) return;
+      // Only the topmost mount acts: the side panel stays mounted underneath an
+      // open Quicklook, and both install this listener.
       if (!officeScroll.isTop(send)) return;
+      // In keyboard select mode Ctrl+arrows mean word-move, as they do for the PDF
+      // reader's page flip.
+      const navigable = count > 1 && !selection.isKeyboardMode();
       if (e.key === "=" || e.key === "+") setZoom(zoomRef.current * OFFICE_ZOOM_STEP);
       else if (e.key === "-" || e.key === "_") setZoom(zoomRef.current / OFFICE_ZOOM_STEP);
       else if (e.key === "0") setZoom(1);
+      else if (!navigable) return;
+      else if (e.key === "ArrowLeft") gotoSection(active - 1);
+      else if (e.key === "ArrowRight") gotoSection(active + 1);
+      else if (e.key === "Home") gotoSection(0);
+      else if (e.key === "End") gotoSection(count - 1);
       else return;
       e.preventDefault();
       e.stopPropagation();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [send, setZoom]);
+  }, [send, setZoom, gotoSection, active, count]);
 
   // Skeleton is an *overlay* on the still-painting stale frame, never a reason to
   // blank it (`srcDoc=null` would be two extra navigations, i.e. two flashes).
@@ -249,6 +292,27 @@ function OfficeHtmlPreview({
         )}
         {showSkeleton && <div className="office-skeleton" />}
       </div>
+      {count > 1 && (
+        // Below the document, where a spreadsheet's sheet tabs live. `tabIndex={-1}`
+        // and no focus outline because the launcher keeps focus on the search input
+        // - cancelling the mousedown does not cancel the click, so these still work.
+        <div className="office-tabs" role="tablist" aria-label="Sheets">
+          {sections.map((name, i) => (
+            <button
+              key={i}
+              ref={i === active ? activeTabRef : undefined}
+              className={`office-tab${i === active ? " is-active" : ""}`}
+              role="tab"
+              aria-selected={i === active}
+              tabIndex={-1}
+              title={name || `Sheet ${i + 1}`}
+              onClick={() => gotoSection(i)}
+            >
+              {name || `Sheet ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
       {footer}
     </div>
   );

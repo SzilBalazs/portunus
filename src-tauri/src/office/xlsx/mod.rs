@@ -1011,6 +1011,59 @@ mod tests {
     }
 
     #[test]
+    fn a_merge_anchored_in_a_hidden_track_keeps_the_row_aligned() {
+        // The anchor of A1:C2 is A1, which is in a hidden column *and* a hidden row.
+        // Both the span and its value have to move to the first visible cell of the
+        // range, or the row emits fewer cells than it has headers and the whole grid
+        // slides left under its column letters.
+        let f = single(
+            "merge-hidden-anchor",
+            "<cols><col min=\"1\" max=\"1\" hidden=\"1\"/></cols>\
+             <mergeCells count=\"1\"><mergeCell ref=\"A1:C2\"/></mergeCells>\
+             <sheetData>\
+               <row r=\"1\" hidden=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>merged</t></is></c></row>\
+               <row r=\"2\"/>\
+               <row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>a3</t></is></c>\
+                 <c r=\"B3\" t=\"inlineStr\"><is><t>b3</t></is></c>\
+                 <c r=\"C3\" t=\"inlineStr\"><is><t>c3</t></is></c></row>\
+             </sheetData>",
+            &[],
+        );
+        let doc = f.render(None);
+        // Row 1 is hidden, so the span lands on row 2 at column B (A is hidden):
+        // two visible columns of the three, one visible row of the two.
+        let r2 = row_cells(&doc.html, 2);
+        assert_eq!(r2.len(), 1, "{:?}", r2);
+        assert!(r2[0].contains("colspan=\"2\""), "{}", r2[0]);
+        assert!(!r2[0].contains("rowspan"), "one visible row: {}", r2[0]);
+        // The value followed the span rather than vanishing with its stored cell.
+        assert!(r2[0].contains("merged"), "{}", r2[0]);
+        // And the unmerged row below still has both of its visible cells, so the
+        // body lines up with the two column headers.
+        assert_eq!(row_cells(&doc.html, 3).len(), 2, "{}", doc.html);
+        balanced(&doc.html);
+    }
+
+    #[test]
+    fn a_merge_with_no_visible_track_is_dropped() {
+        let f = single(
+            "merge-all-hidden",
+            "<mergeCells count=\"1\"><mergeCell ref=\"A1:B1\"/></mergeCells>\
+             <sheetData>\
+               <row r=\"1\" hidden=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>gone</t></is></c></row>\
+               <row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>a2</t></is></c>\
+                 <c r=\"B2\" t=\"inlineStr\"><is><t>b2</t></is></c></row>\
+             </sheetData>",
+            &[],
+        );
+        let doc = f.render(None);
+        // Nothing of the merge survives, and row 2 is untouched by it.
+        assert!(!visible_text(&doc.html).contains("gone"));
+        assert_eq!(row_cells(&doc.html, 2).len(), 2, "{}", doc.html);
+        balanced(&doc.html);
+    }
+
+    #[test]
     fn frozen_panes_become_sticky_and_only_then_separate_borders() {
         let plain = single(
             "no-freeze",

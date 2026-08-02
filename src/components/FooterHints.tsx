@@ -1,7 +1,7 @@
 import { memo, ReactNode, useSyncExternalStore } from "react";
 import { SearchResult } from "../types";
 import { EnterIcon, DeleteIcon } from "../icons";
-import { isPreviewable } from "../utils";
+import { isPreviewable, officeShape } from "../utils";
 import { selection } from "../selection/controller";
 import { shortcutParts, type Shortcut } from "../actions/shortcut";
 import { effectiveActionShortcut, useKeybinds } from "../keybinds/store";
@@ -44,6 +44,7 @@ const Hint = ({ s, children }: { s: Shortcut | undefined; children: ReactNode })
 // badges surface the jump shortcuts in place).
 const Open = () => <span className="hint"><kbd><EnterIcon /></kbd> open</span>;
 const PdfPageNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> page</span>;
+const SheetNav = () => <span className="hint"><kbd>ctrl</kbd><kbd>←→</kbd> sheet</span>;
 
 function hints(
   selected: SearchResult | null,
@@ -78,6 +79,10 @@ function hints(
     <span className="hint"><kbd>Esc</kbd> dismiss</span>
   </>;
   const isPdf = selected?.title.toLowerCase().endsWith(".pdf") ?? false;
+  // Spreadsheets flip sheets with the same chord a PDF flips pages, and their
+  // rendered preview honours the same highlight toggle. Only sheets, because the
+  // other office shapes still go through the markdown fallback, which does neither.
+  const isSheet = (selected && officeShape(selected.title) === "sheet") ?? false;
   const Peek = () =>
     selected && isPreviewable(selected)
       ? <Hint s={chord("builtin:quick-look")}>peek</Hint>
@@ -88,7 +93,10 @@ function hints(
     return <>
       <Open />
       {isPdf && <PdfPageNav />}
-      {isPdf && <Hint s={chord("builtin:highlight")}>highlight {pdfHighlight ? "off" : "on"}</Hint>}
+      {isSheet && <SheetNav />}
+      {(isPdf || isSheet) && (
+        <Hint s={chord("builtin:highlight")}>highlight {pdfHighlight ? "off" : "on"}</Hint>
+      )}
       <Peek />
     </>;
   }
@@ -127,6 +135,7 @@ function hints(
           <Hint s={effectiveActionShortcut("file:reveal", { ctrl: true, key: "enter" })}>reveal</Hint>
         )}
         {isPdf && <PdfPageNav />}
+        {isSheet && <SheetNav />}
         <Peek />
       </>
     );
