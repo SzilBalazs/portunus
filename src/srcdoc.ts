@@ -183,9 +183,9 @@ const OFFICE_VP_SLACK = 12;
  * anywhere and panning is middle-drag only.
  */
 const SELECTORS: Record<OfficeVariant, FrameSelectionOpts> = {
-  sheet: { text: '.xl-t', exclude: 'th' },
-  doc: { text: '.xl-doc,.od-doc', exclude: '' },
-  slide: { text: '.pp-tb,.pp-tbl', exclude: '' },
+  sheet: { text: '.xl-t', exclude: 'th', host: '' },
+  doc: { text: '.xl-doc,.od-doc', exclude: '', host: '.xl-doc,.od-doc' },
+  slide: { text: '.pp-tb,.pp-tbl', exclude: '', host: '.pp-doc' },
 };
 
 /** Reader zoom bounds. Below 0.4 a sheet is unreadable; above 3 nothing fits. */
@@ -399,12 +399,22 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     // stays true for the doc and slide renderers too - and rather than
     // querySelectorAll('*'), which on a 50k-cell sheet is not free. Depth 4
     // because the zoom wrapper adds a level between body and the document.
+    //
+    // Overflowing content is *not* on its own enough to call something a
+    // scroller: scrollWidth reports the overflow area whatever `overflow` says,
+    // so a clipped slide shape, and worse the selection overlay itself (a 0x0 box
+    // holding rects that spill out of it by design), both answer the size test.
+    // The computed overflow is the discriminator, and it is only read for the
+    // handful of elements that got that far.
+    `var scrolls=function(e){var o=getComputedStyle(e).overflowX;` +
+    `return o==='auto'||o==='scroll';};` +
     `var hz=function(){` +
     `var v=vp();if(v.scrollWidth>v.clientWidth)return v;` +
     `var q=[document.body],d=0;` +
     `while(q.length&&d<4){var n=[];for(var i=0;i<q.length;i++){` +
     `var c=q[i].children;for(var j=0;j<c.length;j++){` +
-    `if(c[j].scrollWidth>c[j].clientWidth+1)return c[j];n.push(c[j]);}}` +
+    `if(c[j].scrollWidth>c[j].clientWidth+1&&scrolls(c[j]))return c[j];` +
+    `n.push(c[j]);}}` +
     `q=n;d++;}` +
     `return v;};` +
     // ── zoom ──

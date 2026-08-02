@@ -41,6 +41,14 @@ export interface FrameSelectionOpts {
    * column gutter). Empty string disables the check.
    */
   exclude: string;
+  /**
+   * Box the highlight rects are written into, when the variant has one that is
+   * *the content*: a slide's canvas is centred in a letterbox whose size follows
+   * the viewport, so rects pinned to the wrapper drift off the text the moment
+   * the panel is resized. Empty string falls back to inferring it from whatever
+   * the document scrolls in.
+   */
+  host: string;
 }
 
 /** Elements that end a line when text is pulled out of a prose document. */
@@ -63,9 +71,10 @@ const BLOCK_TAGS = 'P,DIV,LI,TR,TD,TH,H1,H2,H3,H4,H5,H6,BLOCKQUOTE,PRE,SECTION';
 export function officeSelectionScript(o: FrameSelectionOpts): string {
   const TEXT = JSON.stringify(o.text);
   const EXCL = JSON.stringify(o.exclude);
+  const HOST = JSON.stringify(o.host);
   const BLOCK = JSON.stringify(BLOCK_TAGS);
   return `(function(post,vp,hz,getZ,W,pan,setCursor){
-var TEXT=${TEXT},EXCL=${EXCL},BLOCK=${BLOCK};
+var TEXT=${TEXT},EXCL=${EXCL},HOST=${HOST},BLOCK=${BLOCK};
 var PAD=14;
 
 /* ── state ─────────────────────────────────────────────────────────────────── */
@@ -192,9 +201,12 @@ var le=function(a,b){
    frozen panes have something to stick to). It sits below the frozen panes'
    z-index for the same reason: they cover cells, so they must cover rects too. */
 var ensure=function(){
-  var h=hz(),p;
-  if(h===vp()||h===document.body||h===document.documentElement)p=W;
-  else p=h.firstElementChild||h;
+  var p=HOST?document.querySelector(HOST):null;
+  if(!p){
+    var h=hz();
+    if(h===vp()||h===document.body||h===document.documentElement)p=W;
+    else p=h.firstElementChild||h;
+  }
   if(!p)p=W||document.body;
   if(ovHost!==p){
     if(ov&&ov.parentNode)ov.parentNode.removeChild(ov);
