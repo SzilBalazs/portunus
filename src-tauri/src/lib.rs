@@ -1270,6 +1270,7 @@ pub fn run() {
             preview::list_folder,
             preview::read_office_preview,
             preview::read_spreadsheet_preview,
+            preview::render_office_doc,
             // Clipboard provider
             providers::clipboard::paste_clipboard,
             providers::clipboard::copy_text,

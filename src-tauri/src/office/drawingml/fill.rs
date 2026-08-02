@@ -1,0 +1,568 @@
+//! DrawingML fill properties (`a:noFill`, `a:solidFill`, `a:gradFill`,
+//! `a:blipFill`, `a:pattFill`, `a:grpFill`) and their CSS spelling.
+//!
+//! Media is deliberately *not* resolved here: a picture fill only carries the
+//! relationship id out, and whoever owns the package decides whether and how to
+//! inline the part. That keeps this module free of package/IO concerns and stops
+//! a document from pulling bytes in during colour resolution.
+
+use crate::office::drawingml::color::{parse_color_elem, Color};
+use crate::office::drawingml::theme::Theme;
+use crate::office::drawingml::{child_elem, elems};
+use crate::office::html::{fmt_pct, Style};
+use crate::office::xml;
+
+/// `a:lin@ang`, `a:gs@pos` and friends: 60000ths of a degree.
+const ANG_PER_DEG: f64 = 60_000.0;
+/// Positions and crop insets are thousandths of a percent.
+const PCT_SCALE: f64 = 100_000.0;
+
+/// A gradient stop. `pos` is a percentage (0..100) so it maps straight onto the
+/// CSS colour-stop syntax.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradStop {
+    pub pos: f64,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradKind {
+    /// Angle already converted to the CSS convention: degrees clockwise from
+    /// "to top". See [`css_gradient_deg`].
+    Linear { css_deg: f64 },
+    /// `a:path` — shape/circle/rect path gradients all collapse to a radial
+    /// gradient; `a:fillToRect` (the focus rectangle) is not reproduced.
+    Radial,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gradient {
+    pub kind: GradKind,
+    /// Sorted by `pos` ascending — CSS requires monotonic stops and producers do
+    /// not guarantee document order matches.
+    pub stops: Vec<GradStop>,
+}
+
+/// `a:srcRect` crop insets, as percentages of the *source* image edge to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SrcRect {
+    pub l: f64,
+    pub t: f64,
+    pub r: f64,
+    pub b: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlipMode {
+    Stretch,
+    Tile,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PictureFill {
+    /// The `r:embed` relationship id, to be resolved against the part's `.rels`
+    /// by the caller. `r:link` (an external URL) is deliberately dropped: a
+    /// preview must not fetch remote media.
+    pub embed: String,
+    pub crop: Option<SrcRect>,
+    pub mode: BlipMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fill {
+    None,
+    Solid(Color),
+    Gradient(Gradient),
+    Picture(PictureFill),
+    /// (foreground, background) of `a:pattFill`.
+    Pattern(Color, Color),
+}
+
+/// Parse the fill of `node`, which may be the fill element itself or a container
+/// that holds one (`a:spPr`, `a:tcPr`, `a:bgPr`, `a:rPr`, …). Only *direct*
+/// children are considered, so the `a:solidFill` nested inside a sibling `a:ln`
+/// cannot be mistaken for the shape's own fill.
+///
+/// Absent fill and `a:noFill` both come back as [`Fill::None`]; use
+/// [`parse_fill_opt`] when the difference matters (absent means "inherit from the
+/// style/placeholder", which only the caller can resolve).
+pub fn parse_fill(node: roxmltree::Node<'_, '_>, theme: &Theme, ph: Option<u32>) -> Fill {
+    parse_fill_opt(node, theme, ph).unwrap_or(Fill::None)
+}
+
+pub fn parse_fill_opt(
+    node: roxmltree::Node<'_, '_>,
+    theme: &Theme,
+    ph: Option<u32>,
+) -> Option<Fill> {
+    let elem = fill_elem(node)?;
+    Some(match elem.tag_name().name() {
+        "noFill" => Fill::None,
+        "solidFill" => match parse_color_elem(elem, theme, ph) {
+            Some(c) => Fill::Solid(c),
+            // A solidFill whose colour does not resolve is not "no fill": the
+            // caller's inherited fill is the better answer, so report absence.
+            None => return None,
+        },
+        "gradFill" => match parse_gradient(elem, theme, ph) {
+            Some(g) => Fill::Gradient(g),
+            None => return None,
+        },
+        "blipFill" => match parse_blip_fill(elem) {
+            Some(p) => Fill::Picture(p),
+            None => return None,
+        },
+        "pattFill" => {
+            let fg = child_elem(elem, "fgClr")
+                .and_then(|n| parse_color_elem(n, theme, ph))
+                .unwrap_or(Color::from_rgb(0x000000));
+            let bg = child_elem(elem, "bgClr")
+                .and_then(|n| parse_color_elem(n, theme, ph))
+                .unwrap_or(Color::from_rgb(0xFFFFFF));
+            Fill::Pattern(fg, bg)
+        }
+        // `a:grpFill` inherits the enclosing group's fill, which is not tracked
+        // here. Reported as absent so the caller's inheritance wins.
+        "grpFill" => return None,
+        _ => return None,
+    })
+}
+
+fn is_fill_tag(local: &str) -> bool {
+    matches!(
+        local,
+        "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "grpFill"
+    )
+}
+
+fn fill_elem<'a>(node: roxmltree::Node<'a, 'a>) -> Option<roxmltree::Node<'a, 'a>> {
+    if is_fill_tag(node.tag_name().name()) {
+        return Some(node);
+    }
+    elems(node).find(|n| is_fill_tag(n.tag_name().name()))
+}
+
+// ── gradient ─────────────────────────────────────────────────────────────────
+
+/// `a:lin@ang` → the CSS `linear-gradient()` angle.
+///
+/// DrawingML measures the gradient *direction* in 60000ths of a degree clockwise
+/// from the positive x-axis (0 = left→right; because y grows downwards, 90° is
+/// top→bottom). CSS measures clockwise from "to top" (0deg = bottom→top,
+/// 90deg = left→right). The two share a direction of rotation, so the conversion
+/// is a +90° offset — not a negation, which is the usual mistake.
+pub fn css_gradient_deg(ang: i64) -> f64 {
+    ((ang as f64 / ANG_PER_DEG) + 90.0).rem_euclid(360.0)
+}
+
+fn parse_gradient(
+    elem: roxmltree::Node<'_, '_>,
+    theme: &Theme,
+    ph: Option<u32>,
+) -> Option<Gradient> {
+    let mut stops: Vec<GradStop> = Vec::new();
+    if let Some(lst) = child_elem(elem, "gsLst") {
+        for gs in elems(lst).filter(|n| n.tag_name().name() == "gs") {
+            let Some(color) = parse_color_elem(gs, theme, ph) else {
+                continue;
+            };
+            // A missing/garbage pos is clamped rather than dropped: losing the
+            // colour is worse than misplacing the stop.
+            let pos = pct_attr(gs, "pos").unwrap_or(0.0) * 100.0;
+            stops.push(GradStop {
+                pos: pos.clamp(0.0, 100.0),
+                color,
+            });
+        }
+    }
+    if stops.is_empty() {
+        return None;
+    }
+    stops.sort_by(|a, b| a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal));
+
+    let kind = if child_elem(elem, "path").is_some() {
+        GradKind::Radial
+    } else {
+        let ang = child_elem(elem, "lin")
+            .and_then(|l| xml::attr_local(l, "ang"))
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .unwrap_or(0);
+        GradKind::Linear {
+            css_deg: css_gradient_deg(ang),
+        }
+    };
+    Some(Gradient { kind, stops })
+}
+
+// ── picture ──────────────────────────────────────────────────────────────────
+
+fn parse_blip_fill(elem: roxmltree::Node<'_, '_>) -> Option<PictureFill> {
+    let blip = child_elem(elem, "blip")?;
+    let embed = xml::attr_local(blip, "embed")?.trim();
+    if embed.is_empty() {
+        return None;
+    }
+    let crop = child_elem(elem, "srcRect").map(|r| SrcRect {
+        l: inset(r, "l"),
+        t: inset(r, "t"),
+        r: inset(r, "r"),
+        b: inset(r, "b"),
+    });
+    let mode = if child_elem(elem, "tile").is_some() {
+        BlipMode::Tile
+    } else {
+        // `a:stretch` is the default and by far the common case; an absent mode
+        // element behaves like stretch.
+        BlipMode::Stretch
+    };
+    Some(PictureFill {
+        embed: embed.to_string(),
+        crop,
+        mode,
+    })
+}
+
+fn inset(node: roxmltree::Node<'_, '_>, name: &str) -> f64 {
+    (pct_attr(node, name).unwrap_or(0.0) * 100.0).clamp(-100.0, 100.0)
+}
+
+// ── CSS ──────────────────────────────────────────────────────────────────────
+
+/// The CSS declarations for a fill, as a `prop:value;` run ready to append to a
+/// `style` attribute.
+///
+/// A picture fill yields nothing: the caller resolves the relationship and emits
+/// its own `background-image`/`<img>`.
+pub fn fill_css(f: &Fill) -> String {
+    let mut s = Style::new();
+    match f {
+        // Explicit, so an element can override an inherited background.
+        Fill::None => s.push("background-color", "transparent"),
+        Fill::Solid(c) => s.push("background-color", &c.css()),
+        Fill::Gradient(g) => {
+            // The flat colour is both a fallback and what shows through if the
+            // gradient function is dropped for an unformattable stop.
+            if let Some(first) = g.stops.first() {
+                s.push("background-color", &first.color.css());
+            }
+            if let Some(img) = gradient_css(g) {
+                s.push("background-image", &img);
+            }
+        }
+        // The 28 preset hatches (`pct5`, `ltUpDiag`, `openDmnd`, …) are not
+        // reproduced: each would need its own SVG or repeating-gradient. A 50/50
+        // blend of foreground over background reads as the right *tone* at
+        // preview scale, which is what the fill contributes to the page.
+        Fill::Pattern(fg, bg) => s.push("background-color", &bg.mix(fg, 0.5).css()),
+        Fill::Picture(_) => {}
+    }
+    s.css().to_string()
+}
+
+/// Just the `linear-gradient(...)` / `radial-gradient(...)` function, or `None`
+/// if any value would not format finitely — a single `NaN` in the function makes
+/// CSS drop the whole declaration.
+pub fn gradient_css(g: &Gradient) -> Option<String> {
+    if g.stops.len() < 2 {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(g.stops.len() + 1);
+    match g.kind {
+        GradKind::Linear { css_deg } => parts.push(format!("{}deg", fmt_deg(css_deg)?)),
+        GradKind::Radial => parts.push("circle".to_string()),
+    }
+    for st in &g.stops {
+        let pos = fmt_pct(st.pos as f32)?;
+        parts.push(format!("{} {}", st.color.css(), pos));
+    }
+    let func = match g.kind {
+        GradKind::Linear { .. } => "linear-gradient",
+        GradKind::Radial => "radial-gradient",
+    };
+    Some(format!("{}({})", func, parts.join(", ")))
+}
+
+// `html.rs` has no degree formatter; this mirrors its rule that a non-finite
+// value yields `None` instead of a poisoned declaration.
+fn fmt_deg(v: f64) -> Option<String> {
+    if !v.is_finite() {
+        return None;
+    }
+    let mut s = format!("{:.2}", v);
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    Some(if s == "-0" { "0".to_string() } else { s })
+}
+
+fn pct_attr(node: roxmltree::Node<'_, '_>, name: &str) -> Option<f64> {
+    let raw = xml::attr_local(node, name)?.trim();
+    let (text, scale) = match raw.strip_suffix('%') {
+        Some(stripped) => (stripped.trim(), 100.0),
+        None => (raw, PCT_SCALE),
+    };
+    let v: f64 = text.parse().ok()?;
+    v.is_finite().then(|| v / scale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NS: &str = concat!(
+        r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#
+    );
+
+    fn theme() -> Theme {
+        let mut t = Theme::default();
+        t.colors.accent1 = 0x4472C4;
+        t
+    }
+
+    fn fill_of(body: &str, ph: Option<u32>) -> Fill {
+        let src = format!("<a:spPr {}>{}</a:spPr>", NS, body);
+        let doc = xml::parse(&src).expect("fixture parses");
+        parse_fill(doc.root_element(), &theme(), ph)
+    }
+
+    #[test]
+    fn solid_and_no_fill() {
+        assert_eq!(
+            fill_of(r#"<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>"#, None),
+            Fill::Solid(Color::from_rgb(0x4472C4))
+        );
+        assert_eq!(fill_of("<a:noFill/>", None), Fill::None);
+        // Absent fill collapses to None through `parse_fill`…
+        assert_eq!(fill_of(r#"<a:prstGeom prst="rect"/>"#, None), Fill::None);
+        // …but `parse_fill_opt` keeps "inherit" distinguishable.
+        let src = format!(r#"<a:spPr {}><a:prstGeom prst="rect"/></a:spPr>"#, NS);
+        let doc = xml::parse(&src).unwrap();
+        assert_eq!(parse_fill_opt(doc.root_element(), &theme(), None), None);
+        let src = format!("<a:spPr {}><a:noFill/></a:spPr>", NS);
+        let doc = xml::parse(&src).unwrap();
+        assert_eq!(
+            parse_fill_opt(doc.root_element(), &theme(), None),
+            Some(Fill::None)
+        );
+    }
+
+    #[test]
+    fn a_line_fill_is_not_mistaken_for_the_shape_fill() {
+        // `a:ln` also contains a solidFill; only direct children may match.
+        let f = fill_of(
+            r#"<a:noFill/><a:ln><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln>"#,
+            None,
+        );
+        assert_eq!(f, Fill::None);
+    }
+
+    #[test]
+    fn solid_fill_honours_ph_clr() {
+        assert_eq!(
+            fill_of(
+                r#"<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>"#,
+                Some(0x00FF00)
+            ),
+            Fill::Solid(Color::from_rgb(0x00FF00))
+        );
+    }
+
+    #[test]
+    fn lin_angle_maps_to_the_css_convention() {
+        // ang=0 is left→right in DrawingML; CSS says that with 90deg.
+        assert_eq!(css_gradient_deg(0), 90.0);
+        // ang=5400000 (90°) is top→bottom; CSS "to bottom" is 180deg.
+        assert_eq!(css_gradient_deg(5_400_000), 180.0);
+        // And the two remaining cardinals, for the wrap-around.
+        assert_eq!(css_gradient_deg(10_800_000), 270.0); // right→left
+        assert_eq!(css_gradient_deg(16_200_000), 0.0); // bottom→top
+        // Negative and out-of-range angles wrap instead of escaping the range.
+        assert_eq!(css_gradient_deg(-5_400_000), 0.0);
+        assert_eq!(css_gradient_deg(21_600_000 * 3), 90.0);
+    }
+
+    #[test]
+    fn linear_gradient_stops_and_angle_reach_css() {
+        let f = fill_of(
+            r#"<a:gradFill>
+                 <a:gsLst>
+                   <a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>
+                   <a:gs pos="0"><a:srgbClr val="000000"/></a:gs>
+                 </a:gsLst>
+                 <a:lin ang="5400000"/>
+               </a:gradFill>"#,
+            None,
+        );
+        let Fill::Gradient(g) = &f else {
+            panic!("expected a gradient, got {:?}", f)
+        };
+        assert_eq!(g.kind, GradKind::Linear { css_deg: 180.0 });
+        // Document order was reversed; stops must come out monotonic.
+        assert_eq!(g.stops[0].pos, 0.0);
+        assert_eq!(g.stops[0].color.rgb, 0x000000);
+        assert_eq!(g.stops[1].pos, 100.0);
+        let css = fill_css(&f);
+        assert!(
+            css.contains("background-image:linear-gradient(180deg, #000000 0%, #ffffff 100%);"),
+            "{}",
+            css
+        );
+        // The flat fallback keeps something visible if the function is unsupported.
+        assert!(css.starts_with("background-color:#000000;"), "{}", css);
+    }
+
+    #[test]
+    fn path_gradient_becomes_radial() {
+        let f = fill_of(
+            r#"<a:gradFill>
+                 <a:gsLst>
+                   <a:gs pos="0"><a:schemeClr val="accent1"/></a:gs>
+                   <a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>
+                 </a:gsLst>
+                 <a:path path="circle"><a:fillToRect l="50000" t="50000"/></a:path>
+               </a:gradFill>"#,
+            None,
+        );
+        let Fill::Gradient(g) = &f else {
+            panic!("expected a gradient")
+        };
+        assert_eq!(g.kind, GradKind::Radial);
+        assert!(fill_css(&f).contains("radial-gradient(circle, #4472c4 0%, #ffffff 100%)"));
+    }
+
+    #[test]
+    fn gradient_with_alpha_stops_uses_rgba() {
+        let f = fill_of(
+            r#"<a:gradFill>
+                 <a:gsLst>
+                   <a:gs pos="0"><a:srgbClr val="FF0000"><a:alpha val="0"/></a:srgbClr></a:gs>
+                   <a:gs pos="100000"><a:srgbClr val="FF0000"/></a:gs>
+                 </a:gsLst>
+                 <a:lin ang="0"/>
+               </a:gradFill>"#,
+            None,
+        );
+        let css = fill_css(&f);
+        assert!(css.contains("rgba(255, 0, 0, 0)"), "{}", css);
+        assert!(css.contains("90deg"), "{}", css);
+    }
+
+    #[test]
+    fn degenerate_gradients_do_not_emit_a_function() {
+        // One stop: not a gradient CSS can express, but the colour still shows.
+        let f = fill_of(
+            r#"<a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="123456"/></a:gs></a:gsLst></a:gradFill>"#,
+            None,
+        );
+        let css = fill_css(&f);
+        assert_eq!(css, "background-color:#123456;");
+        // No stops at all: nothing to draw, so the fill reads as inherit.
+        assert_eq!(
+            fill_of("<a:gradFill><a:gsLst/></a:gradFill>", None),
+            Fill::None
+        );
+    }
+
+    #[test]
+    fn blip_fill_exposes_the_relationship_and_crop() {
+        let f = fill_of(
+            r#"<a:blipFill rotWithShape="1">
+                 <a:blip r:embed="rId7"/>
+                 <a:srcRect l="10000" t="0" r="25000" b="5000"/>
+                 <a:stretch><a:fillRect/></a:stretch>
+               </a:blipFill>"#,
+            None,
+        );
+        let Fill::Picture(p) = &f else {
+            panic!("expected a picture fill, got {:?}", f)
+        };
+        assert_eq!(p.embed, "rId7");
+        assert_eq!(p.mode, BlipMode::Stretch);
+        assert_eq!(
+            p.crop,
+            Some(SrcRect {
+                l: 10.0,
+                t: 0.0,
+                r: 25.0,
+                b: 5.0
+            })
+        );
+        // Media is the caller's business, so no CSS comes out of here.
+        assert_eq!(fill_css(&f), "");
+
+        let tiled = fill_of(
+            r#"<a:blipFill><a:blip r:embed="rId1"/><a:tile tx="0" ty="0"/></a:blipFill>"#,
+            None,
+        );
+        let Fill::Picture(p) = &tiled else {
+            panic!("expected a picture fill")
+        };
+        assert_eq!(p.mode, BlipMode::Tile);
+        assert_eq!(p.crop, None);
+
+        // An external (`r:link`) image is not fetched, so it is not a fill.
+        assert_eq!(
+            fill_of(
+                r#"<a:blipFill><a:blip r:link="rId9"/><a:stretch/></a:blipFill>"#,
+                None
+            ),
+            Fill::None
+        );
+        assert_eq!(fill_of("<a:blipFill/>", None), Fill::None);
+    }
+
+    #[test]
+    fn pattern_fill_blends_foreground_over_background() {
+        let f = fill_of(
+            r#"<a:pattFill prst="ltUpDiag">
+                 <a:fgClr><a:srgbClr val="000000"/></a:fgClr>
+                 <a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr>
+               </a:pattFill>"#,
+            None,
+        );
+        assert_eq!(
+            f,
+            Fill::Pattern(Color::from_rgb(0x000000), Color::from_rgb(0xFFFFFF))
+        );
+        assert_eq!(fill_css(&f), "background-color:#808080;");
+        // Missing fg/bg default to black on white rather than failing the fill.
+        assert_eq!(
+            fill_of(r#"<a:pattFill prst="pct50"/>"#, None),
+            Fill::Pattern(Color::from_rgb(0x000000), Color::from_rgb(0xFFFFFF))
+        );
+    }
+
+    #[test]
+    fn no_fill_css_is_explicit_transparent() {
+        assert_eq!(fill_css(&Fill::None), "background-color:transparent;");
+    }
+
+    #[test]
+    fn malformed_input_never_panics_or_leaks_nan() {
+        for body in [
+            "",
+            "<a:solidFill/>",
+            r#"<a:solidFill><a:srgbClr val="naïve"/></a:solidFill>"#,
+            r#"<a:gradFill><a:gsLst><a:gs pos="café"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="1e400"><a:srgbClr val="00FF00"/></a:gs></a:gsLst><a:lin ang="not-a-number"/></a:gradFill>"#,
+            r#"<a:gradFill><a:gsLst><a:gs pos="-9999999"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="9999999"><a:srgbClr val="00FF00"/></a:gs></a:gsLst><a:lin ang="99999999999999"/></a:gradFill>"#,
+            r#"<a:blipFill><a:blip r:embed=""/></a:blipFill>"#,
+            "<a:grpFill/>",
+        ] {
+            let css = fill_css(&fill_of(body, None));
+            assert!(!css.contains("NaN"), "{} → {}", body, css);
+            assert!(!css.contains("inf"), "{} → {}", body, css);
+        }
+        // The clamped-position gradient still produces monotonic 0%..100% stops.
+        let f = fill_of(
+            r#"<a:gradFill><a:gsLst><a:gs pos="-9999999"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="9999999"><a:srgbClr val="00FF00"/></a:gs></a:gsLst></a:gradFill>"#,
+            None,
+        );
+        assert!(fill_css(&f).contains("#ff0000 0%, #00ff00 100%"));
+    }
+}

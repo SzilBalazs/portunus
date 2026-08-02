@@ -950,6 +950,24 @@ pub fn read_spreadsheet_preview(path: String) -> Result<Vec<Vec<String>>, String
     crate::office::extract_spreadsheet_grid(&path)
 }
 
+/// One rendered section of an office document, as HTML for the preview iframe.
+///
+/// Blocking work off the runtime: the renderer inflates zip members, decodes and
+/// rescales embedded images, and can walk a several-megabyte sheet part.
+#[tauri::command]
+pub async fn render_office_doc(
+    path: String,
+    section: Option<u32>,
+    terms: Option<Vec<String>>,
+) -> Result<crate::office::OfficeDoc, String> {
+    // Keyed the same way the content index tokenized them, so the highlighter
+    // marks exactly the words the search matched.
+    let terms = normalize_terms(terms.unwrap_or_default());
+    tauri::async_runtime::spawn_blocking(move || crate::office::render(&path, section, &terms))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 const PREVIEW_MAX_LINES: usize = 300;
 const PREVIEW_MAX_BYTES: usize = 32 * 2048;
 
