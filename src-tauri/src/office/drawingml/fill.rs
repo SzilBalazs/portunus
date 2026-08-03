@@ -8,14 +8,18 @@
 
 use crate::office::drawingml::color::{parse_color_elem, Color};
 use crate::office::drawingml::theme::Theme;
-use crate::office::drawingml::{child_elem, elems};
-use crate::office::html::{fmt_pct, Style};
-use crate::office::xml;
+use crate::office::html::{fmt_deg, fmt_pct, Style};
+use crate::office::xml::{self, child, elems};
 
 /// `a:lin@ang`, `a:gs@pos` and friends: 60000ths of a degree.
 const ANG_PER_DEG: f64 = 60_000.0;
 /// Positions and crop insets are thousandths of a percent.
 const PCT_SCALE: f64 = 100_000.0;
+
+/// Ink coverage assumed for an `a:pattFill`: DrawingML names 28 preset hatches
+/// and states no density for any of them, so they all read as half. Formats that
+/// do name a density (SpreadsheetML's `patternFill`) pass their own.
+pub const PATTERN_INK: f64 = 0.5;
 
 /// A gradient stop. `pos` is a percentage (0..100) so it maps straight onto the
 /// CSS colour-stop syntax.
@@ -113,10 +117,10 @@ pub fn parse_fill_opt(
             None => return None,
         },
         "pattFill" => {
-            let fg = child_elem(elem, "fgClr")
+            let fg = child(elem, "fgClr")
                 .and_then(|n| parse_color_elem(n, theme, ph))
                 .unwrap_or(Color::from_rgb(0x000000));
-            let bg = child_elem(elem, "bgClr")
+            let bg = child(elem, "bgClr")
                 .and_then(|n| parse_color_elem(n, theme, ph))
                 .unwrap_or(Color::from_rgb(0xFFFFFF));
             Fill::Pattern(fg, bg)
@@ -144,15 +148,22 @@ fn fill_elem<'a>(node: roxmltree::Node<'a, 'a>) -> Option<roxmltree::Node<'a, 'a
 
 // ── gradient ─────────────────────────────────────────────────────────────────
 
-/// `a:lin@ang` → the CSS `linear-gradient()` angle.
+/// `a:lin@ang` (60000ths of a degree) → the CSS `linear-gradient()` angle.
+pub fn css_gradient_deg(ang: i64) -> f64 {
+    css_gradient_angle(ang as f64 / ANG_PER_DEG)
+}
+
+/// A gradient direction in whole degrees → the CSS `linear-gradient()` angle.
 ///
-/// DrawingML measures the gradient *direction* in 60000ths of a degree clockwise
-/// from the positive x-axis (0 = left→right; because y grows downwards, 90° is
+/// The Office formats measure the gradient *direction* clockwise from the
+/// positive x-axis (0 = left→right; because y grows downwards, 90° is
 /// top→bottom). CSS measures clockwise from "to top" (0deg = bottom→top,
 /// 90deg = left→right). The two share a direction of rotation, so the conversion
-/// is a +90° offset — not a negation, which is the usual mistake.
-pub fn css_gradient_deg(ang: i64) -> f64 {
-    ((ang as f64 / ANG_PER_DEG) + 90.0).rem_euclid(360.0)
+/// is a +90° offset — not a negation, which is the usual mistake. SpreadsheetML's
+/// `gradientFill@degree` states the same quantity in whole degrees, so it lands
+/// here rather than growing a second copy of the rule.
+pub fn css_gradient_angle(deg: f64) -> f64 {
+    (deg + 90.0).rem_euclid(360.0)
 }
 
 fn parse_gradient(
@@ -161,7 +172,7 @@ fn parse_gradient(
     ph: Option<u32>,
 ) -> Option<Gradient> {
     let mut stops: Vec<GradStop> = Vec::new();
-    if let Some(lst) = child_elem(elem, "gsLst") {
+    if let Some(lst) = child(elem, "gsLst") {
         for gs in elems(lst).filter(|n| n.tag_name().name() == "gs") {
             let Some(color) = parse_color_elem(gs, theme, ph) else {
                 continue;
@@ -180,10 +191,10 @@ fn parse_gradient(
     }
     stops.sort_by(|a, b| a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal));
 
-    let kind = if child_elem(elem, "path").is_some() {
+    let kind = if child(elem, "path").is_some() {
         GradKind::Radial
     } else {
-        let ang = child_elem(elem, "lin")
+        let ang = child(elem, "lin")
             .and_then(|l| xml::attr_local(l, "ang"))
             .and_then(|v| v.trim().parse::<i64>().ok())
             .unwrap_or(0);
@@ -197,18 +208,18 @@ fn parse_gradient(
 // ── picture ──────────────────────────────────────────────────────────────────
 
 fn parse_blip_fill(elem: roxmltree::Node<'_, '_>) -> Option<PictureFill> {
-    let blip = child_elem(elem, "blip")?;
+    let blip = child(elem, "blip")?;
     let embed = xml::attr_local(blip, "embed")?.trim();
     if embed.is_empty() {
         return None;
     }
-    let crop = child_elem(elem, "srcRect").map(|r| SrcRect {
+    let crop = child(elem, "srcRect").map(|r| SrcRect {
         l: inset(r, "l"),
         t: inset(r, "t"),
         r: inset(r, "r"),
         b: inset(r, "b"),
     });
-    let mode = if child_elem(elem, "tile").is_some() {
+    let mode = if child(elem, "tile").is_some() {
         BlipMode::Tile
     } else {
         // `a:stretch` is the default and by far the common case; an absent mode
@@ -228,35 +239,56 @@ fn inset(node: roxmltree::Node<'_, '_>, name: &str) -> f64 {
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 
-/// The CSS declarations for a fill, as a `prop:value;` run ready to append to a
-/// `style` attribute.
+/// Appends a fill's declarations to `style`.
 ///
-/// A picture fill yields nothing: the caller resolves the relationship and emits
-/// its own `background-image`/`<img>`.
-pub fn fill_css(f: &Fill) -> String {
-    let mut s = Style::new();
+/// Structural on purpose: a caller that needs the pairs must not take
+/// [`fill_css`]'s output apart again on `;` and `:`, because a value holding
+/// either of those characters (a `url(data:…;base64,…)`, a `color-mix(…)`) does
+/// not survive the round trip.
+///
+/// A picture fill contributes nothing: the caller resolves the relationship and
+/// emits its own `background-image`/`<img>`.
+pub fn push_fill(style: &mut Style, f: &Fill) {
     match f {
         // Explicit, so an element can override an inherited background.
-        Fill::None => s.push("background-color", "transparent"),
-        Fill::Solid(c) => s.push("background-color", &c.css()),
+        Fill::None => style.push("background-color", "transparent"),
+        Fill::Solid(c) => style.push("background-color", &c.css()),
         Fill::Gradient(g) => {
             // The flat colour is both a fallback and what shows through if the
             // gradient function is dropped for an unformattable stop.
             if let Some(first) = g.stops.first() {
-                s.push("background-color", &first.color.css());
+                style.push("background-color", &first.color.css());
             }
             if let Some(img) = gradient_css(g) {
-                s.push("background-image", &img);
+                style.push("background-image", &img);
             }
         }
-        // The 28 preset hatches (`pct5`, `ltUpDiag`, `openDmnd`, …) are not
-        // reproduced: each would need its own SVG or repeating-gradient. A 50/50
-        // blend of foreground over background reads as the right *tone* at
-        // preview scale, which is what the fill contributes to the page.
-        Fill::Pattern(fg, bg) => s.push("background-color", &bg.mix(fg, 0.5).css()),
+        Fill::Pattern(fg, bg) => {
+            style.push("background-color", &pattern_color(fg, bg, PATTERN_INK).css())
+        }
         Fill::Picture(_) => {}
     }
+}
+
+/// The CSS declarations for a fill, as a `prop:value;` run ready to append to a
+/// `style` attribute. Use [`push_fill`] instead when the destination is a
+/// [`Style`].
+pub fn fill_css(f: &Fill) -> String {
+    let mut s = Style::new();
+    push_fill(&mut s, f);
     s.css().to_string()
+}
+
+/// The flat tone a pattern fill reads as: `fg` blended into `bg` at `ink`
+/// coverage (0 = all background, 1 = all foreground).
+///
+/// The preset hatches (`pct5`, `ltUpDiag`, `openDmnd`, …) are not reproduced:
+/// each would need its own SVG or repeating-gradient. At preview scale the tone
+/// is what the fill contributes to the page, which is what this keeps. The blend
+/// is deliberately not gamma-correct — matching Office's own naive blend matters
+/// more here than being right about light.
+pub fn pattern_color(fg: &Color, bg: &Color, ink: f64) -> Color {
+    bg.mix(fg, ink)
 }
 
 /// Just the `linear-gradient(...)` / `radial-gradient(...)` function, or `None`
@@ -268,7 +300,7 @@ pub fn gradient_css(g: &Gradient) -> Option<String> {
     }
     let mut parts: Vec<String> = Vec::with_capacity(g.stops.len() + 1);
     match g.kind {
-        GradKind::Linear { css_deg } => parts.push(format!("{}deg", fmt_deg(css_deg)?)),
+        GradKind::Linear { css_deg } => parts.push(fmt_deg(css_deg as f32)?),
         GradKind::Radial => parts.push("circle".to_string()),
     }
     for st in &g.stops {
@@ -280,24 +312,6 @@ pub fn gradient_css(g: &Gradient) -> Option<String> {
         GradKind::Radial => "radial-gradient",
     };
     Some(format!("{}({})", func, parts.join(", ")))
-}
-
-// `html.rs` has no degree formatter; this mirrors its rule that a non-finite
-// value yields `None` instead of a poisoned declaration.
-fn fmt_deg(v: f64) -> Option<String> {
-    if !v.is_finite() {
-        return None;
-    }
-    let mut s = format!("{:.2}", v);
-    if s.contains('.') {
-        while s.ends_with('0') {
-            s.pop();
-        }
-        if s.ends_with('.') {
-            s.pop();
-        }
-    }
-    Some(if s == "-0" { "0".to_string() } else { s })
 }
 
 fn pct_attr(node: roxmltree::Node<'_, '_>, name: &str) -> Option<f64> {
@@ -541,6 +555,55 @@ mod tests {
     #[test]
     fn no_fill_css_is_explicit_transparent() {
         assert_eq!(fill_css(&Fill::None), "background-color:transparent;");
+    }
+
+    #[test]
+    fn push_fill_does_not_round_trip_through_a_css_string() {
+        // What the callers of `fill_css` used to do to get pairs back: split the
+        // declarations on `;`, then each one on `:`. A value carrying either
+        // character loses everything past it, so the pairs have to be pushed
+        // structurally instead.
+        let hostile = "url(data:image/png;base64,AA)";
+        let mut round_tripped = Style::new();
+        let mut direct = Style::new();
+        direct.push("background-image", hostile);
+        for decl in direct.css().split(';').filter(|d| !d.is_empty()) {
+            if let Some((k, v)) = decl.split_once(':') {
+                round_tripped.push(k, v);
+            }
+        }
+        assert_ne!(round_tripped.css(), direct.css());
+        assert!(!round_tripped.css().contains("base64"), "{}", round_tripped.css());
+
+        // `push_fill` emits the same declarations `fill_css` spells out, without
+        // ever making a string a caller has to parse back.
+        for f in [
+            Fill::None,
+            Fill::Solid(Color::from_rgb(0x4472C4)),
+            Fill::Pattern(Color::from_rgb(0x000000), Color::from_rgb(0xFFFFFF)),
+            Fill::Picture(PictureFill {
+                embed: "rId1".to_string(),
+                crop: None,
+                mode: BlipMode::Stretch,
+            }),
+            Fill::Gradient(Gradient {
+                kind: GradKind::Linear { css_deg: 90.0 },
+                stops: vec![
+                    GradStop {
+                        pos: 0.0,
+                        color: Color::from_rgb(0x000000),
+                    },
+                    GradStop {
+                        pos: 100.0,
+                        color: Color::from_rgb(0xFFFFFF),
+                    },
+                ],
+            }),
+        ] {
+            let mut s = Style::new();
+            push_fill(&mut s, &f);
+            assert_eq!(s.css(), fill_css(&f), "{:?}", f);
+        }
     }
 
     #[test]

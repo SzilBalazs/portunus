@@ -9,8 +9,7 @@
 //! to be.
 
 use crate::office::drawingml::theme::{self, ClrMap, SchemeSlot, Theme};
-use crate::office::drawingml::{child_elem, elems};
-use crate::office::xml;
+use crate::office::xml::{self, child, elems};
 
 /// Every percentage-typed `val` in this family is thousandths of a percent:
 /// `val="60000"` is 60%.
@@ -88,7 +87,7 @@ impl Color {
     }
 
     /// Blend towards `other` by `t`. Used by the pattern-fill approximation in
-    /// `fill.rs`; deliberately not gamma-correct (see `fill::fill_css`).
+    /// `fill.rs`; deliberately not gamma-correct (see `fill::pattern_color`).
     pub fn mix(&self, other: &Color, t: f64) -> Color {
         let t = clamp_unit(t);
         let ch = |a: u8, b: u8| -> u32 {
@@ -220,7 +219,7 @@ fn color_elem<'a>(node: roxmltree::Node<'a, 'a>) -> Option<roxmltree::Node<'a, '
 /// Convenience for the very common `<… ><a:solidFill><a:srgbClr/></a:solidFill>`
 /// shape where the caller wants the colour, not a [`super::fill::Fill`].
 pub fn solid_color(node: roxmltree::Node<'_, '_>, theme: &Theme, ph: Option<u32>) -> Option<Color> {
-    parse_color_elem(child_elem(node, "solidFill")?, theme, ph)
+    parse_color_elem(child(node, "solidFill")?, theme, ph)
 }
 
 // ── transforms ───────────────────────────────────────────────────────────────

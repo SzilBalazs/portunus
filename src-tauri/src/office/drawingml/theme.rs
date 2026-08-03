@@ -2,7 +2,7 @@
 //! `xl/theme/theme1.xml`): the colour scheme and the major/minor font faces that
 //! every other DrawingML colour lookup resolves against.
 
-use crate::office::xml;
+use crate::office::xml::{self, child, descendant};
 
 /// A concrete slot in `a:clrScheme`. The scheme has exactly twelve slots; the
 /// names documents actually *write* are often the mapped aliases (see
@@ -218,16 +218,6 @@ impl Theme {
     pub fn color(&self, slot: SchemeSlot) -> u32 {
         self.colors.get(slot)
     }
-}
-
-fn child<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
-}
-
-fn descendant<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
 }
 
 fn parse_color_scheme(node: roxmltree::Node<'_, '_>) -> ColorScheme {

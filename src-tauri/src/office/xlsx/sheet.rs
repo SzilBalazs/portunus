@@ -2,12 +2,18 @@
 //! formats as classes, merged-cell spans, frozen panes and the drawing overlay.
 
 use super::super::drawingml::geom::Xf;
+use super::super::emit::{self, Notes};
+use super::super::highlight::{Marker, Terms};
 use super::super::html::{attr, attrs, emu_to_px, pt_to_px, Writer};
 use super::super::media::{self, Media};
+use super::super::model::Align;
 use super::super::numfmt::Format;
-use super::super::{opc, pkg, xml};
-use super::styles::{bool_attr, f32_attr, u32_attr};
-use super::{col_letter, col_letter_to_index, note, split_cell_ref, Ctx, SheetRef};
+use super::super::sheetmodel::{resolve_anchors, Cell, CellSource, Merge, Track};
+use super::super::xml::{
+    self, attr_bool, attr_f32, attr_i64, attr_u32, child, descendant, elems, text_of,
+};
+use super::super::{opc, pkg};
+use super::{col_letter, col_letter_to_index, split_cell_ref, Ctx, SheetRef};
 use std::collections::BTreeSet;
 
 /// Width of the row-number gutter, and height of the column-letter header.
@@ -94,37 +100,6 @@ pub struct SheetOut {
     pub truncated: bool,
 }
 
-/// Per-column geometry, indexed by 0-based column.
-struct ColInfo {
-    width: f32,
-    hidden: bool,
-    /// `<col style>`: the xf applied to cells of this column that carry none.
-    style: Option<u32>,
-}
-
-impl ColInfo {
-    fn new(width: f32) -> ColInfo {
-        ColInfo {
-            width,
-            hidden: false,
-            style: None,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Merge {
-    r0: u32,
-    r1: u32,
-    c0: usize,
-    c1: usize,
-    /// Where the span is actually emitted: the first *visible* row and column of
-    /// the range. Usually `(r0, c0)`, but a merge can be anchored in a hidden row
-    /// or column, and that cell is never emitted — see `resolve_anchors`.
-    ar: u32,
-    ac: usize,
-}
-
 /// Deduplicated numeric class values (`width`, `height`): most columns of a sheet
 /// share one width, so one rule per distinct value keeps the stylesheet small.
 #[derive(Default)]
@@ -187,6 +162,89 @@ impl Grid {
     }
 }
 
+// ── phase state ──────────────────────────────────────────────────────────────
+//
+// `render` is a pipeline: parse the SpreadsheetML into these structs, turn them
+// into a `Layout`, then emit. Everything from `Layout` on is format-neutral — it
+// speaks only the `sheetmodel` vocabulary — so a second spreadsheet dialect has
+// to reach this seam and no further.
+
+/// Sheet-level view flags and default track sizes.
+///
+/// SpreadsheetML-specific: `<sheetView>`, `<pane>` and `<sheetFormatPr>` are
+/// OOXML spellings with no shared shape in ODF, which stores the equivalents on
+/// styles and in a separate settings part.
+struct Settings {
+    show_lines: bool,
+    /// The pane split as stored, before it is clamped to the emitted grid.
+    frozen_rows: usize,
+    frozen_cols: usize,
+    def_col_px: f32,
+    def_row_px: f32,
+}
+
+/// The sheet's inked rectangle — rows `1..=last_row`, columns `0..ncols` — and
+/// whether either axis was cut by the emission caps.
+struct Extent {
+    last_row: u32,
+    ncols: usize,
+    rows_clipped: bool,
+    cols_clipped: bool,
+}
+
+/// Frozen pane depth in track counts, already clamped to `MAX_FROZEN` and to the
+/// emitted grid. Format-neutral.
+#[derive(Clone, Copy)]
+struct Frozen {
+    rows: usize,
+    cols: usize,
+}
+
+impl Frozen {
+    /// Frozen panes are the only reason to switch the table to separate borders
+    /// (`position:sticky` does nothing under `border-collapse:collapse`), and that
+    /// changes how adjacent borders paint — so it is opt-in per document.
+    fn clamp(settings: &Settings, nrows: u32, ncols: usize) -> Frozen {
+        Frozen {
+            rows: settings.frozen_rows.min(MAX_FROZEN).min(nrows as usize),
+            cols: settings.frozen_cols.min(MAX_FROZEN).min(ncols),
+        }
+    }
+
+    fn on(self) -> bool {
+        self.rows > 0 || self.cols > 0
+    }
+}
+
+/// The emitted grid's shape and size — everything the emission half needs, with
+/// no reference to the XML it was measured from.
+///
+/// Format-neutral, and the seam a second dialect joins at: fill this in, hand the
+/// emitter a [`CellSource`], and the whole emission half is reusable.
+struct Layout {
+    nrows: u32,
+    ncols: usize,
+    /// Indexed by 0-based column, trimmed to `ncols`.
+    cols: Vec<Track>,
+    /// The emitted columns, in order; hidden ones are absent.
+    vis_cols: Vec<usize>,
+    /// Indexed by 1-based row number, as `row_tracks` builds it.
+    rows: Vec<Track>,
+    grid: Grid,
+}
+
+/// Class tables filled while emitting and turned into rules afterwards: the
+/// stylesheet cannot be written before the grid that references it is walked.
+#[derive(Default)]
+struct Classes {
+    widths: ClassMap,
+    heights: ClassMap,
+    /// Number-format colours, deduplicated in first-seen order.
+    num_colors: Vec<String>,
+    /// The `xf`s some emitted cell actually referenced.
+    used: BTreeSet<u32>,
+}
+
 // ── entry point ──────────────────────────────────────────────────────────────
 
 pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
@@ -198,12 +256,10 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
     let doc = xml::parse(&sheet_xml)?;
     let root = doc.root_element();
     if root.tag_name().name() != "worksheet" {
-        note(
-            ctx.notes,
-            "This sheet has no cell grid (it is a chart or macro sheet).",
-        );
+        ctx.notes
+            .add("This sheet has no cell grid (it is a chart or macro sheet).");
         return Ok(SheetOut {
-            html: wrap_style("", empty_body("This sheet has no cell grid.")),
+            html: error_body("This sheet has no cell grid."),
             truncated: false,
         });
     }
@@ -215,35 +271,142 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
     let terms = ctx.terms;
     let date1904 = ctx.date1904;
 
-    // ── sheet-level settings ────────────────────────────────────────────────
+    // ── parse ───────────────────────────────────────────────────────────────
+    let settings = sheet_settings(root);
+    let cols = parse_cols(root, settings.def_col_px);
+    let extent = used_extent(root, styles);
+    if extent.last_row == 0 || extent.ncols == 0 {
+        return Ok(SheetOut {
+            html: error_body("This sheet is empty."),
+            truncated: false,
+        });
+    }
+    let nrows = extent.last_row.min(super::MAX_ROWS);
+    let ncols = extent.ncols;
+    let row_nodes = row_lookup(root, nrows);
+    let mut merges = parse_merges(root, nrows, ncols);
+
+    // ── geometry ────────────────────────────────────────────────────────────
+    let rows = row_tracks(&row_nodes, nrows, settings.def_row_px);
+    let layout = build_geometry(cols, rows, nrows, ncols);
+    resolve_anchors(&mut merges, &layout.rows, &layout.cols);
+    let frozen = Frozen::clamp(&settings, nrows, ncols);
+    let frozen_css = frozen_pane_css(&layout, frozen);
+
+    // ── emit ────────────────────────────────────────────────────────────────
+    let mut w = Writer::new(ctx.html_cap);
+    let mut classes = Classes::default();
+    emit_head(&mut w, &layout, frozen, settings.show_lines, &mut classes);
+    let mut src = SheetRows {
+        row_nodes: &row_nodes,
+        rows: &layout.rows,
+        cols: &layout.cols,
+        merges: &merges,
+        styles,
+        sst,
+        date1904,
+        notes: &mut *ctx.notes,
+        // Almost never true, and the value-borrowing pass in `row` is skipped
+        // entirely when it is not.
+        displaced: merges.iter().any(|m| m.ar != m.r0 || m.ac != m.c0),
+        r: 0,
+        cells: vec![None; ncols],
+    };
+    emit_rows(
+        &mut w,
+        &layout,
+        &merges,
+        &mut src,
+        frozen,
+        &mut *ctx.marker,
+        terms,
+        &mut classes,
+    );
+    w.close(); // table
+
+    // ── drawings ────────────────────────────────────────────────────────────
+    if let Some(rid) = child(root, "drawing").and_then(|n| xml::attr_local(n, "id")) {
+        let rid = rid.to_string();
+        if !w.is_full() {
+            if let Err(e) = drawings(ctx, &mut w, &part, &rid, &layout.grid) {
+                if e == pkg::BUDGET_EXCEEDED {
+                    ctx.notes.add(
+                        "Some embedded images were skipped: the document exceeds the preview size budget.",
+                    );
+                } else {
+                    ctx.notes.add("Some embedded images could not be read.");
+                }
+            }
+        }
+    }
+
+    w.close(); // xl-grid
+    w.close(); // xl-scroll
+    w.close(); // xl-doc
+
+    if extent.rows_clipped {
+        ctx.notes
+            .add(&format!("Only the first {} rows are shown.", super::MAX_ROWS));
+    }
+    if extent.cols_clipped {
+        ctx.notes.add(&format!(
+            "Only the first {} columns are shown.",
+            super::MAX_COLS
+        ));
+    }
+
+    let truncated = w.truncated() || extent.rows_clipped || extent.cols_clipped;
+    Ok(SheetOut {
+        html: emit::wrap_style(BASE_CSS, &collect_css(classes, &frozen_css, styles), w.finish()),
+        truncated,
+    })
+}
+
+// ── parsing ──────────────────────────────────────────────────────────────────
+
+/// Gridlines, the frozen split and the sheet's default track sizes.
+///
+/// SpreadsheetML-specific.
+fn sheet_settings(root: roxmltree::Node<'_, '_>) -> Settings {
     let mut show_lines = true;
     let mut frozen_rows = 0usize;
     let mut frozen_cols = 0usize;
     if let Some(view) = child(root, "sheetViews").and_then(|v| child(v, "sheetView")) {
-        if let Some(v) = bool_attr(view, "showGridLines") {
+        if let Some(v) = attr_bool(view, "showGridLines") {
             show_lines = v;
         }
         if let Some(pane) = child(view, "pane") {
             let state = xml::attr_local(pane, "state").unwrap_or("split");
             if state == "frozen" || state == "frozenSplit" {
-                frozen_cols = u32_attr(pane, "xSplit").unwrap_or(0) as usize;
-                frozen_rows = u32_attr(pane, "ySplit").unwrap_or(0) as usize;
+                frozen_cols = attr_u32(pane, "xSplit").unwrap_or(0) as usize;
+                frozen_rows = attr_u32(pane, "ySplit").unwrap_or(0) as usize;
             }
         }
     }
 
     let fmt_pr = child(root, "sheetFormatPr");
     let def_col_px = fmt_pr
-        .and_then(|n| f32_attr(n, "defaultColWidth"))
+        .and_then(|n| attr_f32(n, "defaultColWidth"))
         .map(chars_to_px)
         .unwrap_or_else(|| chars_to_px(DEFAULT_COL_CHARS));
     let def_row_px = fmt_pr
-        .and_then(|n| f32_attr(n, "defaultRowHeight"))
+        .and_then(|n| attr_f32(n, "defaultRowHeight"))
         .map(|pt| pt_to_px(pt).clamp(1.0, MAX_ROW_PX).round())
         .unwrap_or_else(|| pt_to_px(DEFAULT_ROW_PT).round());
 
-    // ── columns ─────────────────────────────────────────────────────────────
-    let mut cols: Vec<ColInfo> = (0..super::MAX_COLS).map(|_| ColInfo::new(def_col_px)).collect();
+    Settings {
+        show_lines,
+        frozen_rows,
+        frozen_cols,
+        def_col_px,
+        def_row_px,
+    }
+}
+
+/// `<cols>` → per-column width, visibility and default xf, one entry per
+/// possible column. SpreadsheetML-specific.
+fn parse_cols(root: roxmltree::Node<'_, '_>, def_col_px: f32) -> Vec<Track> {
+    let mut cols: Vec<Track> = (0..super::MAX_COLS).map(|_| Track::new(def_col_px)).collect();
     if let Some(list) = child(root, "cols") {
         for c in elems(list)
             .filter(|n| n.tag_name().name() == "col")
@@ -251,24 +414,24 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
         {
             // `min`/`max` are 1-based and inclusive; a single definition routinely
             // covers every column in the sheet.
-            let min = u32_attr(c, "min").unwrap_or(1).max(1) as usize;
-            let max = u32_attr(c, "max").unwrap_or(min as u32).max(1) as usize;
+            let min = attr_u32(c, "min").unwrap_or(1).max(1) as usize;
+            let max = attr_u32(c, "max").unwrap_or(min as u32).max(1) as usize;
             if min > super::MAX_COLS {
                 continue;
             }
             // `customWidth`/`customHeight` only record whether the author set the
             // measurement or Excel computed it; both are stored values and both are
             // honoured, so only presence matters here.
-            let width = f32_attr(c, "width").map(chars_to_px);
-            let hidden = bool_attr(c, "hidden").unwrap_or(false);
-            let style = u32_attr(c, "style");
+            let width = attr_f32(c, "width").map(chars_to_px);
+            let hidden = attr_bool(c, "hidden").unwrap_or(false);
+            let style = attr_u32(c, "style");
             for i in min..=max.min(super::MAX_COLS) {
-                let info = &mut cols[i - 1];
+                let track = &mut cols[i - 1];
                 if let Some(w) = width {
-                    info.width = w;
+                    track.px = w;
                 }
-                info.hidden = hidden;
-                info.style = style;
+                track.hidden = hidden;
+                track.style = style;
             }
         }
     }
@@ -276,20 +439,27 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
     // The `<col>` rule is rounded either way, so leaving the geometry fractional
     // makes the drawing overlay drift off the grid — the default width alone is
     // 64.01px, which puts a picture anchored at column 200 two pixels adrift.
-    for info in cols.iter_mut() {
-        info.width = info.width.clamp(MIN_COL_PX, MAX_COL_PX).round();
+    for track in cols.iter_mut() {
+        track.px = track.px.clamp(MIN_COL_PX, MAX_COL_PX).round();
     }
+    cols
+}
 
-    // ── rows: bounds and lookup ─────────────────────────────────────────────
-    let mut row_nodes: Vec<Option<roxmltree::Node>> = vec![None; super::MAX_ROWS as usize + 1];
-    let mut last_row: u32 = 0;
-    let mut ncols: usize = 0;
-    let mut rows_clipped = false;
-    let mut cols_clipped = false;
+/// The rectangle worth emitting, from `<sheetData>` and then from `<mergeCells>`.
+///
+/// SpreadsheetML-specific: it walks cell nodes. What it produces — a rectangle
+/// plus two clipped flags — is not.
+fn used_extent(root: roxmltree::Node<'_, '_>, styles: &super::styles::Styles) -> Extent {
+    let mut extent = Extent {
+        last_row: 0,
+        ncols: 0,
+        rows_clipped: false,
+        cols_clipped: false,
+    };
     if let Some(data) = child(root, "sheetData") {
         let mut implied_row: u32 = 0;
         for rn in elems(data).filter(|n| n.tag_name().name() == "row") {
-            let r = u32_attr(rn, "r").unwrap_or(implied_row + 1);
+            let r = attr_u32(rn, "r").unwrap_or(implied_row + 1);
             if r == 0 || r > super::MAX_ROW_NUMBER {
                 continue;
             }
@@ -311,60 +481,77 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 }
                 inked = true;
                 if c >= super::MAX_COLS {
-                    cols_clipped = true;
+                    extent.cols_clipped = true;
                     continue;
                 }
-                ncols = ncols.max(c + 1);
+                extent.ncols = extent.ncols.max(c + 1);
             }
             if !inked {
                 continue;
             }
             if r > super::MAX_ROWS {
-                rows_clipped = true;
+                extent.rows_clipped = true;
                 continue;
             }
-            last_row = last_row.max(r);
+            extent.last_row = extent.last_row.max(r);
         }
     }
+    extend_by_merges(root, &mut extent);
+    extent
+}
 
-    // A merge anchored inside the inked extent drags the rest of its range in with
-    // it: half a merged title is worse than a few blank tracks. Runs before the
-    // node lookup below, which needs the final extent.
-    //
-    // Bounded, because whole-column and whole-row merges are common (`A1:B1048576`
-    // is how "merge across a column" is stored) and one of those would undo the
-    // whole trim. A merge that reaches further than this is not a title block; it
-    // gets clamped to the extent by `parse_merge` instead, as before.
+/// A merge anchored inside the inked extent drags the rest of its range in with
+/// it: half a merged title is worse than a few blank tracks. Runs before
+/// `row_lookup`, which needs the final extent.
+///
+/// Bounded, because whole-column and whole-row merges are common (`A1:B1048576`
+/// is how "merge across a column" is stored) and one of those would undo the
+/// whole trim. A merge that reaches further than this is not a title block; it
+/// gets clamped to the extent by `parse_merge` instead, as before.
+fn extend_by_merges(root: roxmltree::Node<'_, '_>, extent: &mut Extent) {
     const MERGE_EXTEND_ROWS: u32 = 64;
     const MERGE_EXTEND_COLS: usize = 32;
-    if last_row > 0 && ncols > 0 {
-        if let Some(list) = child(root, "mergeCells") {
-            for m in elems(list)
-                .filter(|n| n.tag_name().name() == "mergeCell")
-                .take(MAX_MERGES)
-            {
-                let Some((r0, c0, r1, c1)) = merge_bounds(xml::attr_local(m, "ref").unwrap_or(""))
-                else {
-                    continue;
-                };
-                if r0 <= last_row && r1 > last_row && r1 - last_row <= MERGE_EXTEND_ROWS {
-                    rows_clipped |= r1 > super::MAX_ROWS;
-                    last_row = r1.min(super::MAX_ROWS);
-                }
-                if c0 < ncols && c1 >= ncols && c1 + 1 - ncols <= MERGE_EXTEND_COLS {
-                    cols_clipped |= c1 >= super::MAX_COLS;
-                    ncols = (c1 + 1).min(super::MAX_COLS);
-                }
-            }
+    if extent.last_row == 0 || extent.ncols == 0 {
+        return;
+    }
+    let Some(list) = child(root, "mergeCells") else {
+        return;
+    };
+    for m in elems(list)
+        .filter(|n| n.tag_name().name() == "mergeCell")
+        .take(MAX_MERGES)
+    {
+        let Some((r0, c0, r1, c1)) = merge_bounds(xml::attr_local(m, "ref").unwrap_or("")) else {
+            continue;
+        };
+        if r0 <= extent.last_row
+            && r1 > extent.last_row
+            && r1 - extent.last_row <= MERGE_EXTEND_ROWS
+        {
+            extent.rows_clipped |= r1 > super::MAX_ROWS;
+            extent.last_row = r1.min(super::MAX_ROWS);
+        }
+        if c0 < extent.ncols && c1 >= extent.ncols && c1 + 1 - extent.ncols <= MERGE_EXTEND_COLS {
+            extent.cols_clipped |= c1 >= super::MAX_COLS;
+            extent.ncols = (c1 + 1).min(super::MAX_COLS);
         }
     }
+}
 
-    // Node lookup, once the extent is settled. A blank row inside the extent still
-    // needs its node — its height and `customFormat` apply either way.
+/// Row node by row number, once the extent is settled. A blank row inside the
+/// extent still needs its node — its height and `customFormat` apply either way.
+///
+/// SpreadsheetML-specific, and the only phase that hands XML nodes downstream —
+/// to `SheetRows`, which is where they stop.
+fn row_lookup<'a>(
+    root: roxmltree::Node<'a, 'a>,
+    last_row: u32,
+) -> Vec<Option<roxmltree::Node<'a, 'a>>> {
+    let mut row_nodes: Vec<Option<roxmltree::Node>> = vec![None; super::MAX_ROWS as usize + 1];
     if let Some(data) = child(root, "sheetData") {
         let mut implied_row: u32 = 0;
         for rn in elems(data).filter(|n| n.tag_name().name() == "row") {
-            let r = u32_attr(rn, "r").unwrap_or(implied_row + 1);
+            let r = attr_u32(rn, "r").unwrap_or(implied_row + 1);
             if r == 0 || r > super::MAX_ROW_NUMBER {
                 continue;
             }
@@ -374,31 +561,50 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
             }
         }
     }
+    row_nodes
+}
 
-    if last_row == 0 || ncols == 0 {
-        return Ok(SheetOut {
-            html: wrap_style("", empty_body("This sheet is empty.")),
-            truncated: false,
-        });
-    }
-    let nrows = last_row.min(super::MAX_ROWS);
-
-    // ── merges ──────────────────────────────────────────────────────────────
-    let mut merges: Vec<Merge> = Vec::new();
-    if let Some(list) = child(root, "mergeCells") {
-        for m in elems(list)
-            .filter(|n| n.tag_name().name() == "mergeCell")
-            .take(MAX_MERGES)
-        {
-            if let Some(m) = parse_merge(xml::attr_local(m, "ref").unwrap_or(""), nrows, ncols) {
-                merges.push(m);
-            }
+/// Row heights, visibility and default xf, read off the `<row>` nodes.
+///
+/// Indexed by 1-based row number: index 0 is unused, and there is one slot past
+/// the last row so the geometry pass can write the grid's closing edge without a
+/// bounds check.
+///
+/// SpreadsheetML-specific (`ht`, `hidden`, `customFormat`); everything downstream
+/// takes the measurements rather than the nodes, which is what makes
+/// `build_geometry` reusable.
+fn row_tracks(
+    row_nodes: &[Option<roxmltree::Node<'_, '_>>],
+    nrows: u32,
+    def_row_px: f32,
+) -> Vec<Track> {
+    let mut rows = vec![Track::new(def_row_px); nrows as usize + 2];
+    for r in 1..=nrows {
+        let Some(rn) = row_nodes[r as usize] else {
+            continue;
+        };
+        let track = &mut rows[r as usize];
+        if let Some(ht) = attr_f32(rn, "ht") {
+            track.px = pt_to_px(ht).clamp(0.0, MAX_ROW_PX).round();
+        }
+        track.hidden = attr_bool(rn, "hidden").unwrap_or(false);
+        // `customFormat` is what says the row's `s` applies to the row's cells;
+        // without it the attribute records only the row's own formatting.
+        if attr_bool(rn, "customFormat").unwrap_or(false) {
+            track.style = attr_u32(rn, "s");
         }
     }
+    rows
+}
 
-    // ── geometry ────────────────────────────────────────────────────────────
-    let mut widths = ClassMap::default();
-    let mut heights = ClassMap::default();
+// ── geometry ─────────────────────────────────────────────────────────────────
+
+/// Measured tracks → the emitted grid: which columns survive, and where every
+/// track edge lands in pixels.
+///
+/// Format-neutral. Nothing here knows where the measurements came from.
+fn build_geometry(mut cols: Vec<Track>, rows: Vec<Track>, nrows: u32, ncols: usize) -> Layout {
+    cols.truncate(ncols);
     let vis_cols: Vec<usize> = (0..ncols).filter(|c| !cols[*c].hidden).collect();
     let mut col_left = vec![0.0f32; ncols + 1];
     {
@@ -406,80 +612,84 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
         for c in 0..ncols {
             col_left[c] = x;
             if !cols[c].hidden {
-                x += cols[c].width;
+                x += cols[c].px;
             }
         }
         col_left[ncols] = x;
-    }
-    // Row heights, and the class each row's height maps to.
-    let mut row_px = vec![def_row_px; nrows as usize + 2];
-    let mut row_hidden = vec![false; nrows as usize + 2];
-    for r in 1..=nrows {
-        if let Some(rn) = row_nodes[r as usize] {
-            if let Some(ht) = f32_attr(rn, "ht") {
-                row_px[r as usize] = pt_to_px(ht).clamp(0.0, MAX_ROW_PX).round();
-            }
-            row_hidden[r as usize] = bool_attr(rn, "hidden").unwrap_or(false);
-        }
     }
     let mut row_top = vec![0.0f32; nrows as usize + 2];
     {
         let mut y = 0.0f32;
         for r in 1..=nrows {
             row_top[r as usize] = y;
-            if !row_hidden[r as usize] {
-                y += row_px[r as usize];
+            if !rows[r as usize].hidden {
+                y += rows[r as usize].px;
             }
         }
         row_top[nrows as usize + 1] = y;
     }
-    let grid = Grid { col_left, row_top };
-    resolve_anchors(&mut merges, &row_hidden, &cols);
-    // Whether any merge's span moved off its stored top-left cell. Almost never
-    // true, and the value-borrowing pass below is skipped entirely when it is not.
-    let displaced = merges.iter().any(|m| m.ar != m.r0 || m.ac != m.c0);
-
-    // Frozen panes are the only reason to switch the table to separate borders
-    // (`position:sticky` does nothing under `border-collapse:collapse`), and that
-    // changes how adjacent borders paint — so it is opt-in per document.
-    let frozen_cols = frozen_cols.min(MAX_FROZEN).min(ncols);
-    let frozen_rows = frozen_rows.min(MAX_FROZEN).min(nrows as usize);
-    let frozen = frozen_cols > 0 || frozen_rows > 0;
-    let mut frozen_css = String::new();
-    if frozen {
-        // Sticky offsets accumulate behind the gutter/header chrome. They ride on
-        // the *cells*, never on the `<tr>`: sticky positioning on a table row is
-        // not reliably implemented, while on a cell it is.
-        let mut x = ROW_HDR_PX;
-        for (vi, &c) in vis_cols.iter().enumerate() {
-            if c >= frozen_cols {
-                break;
-            }
-            frozen_css.push_str(&format!(".fzc{vi}{{left:{}px;}}\n", round(x)));
-            x += cols[c].width;
-        }
-        let mut y = COL_HDR_PX;
-        for r in 1..=nrows {
-            if r as usize > frozen_rows {
-                break;
-            }
-            if row_hidden[r as usize] {
-                continue;
-            }
-            frozen_css.push_str(&format!(".fzr{r}{{top:{}px;}}\n", round(y)));
-            y += row_px[r as usize];
-        }
+    Layout {
+        nrows,
+        ncols,
+        cols,
+        vis_cols,
+        rows,
+        grid: Grid { col_left, row_top },
     }
+}
 
-    // ── emit ────────────────────────────────────────────────────────────────
-    let mut w = Writer::new(ctx.html_cap);
-    let mut used: BTreeSet<u32> = BTreeSet::new();
-    let mut num_colors: Vec<&'static str> = Vec::new();
+/// One sticky offset per frozen track, accumulated behind the gutter/header
+/// chrome. The offsets ride on the *cells*, never on the `<tr>`: sticky
+/// positioning on a table row is not reliably implemented, while on a cell it is.
+///
+/// Format-neutral.
+fn frozen_pane_css(layout: &Layout, frozen: Frozen) -> String {
+    let mut css = String::new();
+    if !frozen.on() {
+        return css;
+    }
+    let mut x = ROW_HDR_PX;
+    for (vi, &c) in layout.vis_cols.iter().enumerate() {
+        if c >= frozen.cols {
+            break;
+        }
+        css.push_str(&format!(".fzc{vi}{{left:{}px;}}\n", round(x)));
+        x += layout.cols[c].px;
+    }
+    let mut y = COL_HDR_PX;
+    for r in 1..=layout.nrows {
+        if r as usize > frozen.rows {
+            break;
+        }
+        if layout.rows[r as usize].hidden {
+            continue;
+        }
+        css.push_str(&format!(".fzr{r}{{top:{}px;}}\n", round(y)));
+        y += layout.rows[r as usize].px;
+    }
+    css
+}
 
+// ── emission ─────────────────────────────────────────────────────────────────
+
+/// Opens the document wrappers and the table, then writes the `<colgroup>` and
+/// the column-letter header row.
+///
+/// The wrappers stay open: the drawing overlay is absolutely positioned inside
+/// `.xl-grid`, so `render` closes them only once the drawings are emitted.
+///
+/// Format-neutral.
+fn emit_head(
+    w: &mut Writer,
+    layout: &Layout,
+    frozen: Frozen,
+    show_lines: bool,
+    classes: &mut Classes,
+) {
     w.open("div", &attr("class", "xl-doc"));
     w.open("div", &attr("class", "xl-scroll"));
     w.open("div", &attr("class", "xl-grid"));
-    let table_class = match (show_lines, frozen) {
+    let table_class = match (show_lines, frozen.on()) {
         (true, true) => "xl-sheet xl-lines xl-frozen",
         (true, false) => "xl-sheet xl-lines",
         (false, true) => "xl-sheet xl-frozen",
@@ -489,26 +699,26 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
 
     w.open("colgroup", "");
     w.void("col", &attr("class", "xl-cg"));
-    for &c in &vis_cols {
-        let id = widths.id(cols[c].width);
+    for &c in &layout.vis_cols {
+        let id = classes.widths.id(layout.cols[c].px);
         w.void("col", &attr("class", &format!("xw{id}")));
     }
     w.close();
 
     w.open("thead", "");
     w.open("tr", "");
-    let corner = if frozen {
+    let corner = if frozen.on() {
         "xl-corner xl-fzr fzh xl-fzc fzg"
     } else {
         "xl-corner"
     };
     w.open("th", &attr("class", corner));
     w.close();
-    for (vi, &c) in vis_cols.iter().enumerate() {
+    for (vi, &c) in layout.vis_cols.iter().enumerate() {
         let mut cls = String::from("xl-ch");
-        if frozen {
+        if frozen.on() {
             push_class(&mut cls, "xl-fzr fzh");
-            if c < frozen_cols {
+            if c < frozen.cols {
                 push_class(&mut cls, &format!("xl-fzc fzc{vi}"));
             }
         }
@@ -518,15 +728,36 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
     }
     w.close();
     w.close();
+}
+
+/// The `<tbody>`: one `<tr>` per visible row, with merge spans resolved and the
+/// cells pulled from `src`.
+///
+/// Format-neutral: every cell arrives already resolved, so nothing here knows
+/// what a `<c>` is.
+fn emit_rows(
+    w: &mut Writer,
+    layout: &Layout,
+    merges: &[Merge],
+    src: &mut dyn CellSource,
+    frozen: Frozen,
+    hl: &mut Marker,
+    terms: &Terms,
+    classes: &mut Classes,
+) {
+    let nrows = layout.nrows;
+    let ncols = layout.ncols;
+    let cols = &layout.cols;
+    let vis_cols = &layout.vis_cols;
+    let rows = &layout.rows;
 
     w.open("tbody", "");
     // Reused per row so a wide sheet does not reallocate these every row.
     let mut covered = vec![false; ncols];
     let mut spans: Vec<Option<(u32, usize)>> = vec![None; ncols];
-    let mut cells: Vec<Option<roxmltree::Node>> = vec![None; ncols];
 
     'rows: for r in 1..=nrows {
-        if row_hidden[r as usize] {
+        if rows[r as usize].hidden {
             continue;
         }
         // Merge bookkeeping for this row: which columns a span already covers, and
@@ -534,7 +765,7 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
         // covered-cell set for a merge that runs the height of the sheet.
         covered.iter_mut().for_each(|v| *v = false);
         spans.iter_mut().for_each(|v| *v = None);
-        for m in &merges {
+        for m in merges {
             if r < m.r0 || r > m.r1 {
                 continue;
             }
@@ -544,7 +775,7 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                     // not in the table, so counting them would push the rest of the
                     // row sideways.
                     let rs = (m.r0..=m.r1)
-                        .filter(|rr| !row_hidden[*rr as usize])
+                        .filter(|rr| !rows[*rr as usize].hidden)
                         .count()
                         .max(1);
                     let cs = (m.c0..=m.c1.min(ncols - 1))
@@ -558,56 +789,13 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
             }
         }
 
-        let row_node = row_nodes[r as usize];
-        cells.iter_mut().for_each(|v| *v = None);
-        let mut row_style: Option<u32> = None;
-        if let Some(rn) = row_node {
-            if bool_attr(rn, "customFormat").unwrap_or(false) {
-                row_style = u32_attr(rn, "s");
-            }
-            let mut implied_col = 0usize;
-            for cn in elems(rn).filter(|n| n.tag_name().name() == "c") {
-                let Some(c) = cell_col(cn, implied_col) else {
-                    continue;
-                };
-                implied_col = c + 1;
-                if c < ncols {
-                    cells[c] = Some(cn);
-                }
-            }
-        }
+        src.row(r);
 
-        // A merged range stores its value in the top-left cell only. When that cell
-        // is in a hidden row or column the span is emitted somewhere else, so the
-        // visible anchor borrows the value — otherwise a merged title above a hidden
-        // row, or spanning a hidden helper column, renders blank.
-        if displaced {
-            for m in &merges {
-                if r != m.ar || (m.ar == m.r0 && m.ac == m.c0) || cells[m.ac].is_some() {
-                    continue;
-                }
-                let Some(src) = row_nodes[m.r0 as usize] else {
-                    continue;
-                };
-                let mut implied = 0usize;
-                for cn in elems(src).filter(|n| n.tag_name().name() == "c") {
-                    let Some(c) = cell_col(cn, implied) else {
-                        continue;
-                    };
-                    implied = c + 1;
-                    if c == m.c0 {
-                        cells[m.ac] = Some(cn);
-                        break;
-                    }
-                }
-            }
-        }
-
-        let hid = heights.id(row_px[r as usize]);
-        let row_frozen = frozen && (r as usize) <= frozen_rows;
+        let hid = classes.heights.id(rows[r as usize].px);
+        let row_frozen = frozen.on() && (r as usize) <= frozen.rows;
         w.open("tr", &attr("class", &format!("xh{hid}")));
         let mut rh_cls = String::from("xl-rh");
-        if frozen {
+        if frozen.on() {
             push_class(&mut rh_cls, "xl-fzc fzg");
             if row_frozen {
                 push_class(&mut rh_cls, &format!("xl-fzr fzr{r}"));
@@ -621,49 +809,35 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
             if covered[c] {
                 continue;
             }
-            let cell = cells[c];
-            let style_id = cell
-                .and_then(|n| u32_attr(n, "s"))
-                .or(row_style)
-                .or(cols[c].style)
-                .unwrap_or(0);
-            let cs = styles.get(style_id);
-
-            let (text, kind) = match cell {
-                Some(n) => cell_text(n, &cs.fmt, sst, date1904, ctx.notes),
-                None => (String::new(), Kind::Blank),
-            };
-            let color = cell
-                .filter(|_| kind == Kind::Num)
-                .and_then(|n| numeric_value(n))
-                .and_then(|v| cs.fmt.color(v))
-                .filter(|c| is_hex_color(c));
+            let cell = src.cell(c);
 
             let mut cls = String::new();
-            if styles.has_css(style_id) {
-                used.insert(style_id);
+            if let Some(id) = cell.style {
+                classes.used.insert(id);
                 cls.push_str("xf");
-                cls.push_str(&style_id.to_string());
+                cls.push_str(&id.to_string());
             }
-            if let Some(k) = kind.class() {
+            if let Some(k) = align_class(cell.align) {
                 push_class(&mut cls, k);
             }
-            if let Some(col) = color {
-                let idx = match num_colors.iter().position(|c| *c == col) {
+            // The one CSS value that comes from a parsed format code rather than
+            // from a fixed table, so it is checked here rather than trusted.
+            if let Some(col) = cell.color.filter(|c| is_hex_color(c)) {
+                let idx = match classes.num_colors.iter().position(|c| *c == col) {
                     Some(i) => i,
                     None => {
-                        num_colors.push(col);
-                        num_colors.len() - 1
+                        classes.num_colors.push(col);
+                        classes.num_colors.len() - 1
                     }
                 };
                 push_class(&mut cls, &format!("xnc{idx}"));
             }
-            if frozen && (c < frozen_cols || row_frozen) {
+            if frozen.on() && (c < frozen.cols || row_frozen) {
                 // Frozen cells need an opaque backdrop so scrolled content does not
                 // show through. `td.xl-fz` ties with `td.xfN` on specificity and is
                 // emitted first, so a document fill still wins.
                 push_class(&mut cls, "xl-fz");
-                if c < frozen_cols {
+                if c < frozen.cols {
                     push_class(&mut cls, &format!("xl-fzc fzc{vi}"));
                 }
                 if row_frozen {
@@ -692,7 +866,7 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
             // else starts a pan (the same rule the PDF text layer follows). CSS
             // cannot ask whether an element has text, and walking the DOM per
             // mousemove over a 6000-cell grid is not free, so the renderer says so.
-            if !text.is_empty() {
+            if !cell.text.is_empty() {
                 push_class(&mut cls, "xl-t");
             }
             let class_attr = if cls.is_empty() {
@@ -701,16 +875,15 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
                 attr("class", &cls)
             };
             w.open("td", &attrs(&[&class_attr, &rowspan, &colspan]));
-            if !text.is_empty() {
-                let inner = styles.has_inner(style_id);
-                if inner {
+            if !cell.text.is_empty() {
+                if cell.inner {
                     w.open("span", &attr("class", "xr"));
                 }
                 // `mark` escapes as it wraps matches, so its output is the only
                 // document-derived string that may go in raw.
-                let marked = ctx.marker.mark(&text, terms);
+                let marked = hl.mark(&cell.text, terms);
                 w.raw(&marked);
-                if inner {
+                if cell.inner {
                     w.close();
                 }
             }
@@ -722,58 +895,23 @@ pub fn render(ctx: &mut Ctx, sh: &SheetRef) -> Result<SheetOut, String> {
         w.close();
     }
     w.close(); // tbody
-    w.close(); // table
+}
 
-    // ── drawings ────────────────────────────────────────────────────────────
-    if let Some(rid) = child(root, "drawing").and_then(|n| xml::attr_local(n, "id")) {
-        let rid = rid.to_string();
-        if !w.is_full() {
-            if let Err(e) = drawings(ctx, &mut w, &part, &rid, &grid) {
-                if e == pkg::BUDGET_EXCEEDED {
-                    note(
-                        ctx.notes,
-                        "Some embedded images were skipped: the document exceeds the preview size budget.",
-                    );
-                } else {
-                    note(ctx.notes, "Some embedded images could not be read.");
-                }
-            }
-        }
-    }
-
-    w.close(); // xl-grid
-    w.close(); // xl-scroll
-    w.close(); // xl-doc
-
-    if rows_clipped {
-        note(
-            ctx.notes,
-            &format!("Only the first {} rows are shown.", super::MAX_ROWS),
-        );
-    }
-    if cols_clipped {
-        note(
-            ctx.notes,
-            &format!("Only the first {} columns are shown.", super::MAX_COLS),
-        );
-    }
-
+/// The document stylesheet, assembled once the grid has been walked.
+///
+/// Format-neutral.
+fn collect_css(classes: Classes, frozen_css: &str, styles: &super::styles::Styles) -> String {
     let mut css = String::new();
-    css.push_str(&widths.rules("xw", "width"));
-    css.push_str(&heights.rules("xh", "height"));
-    css.push_str(&frozen_css);
-    for (i, c) in num_colors.iter().enumerate() {
+    css.push_str(&classes.widths.rules("xw", "width"));
+    css.push_str(&classes.heights.rules("xh", "height"));
+    css.push_str(frozen_css);
+    for (i, c) in classes.num_colors.iter().enumerate() {
         css.push_str(&format!("td.xnc{i}{{color:{c};}}\n"));
     }
     // Style rules last: they must beat the base gridline/alignment rules, which
     // they only do on source order.
-    css.push_str(&styles.css_block(used));
-
-    let truncated = w.truncated() || rows_clipped || cols_clipped;
-    Ok(SheetOut {
-        html: wrap_style(&css, w.finish()),
-        truncated,
-    })
+    css.push_str(&styles.css_block(classes.used));
+    css
 }
 
 // ── cell values ──────────────────────────────────────────────────────────────
@@ -788,13 +926,120 @@ enum Kind {
 }
 
 impl Kind {
-    /// The class carrying Excel's "General" alignment, which depends on the value
-    /// and so cannot live in the per-`xf` rule.
-    fn class(self) -> Option<&'static str> {
+    /// Excel's "General" alignment: it depends on the value, which is why it
+    /// travels on the cell instead of in the per-`xf` rule.
+    fn align(self) -> Option<Align> {
         match self {
-            Kind::Num => Some("xl-num"),
-            Kind::Bool | Kind::Err => Some("xl-bool"),
+            Kind::Num => Some(Align::Right),
+            Kind::Bool | Kind::Err => Some(Align::Center),
             Kind::Text | Kind::Blank => None,
+        }
+    }
+}
+
+/// The class carrying a cell's own alignment. Left is the table's default and
+/// needs no rule, and no *value* asks to be justified.
+fn align_class(align: Option<Align>) -> Option<&'static str> {
+    match align? {
+        Align::Right => Some("xl-num"),
+        Align::Center => Some("xl-bool"),
+        Align::Left | Align::Justify => None,
+    }
+}
+
+/// The SpreadsheetML side of the cell loop: the `<row>`/`<c>` nodes values are
+/// read off, plus the workbook-wide inputs a displayed value depends on.
+///
+/// Bundled because `Ctx` cannot lend its fields one by one across a call boundary
+/// while the rest of it stays borrowed.
+struct SheetRows<'a, 'd> {
+    row_nodes: &'a [Option<roxmltree::Node<'d, 'd>>],
+    rows: &'a [Track],
+    cols: &'a [Track],
+    merges: &'a [Merge],
+    styles: &'a super::styles::Styles,
+    sst: &'a [String],
+    date1904: bool,
+    notes: &'a mut Notes,
+    /// Whether any merge's span moved off its stored top-left cell.
+    displaced: bool,
+    /// The row `row` last positioned on.
+    r: u32,
+    /// That row's `<c>` nodes by column. Reused so a wide sheet does not
+    /// reallocate it every row.
+    cells: Vec<Option<roxmltree::Node<'d, 'd>>>,
+}
+
+impl CellSource for SheetRows<'_, '_> {
+    fn row(&mut self, r: u32) {
+        self.r = r;
+        self.cells.iter_mut().for_each(|v| *v = None);
+        if let Some(rn) = self.row_nodes[r as usize] {
+            let mut implied_col = 0usize;
+            for cn in elems(rn).filter(|n| n.tag_name().name() == "c") {
+                let Some(c) = cell_col(cn, implied_col) else {
+                    continue;
+                };
+                implied_col = c + 1;
+                if c < self.cells.len() {
+                    self.cells[c] = Some(cn);
+                }
+            }
+        }
+
+        // A merged range stores its value in the top-left cell only. When that cell
+        // is in a hidden row or column the span is emitted somewhere else, so the
+        // visible anchor borrows the value — otherwise a merged title above a hidden
+        // row, or spanning a hidden helper column, renders blank.
+        if self.displaced {
+            for m in self.merges {
+                if r != m.ar || (m.ar == m.r0 && m.ac == m.c0) || self.cells[m.ac].is_some() {
+                    continue;
+                }
+                let Some(anchor) = self.row_nodes[m.r0 as usize] else {
+                    continue;
+                };
+                let mut implied = 0usize;
+                for cn in elems(anchor).filter(|n| n.tag_name().name() == "c") {
+                    let Some(c) = cell_col(cn, implied) else {
+                        continue;
+                    };
+                    implied = c + 1;
+                    if c == m.c0 {
+                        self.cells[m.ac] = Some(cn);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn cell(&mut self, c: usize) -> Cell {
+        let styles = self.styles;
+        let node = self.cells[c];
+        // A cell states its own xf, or falls back to its row's and then its
+        // column's default.
+        let style_id = node
+            .and_then(|n| attr_u32(n, "s"))
+            .or(self.rows[self.r as usize].style)
+            .or(self.cols[c].style)
+            .unwrap_or(0);
+        let cs = styles.get(style_id);
+        let (text, kind) = match node {
+            Some(n) => cell_text(n, &cs.fmt, self.sst, self.date1904, self.notes),
+            None => (String::new(), Kind::Blank),
+        };
+        let color = node
+            .filter(|_| kind == Kind::Num)
+            .and_then(numeric_value)
+            .and_then(|v| cs.fmt.color(v))
+            .map(|c| c.to_string());
+        Cell {
+            text,
+            align: kind.align(),
+            style: styles.has_css(style_id).then_some(style_id),
+            inner: styles.has_inner(style_id),
+            color,
         }
     }
 }
@@ -808,7 +1053,7 @@ fn cell_text(
     fmt: &Format,
     sst: &[String],
     date1904: bool,
-    notes: &mut Vec<String>,
+    notes: &mut Notes,
 ) -> (String, Kind) {
     let t = xml::attr_local(cell, "t").unwrap_or("n");
     match t {
@@ -819,8 +1064,7 @@ fn cell_text(
             match idx.and_then(|i| sst.get(i)) {
                 Some(s) => (clip(fmt.apply_text(s)), Kind::Text),
                 None => {
-                    note(
-                        notes,
+                    notes.add(
                         "Some cell text is missing: the workbook's shared string table is incomplete.",
                     );
                     (String::new(), Kind::Blank)
@@ -894,13 +1138,7 @@ fn collect_text(node: roxmltree::Node<'_, '_>, out: &mut String) {
         }
         match ch.tag_name().name() {
             "rPh" | "phoneticPr" => continue,
-            "t" => {
-                for d in ch.descendants().filter(|d| d.is_text()) {
-                    if let Some(s) = d.text() {
-                        out.push_str(s);
-                    }
-                }
-            }
+            "t" => xml::inner_text(ch, out),
             _ => collect_text(ch, out),
         }
     }
@@ -922,9 +1160,23 @@ fn clip(mut s: String) -> String {
 
 // ── merges ───────────────────────────────────────────────────────────────────
 
-/// `A1:C3` → a merge clamped to the emitted grid. A range that runs past the
-/// emitted bounds (a merge down a whole column) is clipped rather than dropped, so
-/// its visible part still spans.
+/// `<mergeCells>` → the spans of the emitted grid. SpreadsheetML-specific; what
+/// it produces is a plain list of rectangles.
+fn parse_merges(root: roxmltree::Node<'_, '_>, nrows: u32, ncols: usize) -> Vec<Merge> {
+    let mut merges: Vec<Merge> = Vec::new();
+    if let Some(list) = child(root, "mergeCells") {
+        for m in elems(list)
+            .filter(|n| n.tag_name().name() == "mergeCell")
+            .take(MAX_MERGES)
+        {
+            if let Some(m) = parse_merge(xml::attr_local(m, "ref").unwrap_or(""), nrows, ncols) {
+                merges.push(m);
+            }
+        }
+    }
+    merges
+}
+
 /// A merge's normalized `(r0, c0, r1, c1)`, unclamped — rows 1-based, columns
 /// 0-based. Used before the sheet's extent is known, to let a merge extend it.
 fn merge_bounds(r: &str) -> Option<(u32, usize, u32, usize)> {
@@ -934,6 +1186,9 @@ fn merge_bounds(r: &str) -> Option<(u32, usize, u32, usize)> {
     Some((r0.min(r1), c0.min(c1), r0.max(r1), c0.max(c1)))
 }
 
+/// `A1:C3` → a merge clamped to the emitted grid. A range that runs past the
+/// emitted bounds (a merge down a whole column) is clipped rather than dropped, so
+/// its visible part still spans.
 fn parse_merge(r: &str, nrows: u32, ncols: usize) -> Option<Merge> {
     let (r0, c0, r1, c1) = merge_bounds(r)?;
     if r0 > nrows || c0 >= ncols {
@@ -948,27 +1203,6 @@ fn parse_merge(r: &str, nrows: u32, ncols: usize) -> Option<Merge> {
         ar: r0,
         ac: c0,
     })
-}
-
-/// Move each merge's anchor to the first visible row/column of its range, and drop
-/// merges with nothing visible at all.
-///
-/// The row loop emits a span at the anchor and suppresses every other cell of the
-/// range. If the stored anchor sits in a hidden row or column that cell is never
-/// emitted, so the row is one `<td>` short of its headers and everything after it
-/// slides left — for a merge hidden at the top of a sheet, that is the whole grid.
-fn resolve_anchors(merges: &mut Vec<Merge>, row_hidden: &[bool], cols: &[ColInfo]) {
-    merges.retain_mut(|m| {
-        let Some(ar) = (m.r0..=m.r1).find(|r| !row_hidden[*r as usize]) else {
-            return false;
-        };
-        let Some(ac) = (m.c0..=m.c1).find(|c| !cols[*c].hidden) else {
-            return false;
-        };
-        m.ar = ar;
-        m.ac = ac;
-        true
-    });
 }
 
 fn parse_ref(s: &str) -> Option<(u32, usize)> {
@@ -1002,7 +1236,7 @@ fn cell_inked(cell: roxmltree::Node<'_, '_>, styles: &super::styles::Styles) -> 
             _ => {}
         }
     }
-    u32_attr(cell, "s").is_some_and(|s| styles.paints(s))
+    attr_u32(cell, "s").is_some_and(|s| styles.paints(s))
 }
 
 /// A cell's 0-based column from its `r` attribute, falling back to the position
@@ -1029,10 +1263,10 @@ fn drawings(
     rid: &str,
     grid: &Grid,
 ) -> Result<(), String> {
-    let rels = match pkg::read_entry(ctx.zip, &opc::rels_path_for(sheet_part), ctx.budget)? {
-        Some(x) => opc::parse_rels(&x)?,
-        None => return Ok(()),
-    };
+    // Strict: a `.rels` this renderer cannot parse means every drawing on the
+    // sheet is gone, and the caller turns the error into a note saying so. The
+    // lenient read would drop them without a word.
+    let rels = opc::read_rels_strict(ctx.zip, sheet_part, ctx.budget)?;
     let Some(rel) = rels.get(rid) else {
         return Ok(());
     };
@@ -1046,10 +1280,7 @@ fn drawings(
         return Ok(());
     };
     let ddoc = xml::parse(&dxml)?;
-    let drels = match pkg::read_entry(ctx.zip, &opc::rels_path_for(&dpart), ctx.budget)? {
-        Some(x) => opc::parse_rels(&x).unwrap_or_default(),
-        None => Default::default(),
-    };
+    let drels = opc::read_rels(ctx.zip, &dpart, ctx.budget)?;
 
     let mut opened = false;
     let mut unsupported = false;
@@ -1072,7 +1303,10 @@ fn drawings(
             .unwrap_or(anchor);
 
         let embed = descendant(scope, "blip").and_then(|b| xml::attr_local(b, "embed"));
-        let label = chart_label(scope);
+        // No `graphicData` at all: not a frame this renderer can even label.
+        let label = descendant(scope, "graphicData")
+            .and_then(|g| xml::attr_local(g, "uri"))
+            .map(emit::graphic_label);
         if embed.is_none() && label.is_none() {
             unsupported = true;
             continue;
@@ -1111,47 +1345,20 @@ fn drawings(
                         ]),
                     );
                 }
-                Media::Placeholder(reason) => placeholder(w, &style, reason),
+                Media::Placeholder(reason) => emit::placeholder(w, "xl-ph", &style, reason),
             }
         } else if let Some(l) = label {
-            placeholder(w, &style, l);
+            emit::placeholder(w, "xl-ph", &style, l);
         }
     }
     if opened {
         w.close();
     }
     if unsupported {
-        note(
-            ctx.notes,
-            "Some drawing shapes are not shown in the preview.",
-        );
+        ctx.notes
+            .add("Some drawing shapes are not shown in the preview.");
     }
     Ok(())
-}
-
-fn placeholder(w: &mut Writer, style: &str, label: &str) {
-    w.open(
-        "div",
-        &attrs(&[&attr("class", "xl-ph"), &attr("style", style)]),
-    );
-    w.text(label);
-    w.close();
-}
-
-/// A label for a graphic frame the preview cannot rasterize. Charts are the
-/// common case: they are stored as data plus a layout, never as an image, so a
-/// labelled box at the right geometry is the honest answer.
-fn chart_label(scope: roxmltree::Node<'_, '_>) -> Option<&'static str> {
-    let uri = descendant(scope, "graphicData").and_then(|g| xml::attr_local(g, "uri"))?;
-    Some(if uri.contains("/chart") {
-        "Chart"
-    } else if uri.contains("/diagram") {
-        "Diagram"
-    } else if uri.contains("/table") {
-        "Table"
-    } else {
-        "Embedded object"
-    })
 }
 
 /// Pixel box of a drawing anchor. All three anchor kinds are handled: two-cell
@@ -1172,18 +1379,18 @@ fn anchor_box(anchor: roxmltree::Node<'_, '_>, grid: &Grid) -> Option<Xf> {
             (
                 x0,
                 y0,
-                emu_to_px(i64_attr(e, "cx")?),
-                emu_to_px(i64_attr(e, "cy")?),
+                emu_to_px(attr_i64(e, "cx")?),
+                emu_to_px(attr_i64(e, "cy")?),
             )
         }
         "absoluteAnchor" => {
             let pos = child(anchor, "pos")?;
             let e = ext?;
             (
-                emu_to_px(i64_attr(pos, "x")?),
-                emu_to_px(i64_attr(pos, "y")?),
-                emu_to_px(i64_attr(e, "cx")?),
-                emu_to_px(i64_attr(e, "cy")?),
+                emu_to_px(attr_i64(pos, "x")?),
+                emu_to_px(attr_i64(pos, "y")?),
+                emu_to_px(attr_i64(e, "cx")?),
+                emu_to_px(attr_i64(e, "cy")?),
             )
         }
         _ => return None,
@@ -1222,34 +1429,10 @@ fn cell_point(node: roxmltree::Node<'_, '_>, grid: &Grid) -> Option<(f32, f32)> 
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn wrap_style(extra_css: &str, body: String) -> String {
-    let mut out = String::with_capacity(BASE_CSS.len() + extra_css.len() + body.len() + 32);
-    out.push_str("<style>");
-    // Defensive: nothing generated here contains `<`, and a `</style>` smuggled
-    // into a font name or colour would end the element and turn the rest of the
-    // stylesheet into document content.
-    out.push_str(&BASE_CSS.replace('<', ""));
-    out.push_str(&extra_css.replace('<', ""));
-    out.push_str("</style>");
-    out.push_str(&body);
-    out
-}
-
-/// Body for a sheet that could not be rendered at all. Unlike `empty_body` this
-/// is self-contained — it carries the base stylesheet, because it stands in for
-/// a whole section's html rather than being nested inside a normal render.
+/// Body for a sheet that has no grid to show — unreadable, empty, or not a
+/// worksheet at all. A sheet has no intrinsic size, so the canvas needs no style.
 pub(super) fn error_body(msg: &str) -> String {
-    wrap_style("", empty_body(msg))
-}
-
-fn empty_body(msg: &str) -> String {
-    let mut w = Writer::new(1024);
-    w.open("div", &attr("class", "xl-doc"));
-    w.open("div", &attr("class", "xl-empty"));
-    w.text(msg);
-    w.close();
-    w.close();
-    w.finish()
+    emit::error_doc(BASE_CSS, "xl-doc", "", "xl-empty", msg)
 }
 
 fn push_class(cls: &mut String, add: &str) {
@@ -1281,24 +1464,371 @@ fn is_hex_color(s: &str) -> bool {
     s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn child<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
-}
+#[cfg(test)]
+mod tests {
+    use super::super::super::drawingml::theme::Theme;
+    use super::super::styles::Styles;
+    use super::*;
 
-fn descendant<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
-}
+    /// The pipeline phases take a `<worksheet>` root, so a fixture is a document
+    /// the caller keeps alive — the nodes borrow it.
+    fn ws(body: &str) -> String {
+        format!("<worksheet>{body}</worksheet>")
+    }
 
-fn elems<'a>(node: roxmltree::Node<'a, 'a>) -> impl Iterator<Item = roxmltree::Node<'a, 'a>> + 'a {
-    node.children().filter(|n| n.is_element())
-}
+    fn cols_of(specs: &[(f32, bool)]) -> Vec<Track> {
+        specs
+            .iter()
+            .map(|(px, hidden)| Track {
+                px: *px,
+                hidden: *hidden,
+                style: None,
+            })
+            .collect()
+    }
 
-fn text_of<'a>(node: roxmltree::Node<'a, 'a>) -> Option<&'a str> {
-    node.descendants().find(|n| n.is_text()).and_then(|n| n.text())
-}
+    /// Row tracks the way `row_tracks` builds them: 1-based, with an unused slot
+    /// at index 0 and one past the last row.
+    fn rows_of(specs: &[(f32, bool)]) -> Vec<Track> {
+        let mut rows = vec![Track::new(0.0)];
+        rows.extend(cols_of(specs));
+        rows.push(Track::new(0.0));
+        rows
+    }
 
-fn i64_attr(node: roxmltree::Node<'_, '_>, local: &str) -> Option<i64> {
-    xml::attr_local(node, local)?.trim().parse().ok()
+    /// A grid handed straight to the emitter, so the row loop can be exercised
+    /// with no SpreadsheetML in sight.
+    struct Fixed {
+        /// Rows of cells, 1-based to match the tracks.
+        rows: Vec<Vec<Cell>>,
+        r: usize,
+    }
+
+    impl Fixed {
+        fn new(rows: Vec<Vec<Cell>>) -> Fixed {
+            Fixed { rows, r: 0 }
+        }
+    }
+
+    impl CellSource for Fixed {
+        fn row(&mut self, r: u32) {
+            self.r = r as usize;
+        }
+
+        fn cell(&mut self, c: usize) -> Cell {
+            self.rows
+                .get(self.r.wrapping_sub(1))
+                .and_then(|row| row.get(c))
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+
+    fn grid_html(layout: &Layout, merges: &[Merge], src: &mut dyn CellSource) -> String {
+        let mut w = Writer::new(1 << 16);
+        let mut classes = Classes::default();
+        let mut hl = Marker::new();
+        emit_rows(
+            &mut w,
+            layout,
+            merges,
+            src,
+            Frozen { rows: 0, cols: 0 },
+            &mut hl,
+            &Terms::new(&[]),
+            &mut classes,
+        );
+        w.finish()
+    }
+
+    /// One default column is 8.43 digits wide, i.e. 64px after rounding.
+    const DEF_COL: f32 = 64.0;
+
+    // ── extent ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn used_extent_counts_cells_that_show_something() {
+        let xml = ws("<sheetData>\
+             <row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"C1\"><v>2</v></c></row>\
+             <row r=\"2\"><c r=\"A2\" s=\"4\"/><c r=\"Z2\" s=\"4\"/></row>\
+             </sheetData>");
+        let doc = xml::parse(&xml).unwrap();
+        let ext = used_extent(doc.root_element(), &Styles::empty());
+        // Row 2 is styled but blank and its xf paints nothing, so neither its row
+        // nor its column Z reaches the extent.
+        assert_eq!((ext.last_row, ext.ncols), (1, 3));
+        assert!(!ext.rows_clipped && !ext.cols_clipped);
+    }
+
+    #[test]
+    fn a_painting_xf_inks_an_otherwise_empty_cell() {
+        let styles = Styles::parse(
+            "<styleSheet><fills count=\"1\">\
+               <fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFFFC000\"/></patternFill></fill>\
+             </fills><cellXfs count=\"2\"><xf/><xf fillId=\"0\" applyFill=\"1\"/></cellXfs></styleSheet>",
+            &Theme::default(),
+        )
+        .unwrap();
+        let xml = ws("<sheetData><row r=\"3\"><c r=\"B3\" s=\"1\"/></row></sheetData>");
+        let doc = xml::parse(&xml).unwrap();
+        let ext = used_extent(doc.root_element(), &styles);
+        assert_eq!((ext.last_row, ext.ncols), (3, 2));
+    }
+
+    #[test]
+    fn a_merge_reaching_just_past_the_inked_extent_pulls_it_along() {
+        let xml = ws("<sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData>\
+             <mergeCells>\
+               <mergeCell ref=\"A1:C6\"/>\
+               <mergeCell ref=\"A1:A1048576\"/>\
+               <mergeCell ref=\"E10:F12\"/>\
+             </mergeCells>");
+        let doc = xml::parse(&xml).unwrap();
+        let ext = used_extent(doc.root_element(), &Styles::empty());
+        // `A1:C6` is a title block and drags the extent out to it. The
+        // whole-column merge reaches too far and the detached one starts outside
+        // the extent, so neither counts — otherwise the trim would be undone.
+        assert_eq!((ext.last_row, ext.ncols), (6, 3));
+    }
+
+    #[test]
+    fn a_merge_cannot_extend_an_extent_that_does_not_exist() {
+        let xml = ws("<sheetData/><mergeCells><mergeCell ref=\"A1:C6\"/></mergeCells>");
+        let doc = xml::parse(&xml).unwrap();
+        let ext = used_extent(doc.root_element(), &Styles::empty());
+        assert_eq!((ext.last_row, ext.ncols), (0, 0));
+    }
+
+    #[test]
+    fn an_extent_past_the_emission_caps_is_clipped_and_flagged() {
+        let over_row = super::super::MAX_ROWS + 1;
+        let over_col = super::super::col_letter(super::super::MAX_COLS);
+        let xml = ws(&format!(
+            "<sheetData>\
+               <row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"{over_col}1\"><v>2</v></c></row>\
+               <row r=\"{over_row}\"><c r=\"A{over_row}\"><v>3</v></c></row>\
+             </sheetData>"
+        ));
+        let doc = xml::parse(&xml).unwrap();
+        let ext = used_extent(doc.root_element(), &Styles::empty());
+        assert_eq!(ext.last_row, 1);
+        assert_eq!(ext.ncols, 1);
+        assert!(ext.rows_clipped && ext.cols_clipped);
+    }
+
+    // ── columns ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_cols_spreads_one_definition_over_its_whole_range() {
+        let xml = ws("<cols>\
+             <col min=\"1\" max=\"2\" width=\"20\" customWidth=\"1\"/>\
+             <col min=\"3\" max=\"3\" hidden=\"1\"/>\
+             <col min=\"4\" max=\"4\" style=\"7\"/>\
+             </cols>");
+        let doc = xml::parse(&xml).unwrap();
+        let cols = parse_cols(doc.root_element(), chars_to_px(DEFAULT_COL_CHARS));
+        assert_eq!(cols.len(), super::super::MAX_COLS);
+        // 20 digits * 7px + 5px padding.
+        assert_eq!(cols[0].px, 145.0);
+        assert_eq!(cols[1].px, 145.0);
+        assert!(cols[2].hidden);
+        // A hidden column keeps its width; it is the geometry pass that drops it.
+        assert_eq!(cols[2].px, DEF_COL);
+        assert_eq!(cols[3].style, Some(7));
+        // Untouched columns take the sheet default, rounded to a whole pixel.
+        assert_eq!(cols[4].px, DEF_COL);
+        assert!(!cols[4].hidden && cols[4].style.is_none());
+    }
+
+    #[test]
+    fn parse_cols_keeps_a_sliver_and_ignores_out_of_range_definitions() {
+        let xml = ws(&format!(
+            "<cols><col min=\"1\" max=\"1\" width=\"-1\"/>\
+               <col min=\"{0}\" max=\"{0}\" width=\"30\"/></cols>",
+            super::super::MAX_COLS + 1
+        ));
+        let doc = xml::parse(&xml).unwrap();
+        let cols = parse_cols(doc.root_element(), chars_to_px(DEFAULT_COL_CHARS));
+        assert_eq!(cols[0].px, MIN_COL_PX);
+        assert_eq!(cols.len(), super::super::MAX_COLS);
+        assert_eq!(cols[super::super::MAX_COLS - 1].px, DEF_COL);
+    }
+
+    #[test]
+    fn a_sheet_default_column_width_applies_to_every_column() {
+        let xml = ws("<sheetFormatPr defaultColWidth=\"5\" defaultRowHeight=\"30\"/>");
+        let doc = xml::parse(&xml).unwrap();
+        let settings = sheet_settings(doc.root_element());
+        let cols = parse_cols(doc.root_element(), settings.def_col_px);
+        assert_eq!(cols[0].px, 40.0);
+        // 30pt at 96dpi.
+        assert_eq!(settings.def_row_px, 40.0);
+    }
+
+    #[test]
+    fn only_a_frozen_pane_state_freezes() {
+        for (state, want) in [("frozen", (1, 2)), ("frozenSplit", (1, 2)), ("split", (0, 0))] {
+            let xml = ws(&format!(
+                "<sheetViews><sheetView showGridLines=\"0\">\
+                   <pane xSplit=\"2\" ySplit=\"1\" state=\"{state}\"/></sheetView></sheetViews>"
+            ));
+            let doc = xml::parse(&xml).unwrap();
+            let s = sheet_settings(doc.root_element());
+            assert_eq!((s.frozen_rows, s.frozen_cols), want, "state={state}");
+            assert!(!s.show_lines);
+        }
+    }
+
+    // ── geometry ────────────────────────────────────────────────────────────
+
+    fn three_by_three() -> Layout {
+        // Column B and row 2 are hidden.
+        let rows = rows_of(&[(20.0, false), (30.0, true), (40.0, false)]);
+        build_geometry(cols_of(&[(64.0, false), (100.0, true), (50.0, false)]), rows, 3, 3)
+    }
+
+    #[test]
+    fn build_geometry_gives_a_hidden_track_no_width() {
+        let l = three_by_three();
+        assert_eq!(l.vis_cols, vec![0, 2]);
+        // B occupies no space, so C starts where B did.
+        assert_eq!(l.grid.col_left, vec![0.0, 64.0, 64.0, 114.0]);
+        // Row 1 at 0, rows 2 and 3 both at 20 (row 2 is hidden), end at 60.
+        assert_eq!(l.grid.row_top, vec![0.0, 0.0, 20.0, 20.0, 60.0]);
+        // The column table is trimmed to the emitted extent.
+        assert_eq!(l.cols.len(), 3);
+    }
+
+    #[test]
+    fn grid_lookups_past_the_last_track_clamp_to_the_far_edge() {
+        let l = three_by_three();
+        assert_eq!(l.grid.x(2), 64.0);
+        assert_eq!(l.grid.x(99), 114.0);
+        assert_eq!(l.grid.y(3), 20.0);
+        assert_eq!(l.grid.y(99), 60.0);
+    }
+
+    #[test]
+    fn frozen_offsets_accumulate_behind_the_gutter_and_skip_hidden_tracks() {
+        let l = three_by_three();
+        let css = frozen_pane_css(&l, Frozen { rows: 3, cols: 2 });
+        // Only column A is inside the split, and it starts past the row gutter.
+        assert_eq!(
+            css,
+            ".fzc0{left:46px;}\n.fzr1{top:21px;}\n.fzr3{top:41px;}\n",
+            "{css}"
+        );
+    }
+
+    #[test]
+    fn no_frozen_pane_emits_no_sticky_rules() {
+        let l = three_by_three();
+        assert!(frozen_pane_css(&l, Frozen { rows: 0, cols: 0 }).is_empty());
+    }
+
+    #[test]
+    fn the_frozen_split_is_clamped_to_the_grid_and_to_the_sticky_budget() {
+        let settings = Settings {
+            show_lines: true,
+            frozen_rows: MAX_FROZEN + 5,
+            frozen_cols: 9,
+            def_col_px: DEF_COL,
+            def_row_px: 20.0,
+        };
+        let f = Frozen::clamp(&settings, 100, 4);
+        assert_eq!((f.rows, f.cols), (MAX_FROZEN, 4));
+        assert!(f.on());
+        assert!(!Frozen { rows: 0, cols: 0 }.on());
+    }
+
+    // ── emission ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_cell_paints_exactly_what_it_asks_for() {
+        let layout = build_geometry(
+            cols_of(&[(64.0, false), (50.0, false), (40.0, false)]),
+            rows_of(&[(20.0, false)]),
+            1,
+            3,
+        );
+        let mut src = Fixed::new(vec![vec![
+            Cell {
+                text: "(1,50)".to_string(),
+                align: Some(Align::Right),
+                style: Some(7),
+                color: Some("#ff0000".to_string()),
+                ..Default::default()
+            },
+            // A rotated cell needs the wrapper; a blank one gets no attributes at
+            // all, and still gets its `<td>`.
+            Cell {
+                text: "café".to_string(),
+                inner: true,
+                ..Default::default()
+            },
+            Cell::default(),
+        ]]);
+        assert_eq!(
+            grid_html(&layout, &[], &mut src),
+            "<tbody><tr class=\"xh0\"><th class=\"xl-rh\">1</th>\
+             <td class=\"xf7 xl-num xnc0 xl-t\">(1,50)</td>\
+             <td class=\"xl-t\"><span class=\"xr\">café</span></td>\
+             <td></td></tr></tbody>"
+        );
+    }
+
+    #[test]
+    fn a_colour_a_style_asks_for_has_to_be_a_colour() {
+        let layout = build_geometry(cols_of(&[(64.0, false)]), rows_of(&[(20.0, false)]), 1, 1);
+        let mut src = Fixed::new(vec![vec![Cell {
+            text: "x".to_string(),
+            color: Some("red;}body{display:none".to_string()),
+            ..Default::default()
+        }]]);
+        let html = grid_html(&layout, &[], &mut src);
+        assert!(!html.contains("xnc"), "{html}");
+    }
+
+    #[test]
+    fn a_span_counts_emitted_tracks_and_suppresses_the_cells_it_covers() {
+        // Row 1 and column A are hidden, so `A1:C3` is emitted at B2 and spans the
+        // two rows and two columns the table actually has.
+        let layout = build_geometry(
+            cols_of(&[(64.0, true), (50.0, false), (40.0, false)]),
+            rows_of(&[(20.0, true), (20.0, false), (20.0, false)]),
+            3,
+            3,
+        );
+        let mut merges = vec![Merge {
+            r0: 1,
+            r1: 3,
+            c0: 0,
+            c1: 2,
+            ar: 1,
+            ac: 0,
+        }];
+        resolve_anchors(&mut merges, &layout.rows, &layout.cols);
+        assert_eq!((merges[0].ar, merges[0].ac), (2, 1));
+
+        let mut src = Fixed::new(vec![
+            vec![Cell::default(); 3],
+            vec![
+                Cell::default(),
+                Cell {
+                    text: "café".to_string(),
+                    ..Default::default()
+                },
+                Cell::default(),
+            ],
+            vec![Cell::default(); 3],
+        ]);
+        assert_eq!(
+            grid_html(&layout, &merges, &mut src),
+            "<tbody>\
+             <tr class=\"xh0\"><th class=\"xl-rh\">2</th>\
+             <td class=\"xl-t\" rowspan=\"2\" colspan=\"2\">café</td></tr>\
+             <tr class=\"xh0\"><th class=\"xl-rh\">3</th></tr>\
+             </tbody>"
+        );
+    }
 }

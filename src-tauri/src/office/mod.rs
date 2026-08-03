@@ -1,17 +1,22 @@
 //! Office document reading (docx/pptx/xlsx and the ODF equivalents): flat text
 //! for the content index, Markdown and spreadsheet grids for the preview.
 
+mod cellstyle;
 mod drawingml;
+mod emit;
 mod fonts;
 mod grid;
 mod highlight;
 mod html;
+mod listnum;
 mod markdown;
 mod media;
+mod model;
 mod numfmt;
 mod opc;
 mod pkg;
 mod pptx;
+mod sheetmodel;
 mod text;
 mod xlsx;
 mod xml;

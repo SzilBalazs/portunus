@@ -35,14 +35,7 @@ pub fn xml_walk(
 ) {
     let local = node.tag_name().name();
     if text_tags.contains(&local) {
-        // Slurp all descendant text (handles split runs and whitespace-preserve).
-        for d in node.descendants() {
-            if d.is_text() {
-                if let Some(t) = d.text() {
-                    out.push_str(t);
-                }
-            }
-        }
+        inner_text(node, out);
         return;
     }
     for child in node.children() {
@@ -97,6 +90,85 @@ pub fn attr_local<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<&'a 
     node.attributes()
         .find(|a| a.name() == local)
         .map(|a| a.value())
+}
+
+// ── element lookup ────────────────────────────────────────────────────────────
+
+// Only the *local* name is matched here too: the `a:` / `w:` prefix is
+// conventional, not guaranteed, and theme override parts bind the DrawingML
+// namespace to a different prefix.
+
+/// First element child with this local name.
+pub fn child<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
+    node.children()
+        .find(|n| n.is_element() && n.tag_name().name() == local)
+}
+
+/// First element in the subtree (`node` included) with this local name.
+pub fn descendant<'a>(
+    node: roxmltree::Node<'a, 'a>,
+    local: &str,
+) -> Option<roxmltree::Node<'a, 'a>> {
+    node.descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == local)
+}
+
+/// Element children in document order. Transform and stop lists are
+/// order-sensitive, so callers must never collect these into a set.
+pub fn elems<'a>(
+    node: roxmltree::Node<'a, 'a>,
+) -> impl Iterator<Item = roxmltree::Node<'a, 'a>> + 'a {
+    node.children().filter(|n| n.is_element())
+}
+
+/// First text node in the subtree — the value of a `<v>`-style leaf element.
+pub fn text_of<'a>(node: roxmltree::Node<'a, 'a>) -> Option<&'a str> {
+    node.descendants().find(|n| n.is_text()).and_then(|n| n.text())
+}
+
+/// Appends every descendant text node of `node`. Text is routinely split across
+/// sibling runs and `xml:space="preserve"` fragments, so reading only the first
+/// one drops most of a document's content.
+pub fn inner_text(node: roxmltree::Node<'_, '_>, out: &mut String) {
+    for d in node.descendants() {
+        if d.is_text() {
+            if let Some(t) = d.text() {
+                out.push_str(t);
+            }
+        }
+    }
+}
+
+/// Whether the subtree holds any non-whitespace text, without allocating it.
+pub fn has_inner_text(node: roxmltree::Node<'_, '_>) -> bool {
+    node.descendants()
+        .any(|d| d.is_text() && d.text().map(|t| !t.trim().is_empty()).unwrap_or(false))
+}
+
+// ── typed attributes ──────────────────────────────────────────────────────────
+
+/// The OOXML boolean spelling, plus the `TRUE`/`True`/`on` variants real
+/// producers emit. Deliberately lenient: every flag behind it is presentational,
+/// so honouring a non-conforming spelling beats silently reading it as false.
+pub fn truthy(v: &str) -> bool {
+    matches!(v.trim(), "1" | "true" | "TRUE" | "True" | "on")
+}
+
+pub fn attr_bool(node: roxmltree::Node<'_, '_>, local: &str) -> Option<bool> {
+    attr_local(node, local).map(truthy)
+}
+
+pub fn attr_u32(node: roxmltree::Node<'_, '_>, local: &str) -> Option<u32> {
+    attr_local(node, local)?.trim().parse().ok()
+}
+
+pub fn attr_i64(node: roxmltree::Node<'_, '_>, local: &str) -> Option<i64> {
+    attr_local(node, local)?.trim().parse().ok()
+}
+
+pub fn attr_f32(node: roxmltree::Node<'_, '_>, local: &str) -> Option<f32> {
+    let v: f32 = attr_local(node, local)?.trim().parse().ok()?;
+    v.is_finite().then_some(v)
 }
 
 // ── natural sort for pptx slide filenames ─────────────────────────────────────

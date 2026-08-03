@@ -5,11 +5,11 @@
 //! parsed and exposed anyway, because a caller that draws the shape as SVG has
 //! somewhere to put them.
 
-use crate::office::drawingml::fill::{parse_fill_opt, Fill};
+use crate::office::drawingml::color::Color;
+use crate::office::drawingml::fill::{parse_fill_opt, pattern_color, Fill, PATTERN_INK};
 use crate::office::drawingml::theme::Theme;
-use crate::office::drawingml::{child_elem, elems};
 use crate::office::html::{emu_to_px, fmt_px};
-use crate::office::xml;
+use crate::office::xml::{self, child, elems};
 
 /// Width used when `a:ln` carries no `w`. Office's default outline is a hairline
 /// (0.75pt ≈ 1px at the CSS reference resolution).
@@ -76,9 +76,9 @@ pub fn parse_line(node: roxmltree::Node<'_, '_>, theme: &Theme, ph: Option<u32>)
             Some("sq") => Cap::Square,
             _ => Cap::Flat,
         },
-        join: if child_elem(ln, "round").is_some() {
+        join: if child(ln, "round").is_some() {
             Join::Round
-        } else if child_elem(ln, "bevel").is_some() {
+        } else if child(ln, "bevel").is_some() {
             Join::Bevel
         } else {
             // `a:miter` and an absent join both mean mitred.
@@ -102,7 +102,7 @@ fn is_ln_tag(local: &str) -> bool {
 /// families are distinguished by which one dominates the pattern; the `sys*`
 /// presets are the same patterns at a tighter scale.
 fn parse_dash(ln: roxmltree::Node<'_, '_>) -> Dash {
-    if let Some(prst) = child_elem(ln, "prstDash").and_then(|d| xml::attr_local(d, "val")) {
+    if let Some(prst) = child(ln, "prstDash").and_then(|d| xml::attr_local(d, "val")) {
         return match prst {
             "solid" => Dash::Solid,
             "dot" | "sysDot" => Dash::Dotted,
@@ -114,28 +114,54 @@ fn parse_dash(ln: roxmltree::Node<'_, '_>) -> Dash {
     }
     // `a:custDash` is an explicit stop list; CSS cannot express it, and every
     // custom dash is at least dashed-looking.
-    if child_elem(ln, "custDash").is_some() {
+    if child(ln, "custDash").is_some() {
         return Dash::Dashed;
     }
     Dash::Solid
 }
 
 impl Line {
+    /// The outline a theme style reference becomes. `a:lnRef` indexes the theme's
+    /// line style list, which is not modelled here, so a referenced outline is
+    /// drawn as a hairline in the referenced colour rather than not at all.
+    pub fn hairline(color: Color) -> Line {
+        Line {
+            width_px: DEFAULT_WIDTH_PX,
+            fill: Fill::Solid(color),
+            dash: Dash::Solid,
+            cap: Cap::Flat,
+            join: Join::Miter,
+        }
+    }
+
     /// Whether this outline paints anything. A gradient or pattern stroke counts:
     /// [`line_css`] flattens it to a single colour.
     pub fn is_visible(&self) -> bool {
-        self.width_px > 0.0 && self.stroke_color().is_some()
+        self.width_px > 0.0 && self.flat_color().is_some()
     }
 
     /// The single colour CSS gets. Gradient strokes collapse to their first stop
     /// and pattern strokes to the fg/bg blend, because `border-color` takes one
     /// colour.
-    fn stroke_color(&self) -> Option<String> {
+    fn flat_color(&self) -> Option<String> {
         match &self.fill {
             Fill::Solid(c) => Some(c.css()),
             Fill::Gradient(g) => g.stops.first().map(|s| s.color.css()),
-            Fill::Pattern(fg, bg) => Some(bg.mix(fg, 0.5).css()),
+            Fill::Pattern(fg, bg) => Some(pattern_color(fg, bg, PATTERN_INK).css()),
             Fill::None | Fill::Picture(_) => None,
+        }
+    }
+
+    /// The stroke colour for a caller that paints one edge itself — a CSS rule on
+    /// a single border, an SVG stroke — rather than going through [`line_css`].
+    ///
+    /// Deliberately not `flat_color`: only a solid stroke has a colour to give,
+    /// and black keeps the edge visible where dropping it would lose the line
+    /// altogether.
+    pub fn stroke_color(&self) -> String {
+        match &self.fill {
+            Fill::Solid(c) => c.css(),
+            _ => "#000".to_string(),
         }
     }
 }
@@ -143,7 +169,7 @@ impl Line {
 /// The `border` declaration for an outline, or `border:none;` when it paints
 /// nothing (explicit, so it can override an inherited border).
 pub fn line_css(l: &Line) -> String {
-    let Some(color) = l.stroke_color() else {
+    let Some(color) = l.flat_color() else {
         return "border:none;".to_string();
     };
     // A sub-pixel border can round away to nothing in WebKit, which loses the
@@ -162,7 +188,6 @@ pub fn line_css(l: &Line) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::office::drawingml::color::Color;
 
     const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#;
 
@@ -311,6 +336,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(huge.width_px, MAX_WIDTH_PX);
+    }
+
+    #[test]
+    fn a_hairline_is_one_px_solid_in_the_given_colour() {
+        let l = Line::hairline(Color::from_rgb(0x4472C4));
+        assert_eq!(l.width_px, DEFAULT_WIDTH_PX);
+        assert_eq!(line_css(&l), "border:1px solid #4472c4;");
+        assert_eq!(l.stroke_color(), "#4472c4");
+    }
+
+    #[test]
+    fn stroke_color_falls_back_to_black_for_a_non_solid_paint() {
+        // A one-edge rule takes one colour and has no fallback of its own, so a
+        // gradient or picture stroke becomes black rather than nothing.
+        let l = line_of(
+            r#"<a:ln w="12700"><a:gradFill><a:gsLst>
+                 <a:gs pos="0"><a:schemeClr val="accent1"/></a:gs>
+                 <a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>
+               </a:gsLst></a:gradFill></a:ln>"#,
+        )
+        .unwrap();
+        assert_eq!(l.stroke_color(), "#000");
+        // ...while the border shorthand still flattens to the first stop.
+        assert_eq!(line_css(&l), "border:1.33px solid #4472c4;");
     }
 
     #[test]

@@ -6,8 +6,12 @@
 //! renderers in the later stages are the consumers.
 #![allow(dead_code)]
 
+use super::pkg::{self, Budget, Zip};
 use super::xml;
 use std::collections::HashMap;
+
+/// A part's relationships, by rId.
+pub type Rels = HashMap<String, Relationship>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relationship {
@@ -21,7 +25,7 @@ pub struct Relationship {
 }
 
 /// Parse a `_rels/*.rels` part into rId → relationship.
-pub fn parse_rels(rels_xml: &str) -> Result<HashMap<String, Relationship>, String> {
+pub fn parse_rels(rels_xml: &str) -> Result<Rels, String> {
     let doc = xml::parse(rels_xml)?;
     let mut map = HashMap::new();
     for rel in doc
@@ -99,6 +103,70 @@ pub fn resolve_target(owner_part: &str, target: &str) -> Option<String> {
         return None;
     }
     Some(stack.join("/"))
+}
+
+/// Relationships of `part`: empty when the package holds no `_rels` entry for
+/// it (legal — it means "no relationships") or when that entry is unparseable.
+/// A *read* failure is returned instead of swallowed, so a budget stop reaches
+/// the caller rather than passing for a part with nothing attached to it.
+pub fn read_rels(zip: &mut Zip, part: &str, budget: &mut Budget) -> Result<Rels, String> {
+    Ok(match pkg::read_entry(zip, &rels_path_for(part), budget)? {
+        Some(x) => parse_rels(&x).unwrap_or_default(),
+        None => Rels::new(),
+    })
+}
+
+/// As [`read_rels`], but a `_rels` part that does not parse is an error rather
+/// than "no relationships". For a caller whose whole feature hangs off one
+/// relationship — the worksheet's drawing — swallowing the parse failure makes
+/// the drawings vanish with nothing said, and the notes are supposed to tell the
+/// reader what was dropped. A *missing* entry is still the legal empty case.
+pub fn read_rels_strict(zip: &mut Zip, part: &str, budget: &mut Budget) -> Result<Rels, String> {
+    match pkg::read_entry(zip, &rels_path_for(part), budget)? {
+        Some(x) => parse_rels(&x),
+        None => Ok(Rels::new()),
+    }
+}
+
+/// The package's main part, via the `officeDocument` relationship of
+/// `_rels/.rels`. `fallback` (`xl/workbook.xml`, `ppt/presentation.xml`) is the
+/// last resort only: those paths are a convention, not a rule.
+pub fn root_part(zip: &mut Zip, budget: &mut Budget, fallback: &str) -> String {
+    if let Ok(Some(x)) = pkg::read_entry(zip, "_rels/.rels", budget) {
+        if let Ok(rels) = parse_rels(&x) {
+            for r in rels.values() {
+                if r.external || !r.kind.ends_with("/officeDocument") {
+                    continue;
+                }
+                if let Some(p) = resolve_target("", &r.target) {
+                    return p;
+                }
+            }
+        }
+    }
+    fallback.to_string()
+}
+
+/// First relationship whose `Type` ends with `suffix`, resolved to a part path.
+/// Map order, so this is for the kinds a part has at most one of.
+pub fn part_by_kind(rels: &Rels, owner: &str, suffix: &str) -> Option<String> {
+    rels.values()
+        .filter(|r| !r.external && r.kind.ends_with(suffix))
+        .find_map(|r| resolve_target(owner, &r.target))
+}
+
+/// As [`part_by_kind`], but deterministic when the owner has several parts of
+/// the kind: relationship ids are iterated in map order, so the lowest id by
+/// natural order wins instead (a layout has exactly one master, but a slide can
+/// have many images).
+pub fn part_by_kind_sorted(rels: &Rels, owner: &str, suffix: &str) -> Option<String> {
+    let mut hits: Vec<(&String, &Relationship)> = rels
+        .iter()
+        .filter(|(_, r)| !r.external && r.kind.ends_with(suffix))
+        .collect();
+    hits.sort_by(|a, b| xml::natural_cmp(a.0, b.0));
+    hits.first()
+        .and_then(|(_, r)| resolve_target(owner, &r.target))
 }
 
 /// `[Content_Types].xml`: extension defaults plus per-part overrides.

@@ -21,126 +21,11 @@ pub fn extract_spreadsheet_grid(path: &str) -> Result<Vec<Vec<String>>, String> 
         .to_ascii_lowercase();
     let mut budget = Budget::new();
     match ext.as_str() {
-        "xlsx" => extract_xlsx_grid(path, &mut budget),
+        // xlsx goes through the HTML renderer (`office::render`); only the ODF
+        // sheet still falls back to a grid.
         "ods" => extract_ods_grid(path, &mut budget),
         other => Err(format!("not a spreadsheet: {other}")),
     }
-}
-
-// ── xlsx grid ────────────────────────────────────────────────────────────────
-
-// Convert Excel column letters to a 0-based index ("A"→0, "Z"→25, "AA"→26…).
-fn col_letter_to_index(col: &str) -> Option<usize> {
-    let mut idx: usize = 0;
-    for ch in col.bytes() {
-        if !ch.is_ascii_alphabetic() {
-            break;
-        }
-        idx = idx * 26 + (ch.to_ascii_uppercase() - b'A') as usize + 1;
-    }
-    if idx == 0 {
-        None
-    } else {
-        Some(idx - 1)
-    }
-}
-
-// Split a cell reference like "AB12" into the letter prefix and digit suffix.
-fn split_cell_ref(r: &str) -> (&str, &str) {
-    let split = r.find(|c: char| c.is_ascii_digit()).unwrap_or(r.len());
-    (&r[..split], &r[split..])
-}
-
-fn extract_xlsx_grid(path: &str, budget: &mut Budget) -> Result<Vec<Vec<String>>, String> {
-    let mut zip = pkg::open_zip(path)?;
-
-    // Build shared string pool.
-    let pool: Vec<String> = match pkg::read_entry(&mut zip, "xl/sharedStrings.xml", budget)? {
-        Some(xml) => {
-            let doc = xml::parse(&xml)?;
-            doc.root_element()
-                .descendants()
-                .filter(|n| n.tag_name().name() == "si")
-                .map(|si| {
-                    si.descendants()
-                        .filter(|n| n.tag_name().name() == "t")
-                        .filter_map(|t| {
-                            t.descendants()
-                                .find(|n| n.is_text())
-                                .and_then(|n| n.text())
-                        })
-                        .collect::<String>()
-                })
-                .collect()
-        }
-        None => Vec::new(),
-    };
-
-    let xml = match pkg::read_entry(&mut zip, "xl/worksheets/sheet1.xml", budget)? {
-        Some(x) => x,
-        None => return Ok(Vec::new()),
-    };
-    let doc = xml::parse(&xml)?;
-
-    let mut grid: Vec<Vec<String>> = Vec::new();
-
-    for row_node in doc
-        .root_element()
-        .descendants()
-        .filter(|n| n.tag_name().name() == "row")
-        .take(MAX_ROWS)
-    {
-        let mut row: Vec<(usize, String)> = Vec::new();
-        for cell in row_node
-            .children()
-            .filter(|n| n.tag_name().name() == "c")
-        {
-            let r_attr = cell.attribute("r").unwrap_or("");
-            let (col_str, _) = split_cell_ref(r_attr);
-            let Some(col_idx) = col_letter_to_index(col_str) else {
-                continue;
-            };
-            if col_idx >= MAX_COLS {
-                continue;
-            }
-            let cell_type = cell.attribute("t").unwrap_or("");
-            let value: String = match cell_type {
-                "s" => {
-                    // shared string index
-                    let idx: usize = cell
-                        .descendants()
-                        .find(|n| n.tag_name().name() == "v")
-                        .and_then(|v| v.text())
-                        .and_then(|t| t.parse().ok())
-                        .unwrap_or(0);
-                    pool.get(idx).cloned().unwrap_or_default()
-                }
-                "inlineStr" => cell
-                    .descendants()
-                    .find(|n| n.tag_name().name() == "t")
-                    .and_then(|t| t.text())
-                    .unwrap_or("")
-                    .to_string(),
-                _ => cell
-                    .descendants()
-                    .find(|n| n.tag_name().name() == "v")
-                    .and_then(|v| v.text())
-                    .unwrap_or("")
-                    .to_string(),
-            };
-            let value = truncate_cell(value);
-            row.push((col_idx, value));
-        }
-        // Expand sparse row to a dense vec filling gaps with "".
-        let max_col = row.iter().map(|(c, _)| c + 1).max().unwrap_or(0);
-        let mut dense = vec![String::new(); max_col];
-        for (col, val) in row {
-            dense[col] = val;
-        }
-        grid.push(dense);
-    }
-
-    Ok(grid)
 }
 
 // ── ods grid ─────────────────────────────────────────────────────────────────
@@ -237,24 +122,6 @@ fn truncate_cell(mut s: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn col_letters_map_to_zero_based_indices() {
-        assert_eq!(col_letter_to_index("A"), Some(0));
-        assert_eq!(col_letter_to_index("Z"), Some(25));
-        assert_eq!(col_letter_to_index("AA"), Some(26));
-        assert_eq!(col_letter_to_index("XFD"), Some(16383));
-        assert_eq!(col_letter_to_index(""), None);
-        assert_eq!(col_letter_to_index("12"), None);
-    }
-
-    #[test]
-    fn cell_ref_splits_letters_from_digits() {
-        assert_eq!(split_cell_ref("AB12"), ("AB", "12"));
-        assert_eq!(split_cell_ref("A1"), ("A", "1"));
-        assert_eq!(split_cell_ref("Sheet"), ("Sheet", ""));
-        assert_eq!(split_cell_ref(""), ("", ""));
-    }
 
     #[test]
     fn truncate_cell_keeps_char_boundaries() {

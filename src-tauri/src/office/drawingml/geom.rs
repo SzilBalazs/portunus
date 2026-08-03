@@ -1,9 +1,8 @@
 //! Shape geometry: the EMU→px scale, `a:xfrm` parsing, group-transform
 //! composition, and as much of `a:prstGeom` as CSS can express.
 
-use crate::office::drawingml::{child_elem, elems};
 use crate::office::html::{fmt_pct, fmt_px, Style};
-use crate::office::xml;
+use crate::office::xml::{self, child, elems};
 
 /// 914400 EMU per inch ÷ 96 px per inch. `html::emu_to_px` is the f32 twin of
 /// this; geometry composition needs f64 because a group chain multiplies scale
@@ -165,10 +164,10 @@ pub fn parse_xfrm(node: roxmltree::Node<'_, '_>) -> Option<Xf> {
     } else {
         elems(node).find(|n| n.tag_name().name() == "xfrm")?
     };
-    let ext = child_elem(xfrm, "ext")?;
+    let ext = child(xfrm, "ext")?;
     let cx = emu_attr(ext, "cx")?;
     let cy = emu_attr(ext, "cy")?;
-    let (x, y) = match child_elem(xfrm, "off") {
+    let (x, y) = match child(xfrm, "off") {
         Some(off) => (
             emu_attr(off, "x").unwrap_or(0.0),
             emu_attr(off, "y").unwrap_or(0.0),
@@ -184,8 +183,8 @@ pub fn parse_xfrm(node: roxmltree::Node<'_, '_>) -> Option<Xf> {
             .and_then(|v| v.trim().parse::<i64>().ok())
             .map(|r| r as f64 / ANG_PER_DEG)
             .unwrap_or(0.0),
-        flip_h: bool_attr(xfrm, "flipH"),
-        flip_v: bool_attr(xfrm, "flipV"),
+        flip_h: xml::attr_bool(xfrm, "flipH").unwrap_or(false),
+        flip_v: xml::attr_bool(xfrm, "flipV").unwrap_or(false),
     })
 }
 
@@ -199,14 +198,14 @@ pub fn parse_group_xfrm(node: roxmltree::Node<'_, '_>) -> Option<GroupXf> {
         elems(node).find(|n| n.tag_name().name() == "xfrm")?
     };
     let xf = parse_xfrm(xfrm)?;
-    let ch_off = match child_elem(xfrm, "chOff") {
+    let ch_off = match child(xfrm, "chOff") {
         Some(n) => (
             emu_attr(n, "x").unwrap_or(0.0),
             emu_attr(n, "y").unwrap_or(0.0),
         ),
         None => (xf.x, xf.y),
     };
-    let ch_ext = match child_elem(xfrm, "chExt") {
+    let ch_ext = match child(xfrm, "chExt") {
         Some(n) => (
             emu_attr(n, "cx").unwrap_or(xf.cx),
             emu_attr(n, "cy").unwrap_or(xf.cy),
@@ -223,10 +222,6 @@ pub fn parse_group_xfrm(node: roxmltree::Node<'_, '_>) -> Option<GroupXf> {
 fn emu_attr(node: roxmltree::Node<'_, '_>, name: &str) -> Option<f64> {
     let v = xml::attr_local(node, name)?.trim().parse::<i64>().ok()?;
     Some(emu_px(v))
-}
-
-fn bool_attr(node: roxmltree::Node<'_, '_>, name: &str) -> bool {
-    matches!(xml::attr_local(node, name), Some("1") | Some("true"))
 }
 
 // ── preset geometry ──────────────────────────────────────────────────────────
@@ -501,7 +496,7 @@ fn parse_cust_geom(
     geom: roxmltree::Node<'_, '_>,
     ext_px: Option<(f64, f64)>,
 ) -> Option<Vec<PathCmd>> {
-    let list = child_elem(geom, "pathLst")?;
+    let list = child(geom, "pathLst")?;
     let mut out: Vec<PathCmd> = Vec::new();
     for path in elems(list).filter(|n| n.tag_name().name() == "path") {
         // `fill="none"` marks a stroke-only subpath. It contributes nothing to the
@@ -572,7 +567,7 @@ fn pt_cmd(
     sh: f64,
     make: fn(f64, f64) -> PathCmd,
 ) -> Option<PathCmd> {
-    let pt = child_elem(seg, "pt")?;
+    let pt = child(seg, "pt")?;
     let (x, y) = unit_pt(pt, sw, sh)?;
     Some(make(x, y))
 }
@@ -697,7 +692,7 @@ fn path_data(cmds: &[PathCmd], cx: f64, cy: f64) -> Option<String> {
 /// written.
 fn round_rect_adj(geom: roxmltree::Node<'_, '_>) -> f64 {
     let mut pct = 16.667;
-    if let Some(av) = child_elem(geom, "avLst") {
+    if let Some(av) = child(geom, "avLst") {
         for gd in elems(av).filter(|n| n.tag_name().name() == "gd") {
             // roundRect has a single handle; producers name it `adj` and (rarely)
             // `adj1`.

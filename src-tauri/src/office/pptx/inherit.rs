@@ -7,7 +7,7 @@
 //! body placeholders on a layout are distinguished only by their index, while a
 //! title has no index at all.
 
-use super::super::drawingml::{child_elem, elems};
+use super::super::xml::{child, elems};
 use roxmltree::Node;
 
 /// A `<p:ph>` reference. An absent `type` attribute means `body` for layouts and
@@ -34,8 +34,8 @@ pub fn ph_of(sp: Node) -> Option<Ph> {
         let n = c.tag_name().name();
         n.starts_with("nv") && n.ends_with("Pr")
     })?;
-    let nv_pr = child_elem(nv, "nvPr")?;
-    let ph = child_elem(nv_pr, "ph")?;
+    let nv_pr = child(nv, "nvPr")?;
+    let ph = child(nv_pr, "ph")?;
     Some(Ph {
         ty: ph.attribute("type").unwrap_or("body").to_string(),
         idx: ph.attribute("idx").and_then(|v| v.parse::<u32>().ok()),
@@ -53,7 +53,7 @@ pub fn is_hidden(sp: Node) -> bool {
             let n = c.tag_name().name();
             n.starts_with("nv") && n.ends_with("Pr")
         })
-        .and_then(|nv| child_elem(nv, "cNvPr"))
+        .and_then(|nv| child(nv, "cNvPr"))
         .and_then(|c| c.attribute("hidden"))
         .map(|v| matches!(v, "1" | "true"))
         .unwrap_or(false)
@@ -117,18 +117,18 @@ pub fn find_ph<'a>(tree: Node<'a, 'a>, want: &Ph) -> Option<Node<'a, 'a>> {
 /// The master's list style for a shape kind: `p:txStyles/p:titleStyle` and
 /// friends.
 pub fn tx_style<'a>(master: Option<Node<'a, 'a>>, kind: StyleKind) -> Option<Node<'a, 'a>> {
-    let styles = child_elem(master?, "txStyles")?;
+    let styles = child(master?, "txStyles")?;
     let want = match kind {
         StyleKind::Title => "titleStyle",
         StyleKind::Body => "bodyStyle",
         StyleKind::Other => "otherStyle",
     };
-    child_elem(styles, want)
+    child(styles, want)
 }
 
 /// `p:cSld/p:spTree` of a slide, layout or master.
 pub fn sp_tree<'a>(root: Node<'a, 'a>) -> Option<Node<'a, 'a>> {
-    child_elem(child_elem(root, "cSld")?, "spTree")
+    child(child(root, "cSld")?, "spTree")
 }
 
 #[cfg(test)]

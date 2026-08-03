@@ -1,4 +1,5 @@
-//! pptx text bodies: the DrawingML property cascade and paragraph emission.
+//! pptx text bodies: the DrawingML property cascade, resolved onto the
+//! format-neutral paragraph model in [`super::super::model`].
 //!
 //! Text properties in a presentation are resolved through a chain, weakest
 //! first: `p:defaultTextStyle` (presentation) → the master's `p:txStyles`
@@ -8,15 +9,23 @@
 //! every field below is an `Option` and every merge overwrites nothing it has
 //! no value for.
 //!
+//! What comes out is a `Vec<Para>` holding the *outcome* of that chain, with no
+//! DrawingML left in it; the emitters below add only the text box the
+//! paragraphs sit in and the pptx class names.
+//!
 //! Nothing here measures text, so line spacing, autofit scales and bullet
 //! hangs are geometric approximations of what PowerPoint computes from real
 //! font metrics. See the fidelity notes in the plan.
 
 use super::super::drawingml::color::{parse_color_elem_map, Color};
-use super::super::drawingml::theme::{ClrMap, Theme};
-use super::super::drawingml::{child_elem, elems};
+use super::super::drawingml::theme::{ClrMap, SchemeSlot, Theme};
 use super::super::fonts;
-use super::super::html::{attr, fmt_px, hundredths_pt_to_px, pt_to_px, Style, Writer};
+use super::super::html::{attr, fmt_px, hundredths_pt_to_px, Style, Writer};
+use super::super::listnum::auto_num;
+use super::super::model::{
+    self, Align, Caps, HtmlStyle, LineHeight, ListMarker, Para, Run, Script, TextRun, SINGLE_LINE,
+};
+use super::super::xml::{child, elems, has_inner_text, inner_text, truthy};
 use super::Ctx;
 use roxmltree::Node;
 
@@ -25,10 +34,15 @@ use roxmltree::Node;
 /// only for documents that ship without one.
 const DEFAULT_SZ_PT: f32 = 18.0;
 
-/// `a:lnSpc` percentages are relative to a single line of the font, which is
-/// taller than the em box. Without text measurement this is the multiplier that
-/// turns "100%" into a CSS `line-height`.
-const SINGLE_LINE: f32 = 1.2;
+/// The pptx spelling of the paragraph model; `scalable` is filled in per body
+/// from its autofit.
+const HTML: HtmlStyle = HtmlStyle {
+    para_class: "pp-p",
+    list_class: "pp-p pp-li",
+    marker_class: "pp-bu",
+    text_class: "pp-tx",
+    scalable: false,
+};
 
 /// Paragraphs per text body, and runs per paragraph. A generated deck can carry
 /// thousands; the shape is a fixed box on a 960px canvas, so nothing past this
@@ -53,7 +67,7 @@ pub struct RunProps {
     pub font: Option<String>,
     /// The raw typeface name, kept for the symbol-font remap.
     pub font_raw: Option<String>,
-    pub caps: Option<&'static str>,
+    pub caps: Option<Caps>,
     pub spc_pt: Option<f32>,
     /// `baseline`: positive is superscript, negative subscript, 0 neither.
     pub baseline: i32,
@@ -81,7 +95,7 @@ impl Default for Bullet {
 
 #[derive(Clone, Default)]
 pub struct ParaProps {
-    pub align: Option<&'static str>,
+    pub align: Option<Align>,
     pub mar_l: Option<f32>,
     /// First-line offset, normally negative (the bullet hangs left of the text).
     pub indent: Option<f32>,
@@ -98,10 +112,6 @@ pub struct ParaProps {
     /// `a:defRPr` at this link: the run properties every run in the paragraph
     /// starts from.
     pub run: RunProps,
-}
-
-fn truthy(v: &str) -> bool {
-    matches!(v, "1" | "true" | "on")
 }
 
 fn emu(v: &str) -> Option<f32> {
@@ -150,8 +160,8 @@ pub fn merge_run(p: &mut RunProps, n: Node, theme: &Theme, map: &ClrMap) {
     }
     if let Some(v) = n.attribute("cap") {
         p.caps = match v {
-            "all" => Some("uppercase"),
-            "small" => Some("small"),
+            "all" => Some(Caps::All),
+            "small" => Some(Caps::Small),
             _ => None,
         };
     }
@@ -171,19 +181,19 @@ pub fn merge_run(p: &mut RunProps, n: Node, theme: &Theme, map: &ClrMap) {
             };
         }
     }
-    if let Some(sf) = child_elem(n, "solidFill") {
+    if let Some(sf) = child(n, "solidFill") {
         if let Some(c) = parse_color_elem_map(sf, theme, map, None) {
             p.color = Some(c);
         }
     }
-    if let Some(latin) = child_elem(n, "latin") {
+    if let Some(latin) = child(n, "latin") {
         if let Some(tf) = latin.attribute("typeface").filter(|t| !t.is_empty()) {
             let (css, raw) = typeface(tf, theme);
             p.font = Some(css);
             p.font_raw = Some(raw);
         }
     }
-    if child_elem(n, "hlinkClick").is_some() {
+    if child(n, "hlinkClick").is_some() {
         p.link = true;
     }
 }
@@ -192,11 +202,11 @@ pub fn merge_run(p: &mut RunProps, n: Node, theme: &Theme, map: &ClrMap) {
 pub fn merge_para(p: &mut ParaProps, n: Node, theme: &Theme, map: &ClrMap) {
     if let Some(v) = n.attribute("algn") {
         p.align = match v {
-            "l" => Some("left"),
-            "ctr" => Some("center"),
-            "r" => Some("right"),
-            "just" | "justLow" => Some("justify"),
-            "dist" | "thaiDist" => Some("justify"),
+            "l" => Some(Align::Left),
+            "ctr" => Some(Align::Center),
+            "r" => Some(Align::Right),
+            "just" | "justLow" => Some(Align::Justify),
+            "dist" | "thaiDist" => Some(Align::Justify),
             _ => None,
         };
     }
@@ -209,11 +219,11 @@ pub fn merge_para(p: &mut ParaProps, n: Node, theme: &Theme, map: &ClrMap) {
     if let Some(v) = n.attribute("rtl") {
         p.rtl = Some(truthy(v));
     }
-    if let Some(ln) = child_elem(n, "lnSpc") {
-        if let Some(sp) = child_elem(ln, "spcPct").and_then(|e| e.attribute("val")).and_then(pct) {
+    if let Some(ln) = child(n, "lnSpc") {
+        if let Some(sp) = child(ln, "spcPct").and_then(|e| e.attribute("val")).and_then(pct) {
             p.line_pct = Some(sp);
             p.line_px = None;
-        } else if let Some(v) = child_elem(ln, "spcPts").and_then(|e| e.attribute("val")) {
+        } else if let Some(v) = child(ln, "spcPts").and_then(|e| e.attribute("val")) {
             if let Ok(hp) = v.parse::<i64>() {
                 p.line_px = Some(hundredths_pt_to_px(hp));
                 p.line_pct = None;
@@ -221,11 +231,11 @@ pub fn merge_para(p: &mut ParaProps, n: Node, theme: &Theme, map: &ClrMap) {
         }
     }
     for (tag, slot) in [("spcBef", 0usize), ("spcAft", 1usize)] {
-        if let Some(sp) = child_elem(n, tag) {
+        if let Some(sp) = child(n, tag) {
             // Percentage space-before is a fraction of a line, which needs the
             // resolved font size; it is applied at emit time via `line_px`-free
             // points only, so a percentage is dropped rather than guessed.
-            let px = child_elem(sp, "spcPts")
+            let px = child(sp, "spcPts")
                 .and_then(|e| e.attribute("val"))
                 .and_then(|v| v.parse::<i64>().ok())
                 .map(hundredths_pt_to_px);
@@ -238,15 +248,15 @@ pub fn merge_para(p: &mut ParaProps, n: Node, theme: &Theme, map: &ClrMap) {
             }
         }
     }
-    if child_elem(n, "buNone").is_some() {
+    if child(n, "buNone").is_some() {
         p.bullet = Bullet::None;
     }
-    if let Some(bc) = child_elem(n, "buChar") {
+    if let Some(bc) = child(n, "buChar") {
         if let Some(ch) = bc.attribute("char").filter(|c| !c.is_empty()) {
             p.bullet = Bullet::Char(ch.chars().take(4).collect());
         }
     }
-    if let Some(an) = child_elem(n, "buAutoNum") {
+    if let Some(an) = child(n, "buAutoNum") {
         let ty = an.attribute("type").unwrap_or("arabicPeriod").to_string();
         let start = an
             .attribute("startAt")
@@ -255,24 +265,24 @@ pub fn merge_para(p: &mut ParaProps, n: Node, theme: &Theme, map: &ClrMap) {
             .clamp(1, 32_767);
         p.bullet = Bullet::AutoNum(ty, start);
     }
-    if let Some(cf) = child_elem(n, "buClr") {
+    if let Some(cf) = child(n, "buClr") {
         if let Some(c) = parse_color_elem_map(cf, theme, map, None) {
             p.bu_color = Some(c);
         }
     }
-    if let Some(bf) = child_elem(n, "buFont") {
+    if let Some(bf) = child(n, "buFont") {
         if let Some(tf) = bf.attribute("typeface").filter(|t| !t.is_empty()) {
             let (css, raw) = typeface(tf, theme);
             p.bu_font = Some(css);
             p.bu_font_raw = Some(raw);
         }
     }
-    if let Some(bs) = child_elem(n, "buSzPct") {
+    if let Some(bs) = child(n, "buSzPct") {
         if let Some(v) = bs.attribute("val").and_then(pct) {
             p.bu_size_pct = Some(v.clamp(0.25, 4.0));
         }
     }
-    if let Some(dr) = child_elem(n, "defRPr") {
+    if let Some(dr) = child(n, "defRPr") {
         merge_run(&mut p.run, dr, theme, map);
     }
 }
@@ -405,7 +415,7 @@ fn merge_body_pr(o: &mut BodyOpts, n: Node) {
     if let Some(v) = n.attribute("vert") {
         o.vertical = v != "horz";
     }
-    if let Some(af) = child_elem(n, "normAutofit") {
+    if let Some(af) = child(n, "normAutofit") {
         o.autofit = true;
         // A stated scale replaces an inherited one; an unstated one means "no
         // shrink was needed at authoring time", not "keep the parent's".
@@ -419,7 +429,7 @@ fn merge_body_pr(o: &mut BodyOpts, n: Node) {
             .and_then(pct)
             .map(|r| r.clamp(0.0, 0.8))
             .unwrap_or(0.0);
-    } else if child_elem(n, "noAutofit").is_some() || child_elem(n, "spAutoFit").is_some() {
+    } else if child(n, "noAutofit").is_some() || child(n, "spAutoFit").is_some() {
         // Stated explicitly at this level: the text overflows (or the box grows,
         // which a fixed preview box cannot do), so no shrink.
         o.autofit = false;
@@ -428,205 +438,172 @@ fn merge_body_pr(o: &mut BodyOpts, n: Node) {
     }
 }
 
-// ── emission ─────────────────────────────────────────────────────────────────
+// ── ooxml → model ────────────────────────────────────────────────────────────
 
-/// Emits the absolutely-positioned text box of a shape, then its paragraphs.
-/// `w`/`h` are the shape's box in px; the insets come off it.
-pub fn emit_body(
-    ctx: &mut Ctx,
-    w: &mut Writer,
+/// Resolves every `a:p` of a text body against the cascade, into paragraphs
+/// that carry no DrawingML.
+///
+/// The autofit font scale is folded into the sizes here rather than at emit
+/// time: it applies to the paragraph's size and to each run's equally, and the
+/// emitter's "does this run differ from its paragraph?" test only holds if both
+/// sides have already been scaled.
+pub fn parse_paras(
     tb: Node,
     cas: &Cascade,
     opts: &BodyOpts,
-) {
-    let mut st = Style::new();
-    st.push_opt("left", fmt_px(opts.ins.0));
-    st.push_opt("top", fmt_px(opts.ins.1));
-    st.push_opt("right", fmt_px(opts.ins.2));
-    st.push_opt("bottom", fmt_px(opts.ins.3));
-    st.push("justify-content", opts.anchor);
-    if opts.anchor_ctr {
-        st.push("align-items", "center");
-    }
-    if !opts.wrap {
-        st.push("white-space", "pre");
-    }
-    // `data-af` is what the frame's autofit pass looks for; the paragraph sizes it
-    // scales are written as `calc(… * var(--af,1))`.
-    let af = if opts.autofit {
-        attr("data-af", "1")
-    } else {
-        String::new()
-    };
-    w.open(
-        "div",
-        &super::super::html::attrs(&[&attr("class", "pp-tb"), &af, &st.to_attr()]),
-    );
-    // The paragraphs live in their own block so the autofit pass can measure how
-    // tall the text actually is: a bottom-anchored box that overflows does so
-    // *upwards*, where `scrollHeight` cannot see it.
-    w.open("div", &super::super::html::attrs(&[&attr("class", "pp-tbi")]));
-    emit_paras(ctx, w, tb, cas, opts);
-    w.close();
-    w.close();
-}
-
-/// Emits just the paragraphs of a text body — used directly by table cells,
-/// which supply their own box.
-pub fn emit_paras(ctx: &mut Ctx, w: &mut Writer, tb: Node, cas: &Cascade, opts: &BodyOpts) {
-    let theme = ctx.theme;
-    let map = ctx.clr_map;
+    theme: &Theme,
+    map: &ClrMap,
+) -> Vec<Para> {
     // One counter per indent level for `a:buAutoNum`; a deeper level restarts
     // whenever a shallower paragraph intervenes, which is how PowerPoint
     // numbers nested lists.
     let mut counters = [0u32; LEVELS];
-    let mut n_paras = 0usize;
+    let mut out = Vec::new();
     for para in elems(tb) {
         if para.tag_name().name() != "p" {
             continue;
         }
-        if w.is_full() || n_paras >= MAX_PARAS {
+        if out.len() >= MAX_PARAS {
             break;
         }
-        n_paras += 1;
+        out.push(parse_para(para, cas, opts, theme, map, &mut counters));
+    }
+    out
+}
 
-        let ppr = child_elem(para, "pPr");
-        let lvl = ppr
-            .and_then(|n| n.attribute("lvl"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0)
-            .min(LEVELS - 1);
-        let mut pp = cas.level(lvl, theme, &map);
-        if let Some(n) = ppr {
-            merge_para(&mut pp, n, theme, &map);
-        }
+fn parse_para(
+    para: Node,
+    cas: &Cascade,
+    opts: &BodyOpts,
+    theme: &Theme,
+    map: &ClrMap,
+    counters: &mut [u32; LEVELS],
+) -> Para {
+    let ppr = child(para, "pPr");
+    let lvl = ppr
+        .and_then(|n| n.attribute("lvl"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(LEVELS - 1);
+    let mut pp = cas.level(lvl, theme, map);
+    if let Some(n) = ppr {
+        merge_para(&mut pp, n, theme, map);
+    }
 
-        // Runs first, so the paragraph's own font size can be the first run's
-        // (it sizes the bullet and an otherwise empty line).
-        let runs: Vec<Node> = elems(para)
-            .filter(|c| matches!(c.tag_name().name(), "r" | "br" | "fld"))
-            .take(MAX_RUNS)
-            .collect();
-        let first_rpr = runs
-            .iter()
-            .find(|r| r.tag_name().name() == "r")
-            .and_then(|r| child_elem(*r, "rPr"));
-        let mut base = pp.run.clone();
-        if let Some(n) = first_rpr {
-            merge_run(&mut base, n, theme, &map);
+    // Runs first, so the paragraph's own font size can be the first run's
+    // (it sizes the bullet and an otherwise empty line).
+    let nodes: Vec<Node> = elems(para)
+        .filter(|c| matches!(c.tag_name().name(), "r" | "br" | "fld"))
+        .take(MAX_RUNS)
+        .collect();
+    let first_rpr = nodes
+        .iter()
+        .find(|r| r.tag_name().name() == "r")
+        .and_then(|r| child(*r, "rPr"));
+    let mut base = pp.run.clone();
+    if let Some(n) = first_rpr {
+        merge_run(&mut base, n, theme, map);
+    }
+    if nodes.is_empty() {
+        // An empty paragraph is a spacer whose height comes from
+        // `a:endParaRPr`.
+        if let Some(n) = child(para, "endParaRPr") {
+            merge_run(&mut base, n, theme, map);
         }
-        if runs.is_empty() {
-            // An empty paragraph is a spacer whose height comes from
-            // `a:endParaRPr`.
-            if let Some(n) = child_elem(para, "endParaRPr") {
-                merge_run(&mut base, n, theme, &map);
-            }
-        }
-        let base_pt = base.sz_pt.unwrap_or(DEFAULT_SZ_PT) * opts.font_scale;
+    }
+    let base_pt = base.sz_pt.unwrap_or(DEFAULT_SZ_PT) * opts.font_scale;
 
-        // The bullet label is resolved before the paragraph box is written, because
-        // whether there is one decides how the indent is spelled. A blank line in a
-        // bulleted list carries no bullet in PowerPoint and does not consume a
-        // number either, so an empty paragraph asks for neither.
-        let label = if runs.iter().any(|r| any_text(*r)) {
-            bullet_label(&pp, lvl, &mut counters)
-        } else {
-            None
-        };
-        let hang = pp.indent.unwrap_or(0.0);
-        let mar_l = pp.mar_l.unwrap_or(0.0);
+    // A blank line in a bulleted list carries no bullet in PowerPoint and does
+    // not consume a number either, so an empty paragraph asks for neither —
+    // which is also why the counters are only advanced when one is asked for.
+    let marker = if nodes.iter().any(|r| any_text(*r)) {
+        bullet_label(&pp, lvl, counters).map(|label| ListMarker {
+            label,
+            color: pp.bu_color,
+            // A symbol bullet font is only useful for the glyph the remap could
+            // not resolve; the remapped glyph reads better in the text font.
+            font: pp
+                .bu_font
+                .clone()
+                .filter(|_| !fonts::is_symbol_font(pp.bu_font_raw.as_deref().unwrap_or(""))),
+            size_pt: pp.bu_size_pct.map(|p| base_pt * p),
+        })
+    } else {
+        None
+    };
 
-        let mut st = Style::new();
-        st.push_opt("text-align", pp.align.map(str::to_string));
-        if label.is_some() {
-            // Hanging indent as a flex row rather than `text-indent`: the bullet is
-            // a fixed-width first item and the runs are a block that wraps at its
-            // own left edge. With `text-indent` a first word wider than what is
-            // left of the line moves to the next line *whole* instead of breaking,
-            // which leaves the bullet sitting alone on a line of its own.
-            st.push_opt(
-                "margin-left",
-                Some((mar_l + hang).max(0.0)).filter(|v| *v != 0.0).and_then(fmt_px),
-            );
-        } else {
-            st.push_opt("margin-left", pp.mar_l.filter(|v| *v != 0.0).and_then(fmt_px));
-            st.push_opt("text-indent", pp.indent.filter(|v| *v != 0.0).and_then(fmt_px));
-        }
-        st.push_opt("margin-top", pp.before_px.filter(|v| *v > 0.0).and_then(fmt_px));
-        st.push_opt("margin-bottom", pp.after_px.filter(|v| *v > 0.0).and_then(fmt_px));
-        st.push_opt("font-size", scaled_px(pt_to_px(base_pt), opts.autofit));
-        if let Some(px) = pp.line_px {
-            st.push_opt("line-height", scaled_px(px, opts.autofit));
-        } else {
-            let mult = pp.line_pct.unwrap_or(1.0) * SINGLE_LINE * (1.0 - opts.ln_reduce);
-            if (mult - SINGLE_LINE).abs() > 0.001 {
-                st.push_opt("line-height", super::super::html::fmt_pct(mult * 100.0));
-            }
-        }
-        if pp.rtl == Some(true) {
-            st.push("direction", "rtl");
-        }
-        let class = if label.is_some() { "pp-p pp-li" } else { "pp-p" };
-        w.open("p", &super::super::html::attrs(&[&attr("class", class), &st.to_attr()]));
-
-        if let Some(label) = label.as_deref() {
-            emit_bullet(w, &pp, label, hang, base_pt);
-            w.open("span", &super::super::html::attrs(&[&attr("class", "pp-tx")]));
-        }
-
-        if runs.is_empty() {
-            // A non-breaking space keeps the empty line's height.
-            w.text("\u{00a0}");
-        }
-        for r in runs {
-            match r.tag_name().name() {
-                "br" => w.void("br", ""),
-                // A field (slide number, date) renders its cached text; the live
-                // value is not computable here.
-                "r" | "fld" => {
-                    let mut rp = pp.run.clone();
-                    if let Some(n) = child_elem(r, "rPr") {
-                        merge_run(&mut rp, n, theme, &map);
-                    }
-                    let text = run_text(r, &rp);
-                    if text.is_empty() {
-                        continue;
-                    }
-                    emit_run(ctx, w, &text, &rp, base_pt, opts.font_scale, opts.autofit);
+    let mut runs = Vec::with_capacity(nodes.len());
+    for r in nodes {
+        match r.tag_name().name() {
+            "br" => runs.push(Run::Break),
+            // A field (slide number, date) renders its cached text; the live
+            // value is not computable here.
+            "r" | "fld" => {
+                let mut rp = pp.run.clone();
+                if let Some(n) = child(r, "rPr") {
+                    merge_run(&mut rp, n, theme, map);
                 }
-                _ => {}
+                let text = run_text(r, &rp);
+                runs.push(Run::Text(parse_run(text, &rp, base_pt, opts.font_scale, theme)));
             }
+            _ => {}
         }
-        if label.is_some() {
-            w.close(); // pp-tx
-        }
-        w.close();
+    }
+
+    Para {
+        runs,
+        size_pt: base_pt,
+        align: pp.align,
+        indent_px: pp.mar_l.unwrap_or(0.0),
+        first_line_px: pp.indent.unwrap_or(0.0),
+        line: match pp.line_px {
+            Some(px) => LineHeight::Exact(px),
+            None => LineHeight::Multiple(
+                pp.line_pct.unwrap_or(1.0) * SINGLE_LINE * (1.0 - opts.ln_reduce),
+            ),
+        },
+        space_before_px: pp.before_px.unwrap_or(0.0),
+        space_after_px: pp.after_px.unwrap_or(0.0),
+        marker,
+        rtl: pp.rtl == Some(true),
     }
 }
 
-/// A length the frame's autofit pass can shrink. PowerPoint's own `fontScale` is
-/// computed against *its* font metrics; with a substituted family the same text
-/// needs a different scale, so the box re-fits itself after layout and every size
-/// inside it rides on `--af`.
-fn scaled_px(px: f32, autofit: bool) -> Option<String> {
-    let v = fmt_px(px)?;
-    Some(if autofit {
-        format!("calc({} * var(--af, 1))", v)
-    } else {
-        v
-    })
+fn parse_run(text: String, rp: &RunProps, base_pt: f32, scale: f32, theme: &Theme) -> TextRun {
+    TextRun {
+        text,
+        // A run that states no size of its own renders at the paragraph's, so
+        // that is what it carries — the model has no "inherit" to express.
+        size_pt: rp.sz_pt.map(|v| v * scale).unwrap_or(base_pt),
+        bold: rp.bold == Some(true),
+        italic: rp.italic == Some(true),
+        underline: rp.underline == Some(true) || rp.link,
+        strike: rp.strike == Some(true),
+        // An unstyled hyperlink takes the theme's link colour; anything else
+        // inherits the shape's.
+        color: rp
+            .color
+            .or_else(|| rp.link.then(|| Color::from_rgb(theme.color(SchemeSlot::Hlink)))),
+        font: rp.font.clone(),
+        caps: rp.caps,
+        letter_spacing_pt: rp.spc_pt.unwrap_or(0.0),
+        script: match rp.baseline {
+            1 => Some(Script::Super),
+            -1 => Some(Script::Sub),
+            _ => None,
+        },
+    }
 }
 
 /// Whether a run carries any non-whitespace text. Checked before the bullet is
-/// emitted, so it must not allocate the text to find out.
+/// resolved, so it must not allocate the text to find out.
 fn any_text(r: Node) -> bool {
     if !matches!(r.tag_name().name(), "r" | "fld") {
         return false;
     }
     elems(r)
         .filter(|t| t.tag_name().name() == "t")
-        .flat_map(|t| t.descendants())
-        .any(|d| d.text().map(|x| !x.trim().is_empty()).unwrap_or(false))
+        .any(has_inner_text)
 }
 
 /// Concatenated `a:t` text of a run, with symbol-font code points mapped to
@@ -634,16 +611,8 @@ fn any_text(r: Node) -> bool {
 /// render as boxes.
 fn run_text(r: Node, rp: &RunProps) -> String {
     let mut s = String::new();
-    for t in elems(r) {
-        if t.tag_name().name() == "t" {
-            for d in t.descendants() {
-                if d.is_text() {
-                    if let Some(x) = d.text() {
-                        s.push_str(x);
-                    }
-                }
-            }
-        }
+    for t in elems(r).filter(|t| t.tag_name().name() == "t") {
+        inner_text(t, &mut s);
     }
     let symbol = rp
         .font_raw
@@ -659,80 +628,6 @@ fn run_text(r: Node, rp: &RunProps) -> String {
         .collect()
 }
 
-fn emit_run(
-    ctx: &mut Ctx,
-    w: &mut Writer,
-    text: &str,
-    rp: &RunProps,
-    base_pt: f32,
-    scale: f32,
-    autofit: bool,
-) {
-    let mut st = Style::new();
-    let pt = rp.sz_pt.map(|v| v * scale);
-    if let Some(pt) = pt.filter(|p| (*p - base_pt).abs() > 0.01) {
-        st.push_opt("font-size", scaled_px(pt_to_px(pt), autofit));
-    }
-    if rp.bold == Some(true) {
-        st.push("font-weight", "700");
-    }
-    if rp.italic == Some(true) {
-        st.push("font-style", "italic");
-    }
-    let mut deco = String::new();
-    if rp.underline == Some(true) || rp.link {
-        deco.push_str("underline");
-    }
-    if rp.strike == Some(true) {
-        if !deco.is_empty() {
-            deco.push(' ');
-        }
-        deco.push_str("line-through");
-    }
-    st.push("text-decoration", &deco);
-    match rp.color.as_ref() {
-        Some(c) => st.push("color", &c.css()),
-        // An unstyled hyperlink takes the theme's link colour; anything else
-        // inherits the shape's.
-        None if rp.link => st.push(
-            "color",
-            &Color::from_rgb(ctx.theme.color(
-                super::super::drawingml::theme::SchemeSlot::Hlink,
-            ))
-            .css(),
-        ),
-        None => {}
-    }
-    st.push_opt("font-family", rp.font.clone());
-    match rp.caps {
-        Some("uppercase") => st.push("text-transform", "uppercase"),
-        Some("small") => st.push("font-variant", "small-caps"),
-        _ => {}
-    }
-    st.push_opt("letter-spacing", rp.spc_pt.filter(|v| *v != 0.0).map(|v| {
-        fmt_px(pt_to_px(v)).unwrap_or_default()
-    }));
-    match rp.baseline {
-        1 => st.push("vertical-align", "super"),
-        -1 => st.push("vertical-align", "sub"),
-        _ => {}
-    }
-    if rp.baseline != 0 {
-        st.push("font-size", "0.65em");
-    }
-    let marked = ctx.marker.mark(text, ctx.terms);
-    if st.is_empty() {
-        w.raw(&marked);
-        return;
-    }
-    w.open("span", &st.to_attr());
-    w.raw(&marked);
-    w.close();
-}
-
-/// The bullet glyph or number, as an inline-block whose width is the paragraph's
-/// hanging indent — so the text after it starts exactly at `marL`, without
-/// measuring the glyph.
 /// The bullet this paragraph shows, advancing the auto-number counters. `None` for
 /// an unbulleted paragraph — which still resets the counters, because a plain
 /// paragraph between two numbered ones restarts the numbering in PowerPoint.
@@ -772,99 +667,51 @@ fn bullet_label(pp: &ParaProps, lvl: usize, counters: &mut [u32; LEVELS]) -> Opt
     Some(label)
 }
 
-/// The bullet as the first item of the paragraph's flex row. Its width is the
-/// hanging indent, so the text that follows lands exactly on `marL` without
-/// anyone having to measure the glyph.
-fn emit_bullet(w: &mut Writer, pp: &ParaProps, label: &str, hang: f32, base_pt: f32) {
+// ── model → html ─────────────────────────────────────────────────────────────
+
+/// Emits the absolutely-positioned text box of a shape, then its paragraphs.
+/// The insets come off the shape's box.
+pub fn emit_body(ctx: &mut Ctx, w: &mut Writer, paras: &[Para], opts: &BodyOpts) {
     let mut st = Style::new();
-    if hang < -0.5 {
-        st.push_opt("width", fmt_px(-hang));
+    st.push_opt("left", fmt_px(opts.ins.0));
+    st.push_opt("top", fmt_px(opts.ins.1));
+    st.push_opt("right", fmt_px(opts.ins.2));
+    st.push_opt("bottom", fmt_px(opts.ins.3));
+    st.push("justify-content", opts.anchor);
+    if opts.anchor_ctr {
+        st.push("align-items", "center");
+    }
+    if !opts.wrap {
+        st.push("white-space", "pre");
+    }
+    // `data-af` is what the frame's autofit pass looks for; the paragraph sizes it
+    // scales are written as `calc(… * var(--af,1))`.
+    let af = if opts.autofit {
+        attr("data-af", "1")
     } else {
-        st.push("padding-right", "0.3em");
-    }
-    if let Some(c) = pp.bu_color.as_ref() {
-        st.push("color", &c.css());
-    }
-    // A symbol bullet font is only useful for the glyph the remap could not
-    // resolve; the remapped glyph reads better in the text font.
-    if let Some(f) = pp.bu_font.as_ref() {
-        if !fonts::is_symbol_font(pp.bu_font_raw.as_deref().unwrap_or("")) {
-            st.push("font-family", f);
-        }
-    }
-    if let Some(p) = pp.bu_size_pct {
-        st.push_opt("font-size", fmt_px(pt_to_px(base_pt * p)));
-    }
-    w.open("span", &super::super::html::attrs(&[&attr("class", "pp-bu"), &st.to_attr()]));
-    w.text(label);
+        String::new()
+    };
+    w.open(
+        "div",
+        &super::super::html::attrs(&[&attr("class", "pp-tb"), &af, &st.to_attr()]),
+    );
+    // The paragraphs live in their own block so the autofit pass can measure how
+    // tall the text actually is: a bottom-anchored box that overflows does so
+    // *upwards*, where `scrollHeight` cannot see it.
+    w.open("div", &super::super::html::attrs(&[&attr("class", "pp-tbi")]));
+    emit_paras(ctx, w, paras, opts);
+    w.close();
     w.close();
 }
 
-/// `a:buAutoNum@type` → the rendered label. Unknown types fall back to the
-/// arabic-period form rather than dropping the number.
-fn auto_num(ty: &str, n: u32) -> String {
-    let (body, wrap) = match ty {
-        t if t.starts_with("alphaLc") => (alpha(n, false), t),
-        t if t.starts_with("alphaUc") => (alpha(n, true), t),
-        t if t.starts_with("romanLc") => (roman(n, false), t),
-        t if t.starts_with("romanUc") => (roman(n, true), t),
-        t => (n.to_string(), t),
+/// Emits just the paragraphs of a text body — used directly by table cells,
+/// which supply their own box.
+pub fn emit_paras(ctx: &mut Ctx, w: &mut Writer, paras: &[Para], opts: &BodyOpts) {
+    let st = HtmlStyle {
+        scalable: opts.autofit,
+        ..HTML
     };
-    if wrap.ends_with("ParenBoth") {
-        format!("({body})")
-    } else if wrap.ends_with("ParenR") {
-        format!("{body})")
-    } else if wrap.ends_with("Period") || wrap.ends_with("PeriodOne") {
-        format!("{body}.")
-    } else if wrap.ends_with("Dash") {
-        format!("- {body}")
-    } else {
-        format!("{body}.")
-    }
-}
-
-fn alpha(n: u32, upper: bool) -> String {
-    let mut n = n.max(1);
-    let base = if upper { b'A' } else { b'a' };
-    let mut out = Vec::new();
-    while n > 0 {
-        let rem = ((n - 1) % 26) as u8;
-        out.push(base + rem);
-        n = (n - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
-fn roman(n: u32, upper: bool) -> String {
-    const T: [(u32, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut n = n.min(3999);
-    let mut out = String::new();
-    for (v, s) in T {
-        while n >= v {
-            out.push_str(s);
-            n -= v;
-        }
-    }
-    if upper {
-        out.to_uppercase()
-    } else {
-        out
-    }
+    model::emit_paras(w, paras, &st, ctx.marker, ctx.terms);
 }
 
 /// Flat text of a text body, for slide titles and the section list.
@@ -878,16 +725,8 @@ pub fn plain_text(tb: Node, limit: usize) -> String {
         for r in elems(para) {
             match r.tag_name().name() {
                 "r" | "fld" => {
-                    for t in elems(r) {
-                        if t.tag_name().name() == "t" {
-                            for d in t.descendants() {
-                                if d.is_text() {
-                                    if let Some(x) = d.text() {
-                                        line.push_str(x);
-                                    }
-                                }
-                            }
-                        }
+                    for t in elems(r).filter(|t| t.tag_name().name() == "t") {
+                        inner_text(t, &mut line);
                     }
                 }
                 "br" => line.push(' '),
@@ -920,18 +759,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_num_formats_cover_the_common_types() {
-        assert_eq!(auto_num("arabicPeriod", 3), "3.");
-        assert_eq!(auto_num("arabicParenR", 3), "3)");
-        assert_eq!(auto_num("alphaLcParenBoth", 2), "(b)");
-        assert_eq!(auto_num("alphaUcPeriod", 27), "AA.");
-        assert_eq!(auto_num("romanUcPeriod", 4), "IV.");
-        assert_eq!(auto_num("romanLcPeriod", 9), "ix.");
-        // Unknown types still number rather than dropping the marker.
-        assert_eq!(auto_num("circleNumDbPlain", 5), "5.");
-    }
-
-    #[test]
     fn cascade_applies_level_one_under_deeper_levels() {
         let xml = "<lstStyle xmlns='a'><lvl1pPr algn='ctr'><defRPr sz='2000'/></lvl1pPr>\
                    <lvl2pPr marL='914400'/></lstStyle>";
@@ -942,7 +769,7 @@ mod tests {
         let map = ClrMap::default();
         let p = cas.level(1, &theme, &map);
         // lvl2 states only marL, so alignment and size come from lvl1.
-        assert_eq!(p.align, Some("center"));
+        assert_eq!(p.align, Some(Align::Center));
         assert_eq!(p.run.sz_pt, Some(20.0));
         assert_eq!(p.mar_l.map(|v| v.round()), Some(96.0));
     }

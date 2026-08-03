@@ -6,12 +6,14 @@
 //! `style="font-family:…;border:…"` is megabytes of duplicated bytes, while in
 //! practice every cell of a column shares one `xf`.
 
+use super::super::cellstyle::{align_css, border_css, Align, AlignSpec, Rotation};
 use super::super::drawingml::color::Color;
+use super::super::drawingml::fill::{self, GradKind, GradStop, Gradient};
 use super::super::drawingml::theme::{SchemeSlot, Theme};
 use super::super::fonts;
-use super::super::html::{fmt_pct, fmt_px, pt_to_px, Style};
+use super::super::html::{fmt_px, pt_to_px, Style};
 use super::super::numfmt::Format;
-use super::super::xml;
+use super::super::xml::{self, attr_bool, attr_f32, attr_u32, child, elems};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -23,6 +25,7 @@ const MAX_FONTS: usize = 4096;
 const MAX_FILLS: usize = 4096;
 const MAX_BORDERS: usize = 4096;
 const MAX_NUMFMTS: usize = 1024;
+const MAX_GRAD_STOPS: usize = 32;
 
 /// One indent level, in px. Excel defines it as three characters; at the default
 /// font's 7px digit width that is 21px, which is visibly too deep next to real
@@ -250,16 +253,16 @@ struct XfRefs {
 
 fn xf_refs(node: roxmltree::Node<'_, '_>) -> XfRefs {
     XfRefs {
-        num_id: u32_attr(node, "numFmtId"),
-        font_id: u32_attr(node, "fontId"),
-        fill_id: u32_attr(node, "fillId"),
-        border_id: u32_attr(node, "borderId"),
-        xf_id: u32_attr(node, "xfId"),
-        apply_numfmt: bool_attr(node, "applyNumberFormat"),
-        apply_font: bool_attr(node, "applyFont"),
-        apply_fill: bool_attr(node, "applyFill"),
-        apply_border: bool_attr(node, "applyBorder"),
-        apply_align: bool_attr(node, "applyAlignment"),
+        num_id: attr_u32(node, "numFmtId"),
+        font_id: attr_u32(node, "fontId"),
+        fill_id: attr_u32(node, "fillId"),
+        border_id: attr_u32(node, "borderId"),
+        xf_id: attr_u32(node, "xfId"),
+        apply_numfmt: attr_bool(node, "applyNumberFormat"),
+        apply_font: attr_bool(node, "applyFont"),
+        apply_fill: attr_bool(node, "applyFill"),
+        apply_border: attr_bool(node, "applyBorder"),
+        apply_align: attr_bool(node, "applyAlignment"),
     }
 }
 
@@ -282,7 +285,7 @@ fn parse_numfmts(root: roxmltree::Node<'_, '_>) -> HashMap<u16, String> {
         .filter(|c| c.tag_name().name() == "numFmt")
         .take(MAX_NUMFMTS)
     {
-        let Some(id) = u32_attr(n, "numFmtId") else {
+        let Some(id) = attr_u32(n, "numFmtId") else {
             continue;
         };
         let Some(code) = xml::attr_local(n, "formatCode") else {
@@ -316,7 +319,7 @@ fn parse_font(node: roxmltree::Node<'_, '_>, theme: &Theme) -> String {
         s.push("font-family", &fonts::css_font_stack(name));
     }
     let sup_sub = child(node, "vertAlign").and_then(|n| xml::attr_local(n, "val"));
-    if let Some(pt) = child(node, "sz").and_then(|n| f32_attr(n, "val")) {
+    if let Some(pt) = child(node, "sz").and_then(|n| attr_f32(n, "val")) {
         // Super/subscript text is drawn smaller; Excel does not store the reduced
         // size, it derives it.
         let pt = if sup_sub.is_some() { pt * 0.66 } else { pt };
@@ -374,55 +377,66 @@ fn parse_fill(node: roxmltree::Node<'_, '_>, theme: &Theme) -> String {
                 }
             }
             other => {
-                // Hatch and grey patterns are approximated by blending fg into bg
-                // at the pattern's ink coverage: a flat tint reads far closer to
-                // the intent than either pure colour, and CSS has no equivalent of
-                // an 8x8 mono pattern brush without generating an image per fill.
+                // The same flat-tint approximation a DrawingML `a:pattFill` gets,
+                // except that SpreadsheetML names the ink density of its patterns
+                // where DrawingML does not, so the coverage is passed in.
                 let fg = fg.unwrap_or(Color::from_rgb(0x000000));
                 let bg = bg.unwrap_or(Color::from_rgb(0xFFFFFF));
-                s.push("background-color", &bg.mix(&fg, pattern_ink(other)).css());
+                s.push(
+                    "background-color",
+                    &fill::pattern_color(&fg, &bg, pattern_ink(other)).css(),
+                );
             }
         }
         return s.css().to_string();
     }
     if let Some(g) = child(node, "gradientFill") {
-        let stops: Vec<(f64, Color)> = elems(g)
-            .filter(|n| n.tag_name().name() == "stop")
-            .take(32)
-            .filter_map(|n| {
-                let pos = f32_attr(n, "position").unwrap_or(0.0) as f64;
-                let c = child(n, "color").and_then(|c| parse_color(c, theme))?;
-                Some((pos.clamp(0.0, 1.0) * 100.0, c))
-            })
-            .collect();
-        if stops.is_empty() {
-            return String::new();
-        }
-        // SpreadsheetML `degree` is the gradient vector's angle counted from the
-        // +x axis; CSS counts clockwise from "to top", hence the +90. `type="path"`
-        // gradients (a rectangle expanding from a focus point) are approximated as
-        // a radial gradient, which loses the focus rectangle.
-        let radial = xml::attr_local(g, "type") == Some("path");
-        let mut css = String::new();
-        if radial {
-            css.push_str("radial-gradient(circle,");
-        } else {
-            let deg = f32_attr(g, "degree").unwrap_or(0.0) + 90.0;
-            css.push_str("linear-gradient(");
-            css.push_str(&format!("{:.0}deg,", deg.clamp(-3600.0, 3600.0)));
-        }
-        for (i, (pos, c)) in stops.iter().enumerate() {
-            if i > 0 {
-                css.push(',');
+        if let Some(grad) = parse_gradient_fill(g, theme) {
+            if let Some(css) = fill::gradient_css(&grad) {
+                s.push("background-image", &css);
             }
-            css.push_str(&c.css());
-            css.push(' ');
-            css.push_str(&fmt_pct(*pos as f32).unwrap_or_else(|| "0%".to_string()));
         }
-        css.push(')');
-        s.push("background-image", &css);
     }
     s.css().to_string()
+}
+
+/// A SpreadsheetML `gradientFill` as a DrawingML [`Gradient`], so both formats
+/// spell their gradients out through one CSS writer — including the +90° angle
+/// rule, which the two had a copy of each.
+///
+/// The elements are not the same: stop positions are 0..1 fractions rather than
+/// thousandths of a percent, the angle sits on `degree` in whole degrees rather
+/// than on `a:lin` in 60000ths, and a `type="path"` gradient carries a
+/// `left`/`right`/`top`/`bottom` focus rectangle rather than an `a:fillToRect`.
+/// The focus rectangle is dropped either way — a CSS radial gradient has nowhere
+/// to put it — so a path gradient becomes [`GradKind::Radial`] exactly as
+/// `a:path` does.
+fn parse_gradient_fill(g: roxmltree::Node<'_, '_>, theme: &Theme) -> Option<Gradient> {
+    let stops: Vec<GradStop> = elems(g)
+        .filter(|n| n.tag_name().name() == "stop")
+        .take(MAX_GRAD_STOPS)
+        .filter_map(|n| {
+            let pos = attr_f32(n, "position").unwrap_or(0.0) as f64;
+            let color = child(n, "color").and_then(|c| parse_color(c, theme))?;
+            Some(GradStop {
+                pos: pos.clamp(0.0, 1.0) * 100.0,
+                color,
+            })
+        })
+        .collect();
+    if stops.is_empty() {
+        return None;
+    }
+    // Document order is kept: Excel writes the stops in ascending position, and
+    // reordering them would move a colour the producer put first.
+    let kind = if xml::attr_local(g, "type") == Some("path") {
+        GradKind::Radial
+    } else {
+        GradKind::Linear {
+            css_deg: fill::css_gradient_angle(attr_f32(g, "degree").unwrap_or(0.0) as f64),
+        }
+    };
+    Some(Gradient { kind, stops })
 }
 
 /// Ink coverage of a pattern type, 0 (all background) to 1 (all foreground).
@@ -472,97 +486,30 @@ fn parse_border(node: roxmltree::Node<'_, '_>, theme: &Theme) -> String {
     s.css().to_string()
 }
 
-/// (width, style) for an `ST_BorderStyle`, or `None` for `none`.
-fn border_css(style: &str) -> Option<(&'static str, &'static str)> {
-    Some(match style {
-        "none" => return None,
-        // Hair is thinner than one device pixel; 1px is the thinnest CSS can draw.
-        "hair" | "thin" => ("1px", "solid"),
-        "medium" => ("2px", "solid"),
-        "thick" => ("3px", "solid"),
-        "double" => ("3px", "double"),
-        "dotted" => ("1px", "dotted"),
-        "dashed" | "dashDot" | "dashDotDot" | "slantDashDot" => ("1px", "dashed"),
-        "mediumDashed" | "mediumDashDot" | "mediumDashDotDot" => ("2px", "dashed"),
-        _ => ("1px", "solid"),
+// ── alignment ────────────────────────────────────────────────────────────────
+
+fn parse_alignment(node: roxmltree::Node<'_, '_>) -> Align {
+    let horiz = xml::attr_local(node, "horizontal").unwrap_or("general");
+    let indent = attr_u32(node, "indent").unwrap_or(0).min(250);
+    align_css(&AlignSpec {
+        horizontal: horiz,
+        vertical: xml::attr_local(node, "vertical"),
+        wrap: attr_bool(node, "wrapText").unwrap_or(false),
+        indent_px: INDENT_PX * indent as f32,
+        rotation: attr_u32(node, "textRotation").and_then(rotation),
     })
 }
 
-// ── alignment ────────────────────────────────────────────────────────────────
-
-/// Alignment splits across two elements: everything that a `display:table-cell`
-/// honours goes on the cell, and the rotation goes on an inner span.
-#[derive(Default, Clone)]
-struct Align {
-    cell: String,
-    inner: String,
-}
-
-fn parse_alignment(node: roxmltree::Node<'_, '_>) -> Align {
-    let mut s = Style::new();
-    let mut inner = Style::new();
-    let horiz = xml::attr_local(node, "horizontal").unwrap_or("general");
-    match horiz {
-        // `general` is deliberately absent: it means "right for numbers, left for
-        // text", which is per *cell value*, not per style, so the sheet's
-        // `td.xl-num` / `td.xl-txt` classes carry it.
-        "general" => {}
-        "left" | "fill" => s.push("text-align", "left"),
-        "center" | "centerContinuous" => s.push("text-align", "center"),
-        "right" => s.push("text-align", "right"),
-        "justify" | "distributed" => s.push("text-align", "justify"),
-        _ => {}
-    }
-    match xml::attr_local(node, "vertical") {
-        Some("top") => s.push("vertical-align", "top"),
-        Some("center") => s.push("vertical-align", "middle"),
-        Some("bottom") => s.push("vertical-align", "bottom"),
-        // justify/distributed spread lines over the cell height, which CSS table
-        // cells cannot do; top is the closest single-value approximation.
-        Some("justify") | Some("distributed") => s.push("vertical-align", "top"),
-        _ => {}
-    }
-    if bool_attr(node, "wrapText").unwrap_or(false) {
-        // pre-wrap, not normal: runs of spaces inside a cell are content.
-        s.push("white-space", "pre-wrap");
-        s.push("overflow-wrap", "break-word");
-    }
-    if let Some(indent) = u32_attr(node, "indent").filter(|i| *i > 0) {
-        let px = INDENT_PX * indent.min(250) as f32;
-        // Indent runs from whichever edge the text is aligned to.
-        if horiz == "right" {
-            s.push_opt("padding-right", fmt_px(px));
-        } else {
-            s.push_opt("padding-left", fmt_px(px));
-        }
-    }
-    // 0..90 is counter-clockwise, 91..180 encodes clockwise as 90+angle, and 255
-    // is Excel's "stacked" vertical text. The rotated box is not re-measured, so a
-    // rotated label can overflow its row height — Excel grows the row instead.
-    if let Some(rot) = u32_attr(node, "textRotation") {
-        match rot {
-            0 => {}
-            // writing-mode does apply to a table cell, so stacked text needs no
-            // wrapper.
-            255 => {
-                s.push("writing-mode", "vertical-rl");
-                s.push("text-orientation", "upright");
-            }
-            1..=90 => {
-                inner.push("display", "inline-block");
-                inner.push("transform", &format!("rotate(-{rot}deg)"));
-            }
-            91..=180 => {
-                inner.push("display", "inline-block");
-                inner.push("transform", &format!("rotate({}deg)", rot - 90));
-            }
-            _ => {}
-        }
-    }
-    Align {
-        cell: s.css().to_string(),
-        inner: inner.css().to_string(),
-    }
+/// `textRotation`: 0..90 is counter-clockwise, 91..180 encodes clockwise as
+/// 90+angle, and 255 is Excel's "stacked" vertical text.
+fn rotation(rot: u32) -> Option<Rotation> {
+    Some(match rot {
+        0 => return None,
+        255 => Rotation::Stacked,
+        1..=90 => Rotation::Ccw(rot as f32),
+        91..=180 => Rotation::Ccw(-((rot - 90) as f32)),
+        _ => return None,
+    })
 }
 
 // ── colours ──────────────────────────────────────────────────────────────────
@@ -574,19 +521,19 @@ fn parse_alignment(node: roxmltree::Node<'_, '_>) -> Align {
 pub fn parse_color(node: roxmltree::Node<'_, '_>, theme: &Theme) -> Option<Color> {
     // `auto="1"` means "the system window text/background colour", which in a
     // preview is whatever the default already is.
-    if bool_attr(node, "auto").unwrap_or(false) {
+    if attr_bool(node, "auto").unwrap_or(false) {
         return None;
     }
     let mut color = if let Some(hex) = xml::attr_local(node, "rgb") {
         parse_argb(hex)?
-    } else if let Some(i) = u32_attr(node, "theme") {
+    } else if let Some(i) = attr_u32(node, "theme") {
         Color::from_rgb(theme.color(theme_slot(i)?))
-    } else if let Some(i) = u32_attr(node, "indexed") {
+    } else if let Some(i) = attr_u32(node, "indexed") {
         Color::from_rgb(indexed_color(i)?)
     } else {
         return None;
     };
-    if let Some(t) = f32_attr(node, "tint").filter(|t| t.is_finite() && *t != 0.0) {
+    if let Some(t) = attr_f32(node, "tint").filter(|t| t.is_finite() && *t != 0.0) {
         color = apply_tint(color, t as f64);
     }
     Some(color)
@@ -721,15 +668,6 @@ pub fn indexed_color(i: u32) -> Option<u32> {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn child<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
-}
-
-fn elems<'a>(node: roxmltree::Node<'a, 'a>) -> impl Iterator<Item = roxmltree::Node<'a, 'a>> + 'a {
-    node.children().filter(|n| n.is_element())
-}
-
 /// Parses the `<parent><child/>…` tables, in document order (the index *is* the
 /// id, so order is the whole contract).
 fn collect<'a, T>(
@@ -752,26 +690,9 @@ fn collect<'a, T>(
 /// A boolean child element: present means true unless it carries `val="0"`.
 fn flag(node: roxmltree::Node<'_, '_>, local: &str) -> bool {
     match child(node, local) {
-        Some(n) => bool_attr(n, "val").unwrap_or(true),
+        Some(n) => attr_bool(n, "val").unwrap_or(true),
         None => false,
     }
-}
-
-fn truthy(v: &str) -> bool {
-    matches!(v.trim(), "1" | "true" | "TRUE" | "True" | "on")
-}
-
-pub fn bool_attr(node: roxmltree::Node<'_, '_>, local: &str) -> Option<bool> {
-    xml::attr_local(node, local).map(truthy)
-}
-
-pub fn u32_attr(node: roxmltree::Node<'_, '_>, local: &str) -> Option<u32> {
-    xml::attr_local(node, local)?.trim().parse().ok()
-}
-
-pub fn f32_attr(node: roxmltree::Node<'_, '_>, local: &str) -> Option<f32> {
-    let v: f32 = xml::attr_local(node, local)?.trim().parse().ok()?;
-    v.is_finite().then_some(v)
 }
 
 #[cfg(test)]
@@ -928,19 +849,52 @@ mod tests {
         );
         // 25% ink over white is a light grey, not black and not white.
         assert!(s.get(0).css.starts_with("background-color:#bf"), "{}", s.get(0).css);
+        // degree="90" is top→bottom, which CSS spells 180deg.
         let g = &s.get(1).css;
-        assert!(g.contains("linear-gradient(180deg,#ff0000 0%,#0000ff 100%)"), "{g}");
+        assert!(g.contains("linear-gradient(180deg, #ff0000 0%, #0000ff 100%)"), "{g}");
     }
 
     #[test]
-    fn border_styles_map_to_widths_and_dash_patterns() {
-        assert_eq!(border_css("none"), None);
-        assert_eq!(border_css("thin"), Some(("1px", "solid")));
-        assert_eq!(border_css("double"), Some(("3px", "double")));
-        assert_eq!(border_css("mediumDashed"), Some(("2px", "dashed")));
-        // An unknown style is still a border.
-        assert_eq!(border_css("wobbly"), Some(("1px", "solid")));
-        // A colourless edge is automatic black.
+    fn path_gradients_become_radial_and_degenerate_ones_emit_nothing() {
+        let s = styles(
+            r#"<fills count="3">
+                 <fill><gradientFill type="path" left="0.5" right="0.5" top="0.5" bottom="0.5">
+                   <stop position="0"><color rgb="FFFFFFFF"/></stop>
+                   <stop position="1"><color rgb="FF000000"/></stop></gradientFill></fill>
+                 <fill><gradientFill><stop position="0"><color rgb="FFFF0000"/></stop></gradientFill></fill>
+                 <fill><gradientFill degree="not-a-number"><stop position="café"><color rgb="FF00FF00"/></stop>
+                   <stop position="1"><color rgb="FF0000FF"/></stop></gradientFill></fill>
+               </fills>
+               <cellXfs count="3"><xf fillId="0"/><xf fillId="1"/><xf fillId="2"/></cellXfs>"#,
+        );
+        assert!(
+            s.get(0)
+                .css
+                .contains("radial-gradient(circle, #ffffff 0%, #000000 100%)"),
+            "{}",
+            s.get(0).css
+        );
+        // One stop is not a gradient CSS can express, so no declaration at all
+        // rather than a function the browser drops.
+        assert_eq!(s.get(1).css, "");
+        // Garbage angle and position fall back rather than poisoning the value.
+        let g = &s.get(2).css;
+        assert!(g.contains("linear-gradient(90deg, #00ff00 0%, #0000ff 100%)"), "{g}");
+    }
+
+    #[test]
+    fn text_rotation_decodes_excels_two_half_ranges() {
+        assert_eq!(rotation(0), None);
+        assert_eq!(rotation(45), Some(Rotation::Ccw(45.0)));
+        assert_eq!(rotation(90), Some(Rotation::Ccw(90.0)));
+        // 91..180 is 90+clockwise angle, so 135 is 45° the other way.
+        assert_eq!(rotation(135), Some(Rotation::Ccw(-45.0)));
+        assert_eq!(rotation(255), Some(Rotation::Stacked));
+        assert_eq!(rotation(9999), None);
+    }
+
+    #[test]
+    fn a_colourless_border_edge_is_automatic_black() {
         let s = styles(
             r#"<borders count="1"><border><left style="thin"/></border></borders>
                <cellXfs count="1"><xf borderId="0"/></cellXfs>"#,

@@ -275,6 +275,10 @@ pub fn fmt_pct(v: f32) -> Option<String> {
     fmt_num(v).map(|s| s + "%")
 }
 
+pub fn fmt_deg(v: f32) -> Option<String> {
+    fmt_num(v).map(|s| s + "deg")
+}
+
 // Unit converters. Each is named for the unit it consumes, because the Office
 // formats express the same quantity in four different scalings and mixing them
 // up produces a plausible-looking layout that is off by 20x.
@@ -480,6 +484,9 @@ mod tests {
         assert_eq!(fmt_px(12.5).as_deref(), Some("12.5px"));
         assert_eq!(fmt_pt(9.0).as_deref(), Some("9pt"));
         assert_eq!(fmt_pct(50.0).as_deref(), Some("50%"));
+        assert_eq!(fmt_deg(135.5).as_deref(), Some("135.5deg"));
+        assert_eq!(fmt_deg(-0.0).as_deref(), Some("0deg"));
+        assert_eq!(fmt_deg(f32::NAN), None);
     }
 
     #[test]

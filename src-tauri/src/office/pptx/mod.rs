@@ -15,30 +15,28 @@ mod shapes;
 mod text;
 
 use super::drawingml::color::parse_color_elem_map;
-use super::drawingml::fill::{fill_css, parse_fill_opt, Fill};
+use super::drawingml::fill::{parse_fill_opt, push_fill, Fill};
 use super::drawingml::theme::{ClrMap, Theme};
-use super::drawingml::{child_elem, elems};
+use super::emit::{self, Notes};
 use super::highlight::{Marker, Terms};
 use super::html::{attr, attrs, emu_to_px, fmt_px, Style, Writer};
 use super::media::{MediaBudget, MediaCache};
+use super::opc::Rels;
 use super::pkg::{self, Budget, Zip};
+use super::xml::{child, elems};
 use super::{opc, xml, OfficeDoc, Shape};
 use roxmltree::Node;
-use std::collections::HashMap;
 
 /// Byte cap for the emitted body HTML.
 pub const HTML_CAP: usize = 6 * 1024 * 1024;
 
 const MAX_SLIDES: usize = 500;
-const MAX_NOTES: usize = 12;
 const MAX_TITLE_CHARS: usize = 72;
 
 /// Canvas used when `p:sldSz` is missing or nonsensical: 4:3 at 96dpi.
 const DEFAULT_SLIDE: (f32, f32) = (960.0, 720.0);
 const MIN_SLIDE_PX: f32 = 64.0;
 const MAX_SLIDE_PX: f32 = 8192.0;
-
-type Rels = HashMap<String, opc::Relationship>;
 
 /// Structural stylesheet. Every selector is at most one type plus one class, so
 /// the per-shape inline styles that carry the document's own geometry and paint
@@ -80,18 +78,9 @@ pub struct Ctx<'a> {
     pub marker: &'a mut Marker,
     pub media: &'a mut MediaCache,
     pub mb: &'a mut MediaBudget,
-    pub notes: &'a mut Vec<String>,
+    pub notes: &'a mut Notes,
     /// Shapes emitted so far, across all three trees — the walk's own bound.
     pub shapes: usize,
-}
-
-/// Deduplicated degradation note. Repeats are the norm (one per chart on a
-/// slide), and the footer only needs to say it once.
-pub(super) fn note(notes: &mut Vec<String>, msg: &str) {
-    if notes.len() >= MAX_NOTES || notes.iter().any(|n| n == msg) {
-        return;
-    }
-    notes.push(msg.to_string());
 }
 
 pub fn render(path: &str, section: Option<u32>, terms: &[String]) -> Result<OfficeDoc, String> {
@@ -106,12 +95,12 @@ fn render_capped(
 ) -> Result<OfficeDoc, String> {
     let mut zip = pkg::open_zip(path)?;
     let mut budget = Budget::new();
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes = Notes::new();
 
-    let pres_part = presentation_part(&mut zip, &mut budget);
+    let pres_part = opc::root_part(&mut zip, &mut budget, "ppt/presentation.xml");
     let pres_xml = pkg::read_entry(&mut zip, &pres_part, &mut budget)?
         .ok_or_else(|| format!("pptx: missing presentation part ({pres_part})"))?;
-    let pres_rels = read_rels(&mut zip, &pres_part, &mut budget);
+    let pres_rels = opc::read_rels(&mut zip, &pres_part, &mut budget).unwrap_or_default();
     let pres_doc = xml::parse(&pres_xml)?;
     let pres = pres_doc.root_element();
 
@@ -149,15 +138,9 @@ fn render_capped(
     );
     let out = match out {
         Ok(o) => o,
-        // One unreadable slide is a degradation: the deck's other slides are
-        // still listed and reachable.
         Err(e) => {
-            let msg = if e == pkg::BUDGET_EXCEEDED {
-                "This slide could not be shown: it exceeds the preview size limit.".to_string()
-            } else {
-                format!("This slide could not be shown: {e}")
-            };
-            note(&mut notes, &msg);
+            let msg = emit::degrade_msg(&e, "slide");
+            notes.add(&msg);
             SlideOut {
                 html: error_body(&msg, natural),
                 truncated: true,
@@ -169,7 +152,7 @@ fn render_capped(
         sections[idx as usize] = t;
     }
     for n in mb.notes() {
-        note(&mut notes, n);
+        notes.add(n);
     }
 
     Ok(OfficeDoc {
@@ -181,7 +164,7 @@ fn render_capped(
         page: None,
         best_mark_id: marker.best_mark_id(),
         truncated: out.truncated,
-        notes,
+        notes: notes.into_vec(),
     })
 }
 
@@ -202,40 +185,40 @@ fn render_slide(
     marker: &mut Marker,
     media: &mut MediaCache,
     mb: &mut MediaBudget,
-    notes: &mut Vec<String>,
+    notes: &mut Notes,
     html_cap: usize,
 ) -> Result<SlideOut, String> {
     // All three parts are read up front: the parsed documents borrow their
     // strings, so the strings have to outlive every node handed to the walk.
     let slide_xml = pkg::read_entry(zip, part, budget)?
         .ok_or_else(|| format!("pptx: missing slide part {part}"))?;
-    let slide_rels = read_rels(zip, part, budget);
+    let slide_rels = opc::read_rels(zip, part, budget).unwrap_or_default();
 
-    let layout_part = part_by_kind(&slide_rels, part, "/slideLayout");
+    let layout_part = opc::part_by_kind_sorted(&slide_rels, part, "/slideLayout");
     let layout_xml = match &layout_part {
         Some(p) => pkg::read_entry(zip, p, budget)?,
         None => None,
     };
     let layout_rels = match &layout_part {
-        Some(p) => read_rels(zip, p, budget),
+        Some(p) => opc::read_rels(zip, p, budget).unwrap_or_default(),
         None => Rels::new(),
     };
 
     let master_part = layout_part
         .as_deref()
-        .and_then(|lp| part_by_kind(&layout_rels, lp, "/slideMaster"));
+        .and_then(|lp| opc::part_by_kind_sorted(&layout_rels, lp, "/slideMaster"));
     let master_xml = match &master_part {
         Some(p) => pkg::read_entry(zip, p, budget)?,
         None => None,
     };
     let master_rels = match &master_part {
-        Some(p) => read_rels(zip, p, budget),
+        Some(p) => opc::read_rels(zip, p, budget).unwrap_or_default(),
         None => Rels::new(),
     };
 
     let theme = match master_part
         .as_deref()
-        .and_then(|mp| part_by_kind(&master_rels, mp, "/theme"))
+        .and_then(|mp| opc::part_by_kind_sorted(&master_rels, mp, "/theme"))
     {
         Some(p) => match pkg::read_entry(zip, &p, budget)? {
             Some(x) => Theme::parse(&x).unwrap_or_default(),
@@ -254,8 +237,7 @@ fn render_slide(
     let layout = layout_doc.as_ref().map(|d| d.root_element());
     let master = master_doc.as_ref().map(|d| d.root_element());
     if layout.is_none() {
-        note(
-            notes,
+        notes.add(
             "This slide's layout is unavailable, so inherited text styles and background are missing.",
         );
     }
@@ -263,12 +245,12 @@ fn render_slide(
     // The master defines the colour map; a layout may override it wholesale
     // (that is how the "dark" variant of a design swaps text and background).
     let clr_map = master
-        .and_then(|m| child_elem(m, "clrMap"))
+        .and_then(|m| child(m, "clrMap"))
         .map(ClrMap::parse)
         .unwrap_or_default();
     let clr_map = layout
-        .and_then(|l| child_elem(l, "clrMapOvr"))
-        .and_then(|o| child_elem(o, "overrideClrMapping"))
+        .and_then(|l| child(l, "clrMapOvr"))
+        .and_then(|o| child(o, "overrideClrMapping"))
         .map(ClrMap::parse)
         .unwrap_or(clr_map);
 
@@ -285,11 +267,7 @@ fn render_slide(
         _ => None,
     };
     if let Some(f) = bg.as_ref().filter(|_| bg_pic.is_none()) {
-        for decl in fill_css(f).split(';').filter(|d| !d.is_empty()) {
-            if let Some((k, v)) = decl.split_once(':') {
-                css.push(k, v);
-            }
-        }
+        push_fill(&mut css, f);
     }
     w.open("div", &attrs(&[&attr("class", "pp-doc"), &css.to_attr()]));
 
@@ -299,7 +277,7 @@ fn render_slide(
     let master_tree = master.and_then(inherit::sp_tree);
     let layout_tree = layout.and_then(inherit::sp_tree);
     let slide_tree = inherit::sp_tree(slide);
-    let default_text = child_elem(pres, "defaultTextStyle");
+    let default_text = child(pres, "defaultTextStyle");
 
     if let Some(bp) = bg_pic.as_ref() {
         // The background picture belongs to whichever part declared it; in
@@ -360,7 +338,7 @@ fn render_slide(
 
     let truncated = w.truncated();
     Ok(SlideOut {
-        html: wrap_style("", w.finish()),
+        html: emit::wrap_style(BASE_CSS, "", w.finish()),
         truncated,
         title,
     })
@@ -376,7 +354,7 @@ fn shapes_ctx<'a>(
     marker: &'a mut Marker,
     media: &'a mut MediaCache,
     mb: &'a mut MediaBudget,
-    notes: &'a mut Vec<String>,
+    notes: &'a mut Notes,
 ) -> Ctx<'a> {
     Ctx {
         zip,
@@ -408,15 +386,15 @@ fn truthy_attr(n: Node, name: &str) -> bool {
 /// `bgRef` backgrounds actually are.
 fn background(ctx: &mut Ctx, slide: Node, layout: Option<Node>, master: Option<Node>) -> Option<Fill> {
     for root in [Some(slide), layout, master].into_iter().flatten() {
-        let Some(bg) = child_elem(root, "cSld").and_then(|c| child_elem(c, "bg")) else {
+        let Some(bg) = child(root, "cSld").and_then(|c| child(c, "bg")) else {
             continue;
         };
-        if let Some(pr) = child_elem(bg, "bgPr") {
+        if let Some(pr) = child(bg, "bgPr") {
             if let Some(f) = parse_fill_opt(pr, ctx.theme, None) {
                 return Some(f);
             }
         }
-        if let Some(r) = child_elem(bg, "bgRef") {
+        if let Some(r) = child(bg, "bgRef") {
             if let Some(c) = parse_color_elem_map(r, ctx.theme, &ctx.clr_map, None) {
                 return Some(Fill::Solid(c));
             }
@@ -480,47 +458,8 @@ fn emit_background_picture(
 
 // ── presentation ─────────────────────────────────────────────────────────────
 
-/// The presentation part, via the package's `officeDocument` relationship.
-/// `ppt/presentation.xml` is only the fallback: the path is a convention.
-fn presentation_part(zip: &mut Zip, budget: &mut Budget) -> String {
-    if let Ok(Some(x)) = pkg::read_entry(zip, "_rels/.rels", budget) {
-        if let Ok(rels) = opc::parse_rels(&x) {
-            for r in rels.values() {
-                if r.external || !r.kind.ends_with("/officeDocument") {
-                    continue;
-                }
-                if let Some(p) = opc::resolve_target("", &r.target) {
-                    return p;
-                }
-            }
-        }
-    }
-    "ppt/presentation.xml".to_string()
-}
-
-fn read_rels(zip: &mut Zip, part: &str, budget: &mut Budget) -> Rels {
-    match pkg::read_entry(zip, &opc::rels_path_for(part), budget) {
-        Ok(Some(x)) => opc::parse_rels(&x).unwrap_or_default(),
-        _ => Rels::new(),
-    }
-}
-
-/// First relationship target of `owner` whose type ends with `suffix`.
-fn part_by_kind(rels: &Rels, owner: &str, suffix: &str) -> Option<String> {
-    // Relationship ids are iterated in map order, so pick deterministically by
-    // id when a part has several of the same kind (a layout has exactly one
-    // master, but a slide can have many images).
-    let mut hits: Vec<(&String, &opc::Relationship)> = rels
-        .iter()
-        .filter(|(_, r)| !r.external && r.kind.ends_with(suffix))
-        .collect();
-    hits.sort_by(|a, b| xml::natural_cmp(a.0, b.0));
-    hits.first()
-        .and_then(|(_, r)| opc::resolve_target(owner, &r.target))
-}
-
 fn slide_size(pres: Node) -> (f32, f32) {
-    let Some(sz) = child_elem(pres, "sldSz") else {
+    let Some(sz) = child(pres, "sldSz") else {
         return DEFAULT_SLIDE;
     };
     let num = |name: &str| {
@@ -539,7 +478,7 @@ fn slide_size(pres: Node) -> (f32, f32) {
 /// in natural filename order for a package with no `p:sldIdLst`.
 fn slide_parts(pres: Node, pres_part: &str, rels: &Rels, zip: &mut Zip) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(lst) = child_elem(pres, "sldIdLst") {
+    if let Some(lst) = child(pres, "sldIdLst") {
         for id in elems(lst) {
             if id.tag_name().name() != "sldId" {
                 continue;
@@ -593,7 +532,7 @@ fn slide_title(tree: Node) -> Option<String> {
         if !matches!(inherit::style_kind(&ph.ty), inherit::StyleKind::Title) {
             continue;
         }
-        let tb = child_elem(sp, "txBody")?;
+        let tb = child(sp, "txBody")?;
         let t = text::plain_text(tb, MAX_TITLE_CHARS);
         if !t.is_empty() {
             return Some(t);
@@ -604,32 +543,13 @@ fn slide_title(tree: Node) -> Option<String> {
 
 // ── output plumbing ──────────────────────────────────────────────────────────
 
-/// Prepends the stylesheet to a rendered body. `<` is stripped from CSS as a
-/// belt-and-braces measure: every value here is built by this module, and a
-/// `</style>` inside one would end the block early.
-fn wrap_style(extra_css: &str, body: String) -> String {
-    let mut out = String::with_capacity(BASE_CSS.len() + extra_css.len() + body.len() + 32);
-    out.push_str("<style>");
-    out.push_str(&BASE_CSS.replace('<', ""));
-    out.push_str(&extra_css.replace('<', ""));
-    out.push_str("</style>");
-    out.push_str(&body);
-    out
-}
-
 /// Body for a slide that could not be rendered: an empty canvas at the right
 /// size with the reason on it, so the reader's geometry still works.
 fn error_body(msg: &str, natural: (f32, f32)) -> String {
-    let mut w = Writer::new(4096);
     let mut css = Style::new();
     css.push_opt("width", fmt_px(natural.0));
     css.push_opt("height", fmt_px(natural.1));
-    w.open("div", &attrs(&[&attr("class", "pp-doc"), &css.to_attr()]));
-    w.open("div", &attr("class", "office-note"));
-    w.text(msg);
-    w.close();
-    w.close();
-    wrap_style("", w.finish())
+    emit::error_doc(BASE_CSS, "pp-doc", css.css(), "office-note", msg)
 }
 
 #[cfg(test)]

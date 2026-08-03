@@ -184,7 +184,10 @@ const OFFICE_VP_SLACK = 12;
  */
 const SELECTORS: Record<OfficeVariant, FrameSelectionOpts> = {
   sheet: { text: '.xl-t', exclude: 'th', host: '' },
-  doc: { text: '.xl-doc,.od-doc', exclude: '', host: '.xl-doc,.od-doc' },
+  // Contract for stage 3: a doc-shape renderer must wrap its page in `.of-page`.
+  // The class is the doc shape's own - deliberately not the sheet renderer's
+  // `.xl-doc` root, which is `Shape::Sheet` and carries the sheet's own CSS.
+  doc: { text: '.of-page', exclude: '', host: '.of-page' },
   slide: { text: '.pp-tb,.pp-tbl', exclude: '', host: '.pp-doc' },
 };
 
@@ -323,7 +326,7 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
         root +
         `#${OFFICE_ZOOM_ID}{display:flex;justify-content:center;` +
         `width:calc(100% / var(--office-zoom,1))}` +
-        `.xl-doc,.od-doc{width:${w}px;max-width:100%;padding:${py}px ${px}px;background:#fff;color:#000}`
+        `.of-page{width:${w}px;max-width:100%;padding:${py}px ${px}px;background:#fff;color:#000}`
       );
     }
     case 'slide':

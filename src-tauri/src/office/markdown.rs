@@ -5,13 +5,12 @@
 //! move.
 
 use super::pkg::{self, Budget};
-use super::text::extract_office_text;
 use super::xml::{self, attr_local};
 use std::path::Path;
 
 // Like extract_office_text, but preserves headings / bold / italic / lists as
-// Markdown so the preview can render formatting. Plain text remains the fallback
-// for formats we don't enrich (pptx).
+// Markdown so the preview can render formatting. Only the formats without an
+// HTML renderer reach this: xlsx and pptx go through `office::render`.
 pub fn extract_office_markdown(path: &str) -> Result<String, String> {
     let ext = Path::new(path)
         .extension()
@@ -22,7 +21,7 @@ pub fn extract_office_markdown(path: &str) -> Result<String, String> {
     match ext.as_str() {
         "docx" => extract_docx_markdown(path, &mut budget),
         "odt" | "odp" => extract_odf_markdown(path, &mut budget),
-        _ => extract_office_text(path),
+        other => Err(format!("no markdown extractor for {other}")),
     }
 }
 

@@ -9,11 +9,12 @@ mod sheet;
 mod styles;
 
 use super::drawingml::theme::Theme;
+use super::emit::{self, Notes};
 use super::highlight::{Marker, Terms};
 use super::media::{MediaBudget, MediaCache};
 use super::pkg::{self, Budget, Zip};
+use super::xml::{child, elems, truthy};
 use super::{opc, xml, OfficeDoc, Shape};
-use std::collections::HashMap;
 use styles::Styles;
 
 /// Excel's own grid limits, used to reject nonsense references rather than to
@@ -40,7 +41,6 @@ const MAX_SHARED_STRINGS: usize = 200_000;
 /// table is one 32k-character string per entry cannot dominate memory.
 const MAX_SST_CHARS: usize = 1024;
 const MAX_SHEET_NAME_CHARS: usize = 64;
-const MAX_NOTES: usize = 12;
 
 /// One entry of the workbook's `<sheets>` list.
 pub struct SheetRef {
@@ -64,7 +64,7 @@ pub struct Ctx<'a> {
     pub marker: &'a mut Marker,
     pub media: &'a mut MediaCache,
     pub mb: &'a mut MediaBudget,
-    pub notes: &'a mut Vec<String>,
+    pub notes: &'a mut Notes,
     /// Byte cap for the emitted HTML. A field rather than a constant so the tests
     /// can reach the truncation path without generating megabytes of fixture.
     pub html_cap: usize,
@@ -82,15 +82,12 @@ fn render_capped(
 ) -> Result<OfficeDoc, String> {
     let mut zip = pkg::open_zip(path)?;
     let mut budget = Budget::new();
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes = Notes::new();
 
-    let wb_part = workbook_part(&mut zip, &mut budget);
+    let wb_part = opc::root_part(&mut zip, &mut budget, "xl/workbook.xml");
     let wb_xml = pkg::read_entry(&mut zip, &wb_part, &mut budget)?
         .ok_or_else(|| format!("xlsx: missing workbook part ({wb_part})"))?;
-    let wb_rels = match pkg::read_entry(&mut zip, &opc::rels_path_for(&wb_part), &mut budget)? {
-        Some(x) => opc::parse_rels(&x).unwrap_or_default(),
-        None => HashMap::new(),
-    };
+    let wb_rels = opc::read_rels(&mut zip, &wb_part, &mut budget)?;
     let (sheets, date1904) = parse_workbook(&wb_xml, &wb_part, &wb_rels)?;
 
     // A hidden sheet is never the default view, but it stays in the section list so
@@ -102,16 +99,13 @@ fn render_capped(
         .take(8)
         .collect();
     if !hidden.is_empty() {
-        note(
-            &mut notes,
-            &format!("Hidden in this workbook: {}.", hidden.join(", ")),
-        );
+        notes.add(&format!("Hidden in this workbook: {}.", hidden.join(", ")));
     }
     let default_idx = sheets.iter().position(|s| !s.hidden).unwrap_or(0) as u32;
     let last = sheets.len().saturating_sub(1) as u32;
     let idx = section.map(|s| s.min(last)).unwrap_or(default_idx);
 
-    let theme = match part_by_kind(&wb_rels, &wb_part, "/theme") {
+    let theme = match opc::part_by_kind(&wb_rels, &wb_part, "/theme") {
         Some(p) => match pkg::read_entry(&mut zip, &p, &mut budget)? {
             Some(x) => Theme::parse(&x).unwrap_or_default(),
             None => Theme::default(),
@@ -119,29 +113,23 @@ fn render_capped(
         None => Theme::default(),
     };
 
-    let styles_part =
-        part_by_kind(&wb_rels, &wb_part, "/styles").unwrap_or_else(|| "xl/styles.xml".to_string());
+    let styles_part = opc::part_by_kind(&wb_rels, &wb_part, "/styles")
+        .unwrap_or_else(|| "xl/styles.xml".to_string());
     let styles = match pkg::read_entry(&mut zip, &styles_part, &mut budget)? {
         Some(x) => match Styles::parse(&x, &theme) {
             Ok(s) => s,
             Err(_) => {
-                note(
-                    &mut notes,
-                    "Cell formatting is unavailable: the workbook's styles are unreadable.",
-                );
+                notes.add("Cell formatting is unavailable: the workbook's styles are unreadable.");
                 Styles::empty()
             }
         },
         None => {
-            note(
-                &mut notes,
-                "Cell formatting is unavailable: the workbook has no styles part.",
-            );
+            notes.add("Cell formatting is unavailable: the workbook has no styles part.");
             Styles::empty()
         }
     };
 
-    let sst_part = part_by_kind(&wb_rels, &wb_part, "/sharedStrings")
+    let sst_part = opc::part_by_kind(&wb_rels, &wb_part, "/sharedStrings")
         .unwrap_or_else(|| "xl/sharedStrings.xml".to_string());
     let sst = match pkg::read_entry(&mut zip, &sst_part, &mut budget)? {
         Some(x) => shared_strings(&x).unwrap_or_default(),
@@ -171,15 +159,9 @@ fn render_capped(
         let sh = &sheets[idx as usize];
         match sheet::render(&mut ctx, sh) {
             Ok(o) => o,
-            // A sheet part that is missing or malformed is a degradation, not a
-            // failure: the workbook's other sheets are still listed and reachable.
             Err(e) => {
-                let msg = if e == pkg::BUDGET_EXCEEDED {
-                    "This sheet could not be shown: it exceeds the preview size limit.".to_string()
-                } else {
-                    format!("This sheet could not be shown: {e}")
-                };
-                note(ctx.notes, &msg);
+                let msg = emit::degrade_msg(&e, "sheet");
+                ctx.notes.add(&msg);
                 sheet::SheetOut {
                     html: sheet::error_body(&msg),
                     truncated: true,
@@ -189,7 +171,7 @@ fn render_capped(
     };
 
     for n in mb.notes() {
-        note(&mut notes, n);
+        notes.add(n);
     }
 
     Ok(OfficeDoc {
@@ -203,40 +185,16 @@ fn render_capped(
         page: None,
         best_mark_id: marker.best_mark_id(),
         truncated: out.truncated,
-        notes,
+        notes: notes.into_vec(),
     })
 }
 
 // ── workbook ─────────────────────────────────────────────────────────────────
 
-/// The workbook part, via the package's `officeDocument` relationship. The
-/// conventional `xl/workbook.xml` is only the fallback: the path is a convention,
-/// not a rule.
-fn workbook_part(zip: &mut Zip, budget: &mut Budget) -> String {
-    if let Ok(Some(x)) = pkg::read_entry(zip, "_rels/.rels", budget) {
-        if let Ok(rels) = opc::parse_rels(&x) {
-            let mut found: Option<String> = None;
-            for r in rels.values() {
-                if r.external || !r.kind.ends_with("/officeDocument") {
-                    continue;
-                }
-                if let Some(p) = opc::resolve_target("", &r.target) {
-                    found = Some(p);
-                    break;
-                }
-            }
-            if let Some(p) = found {
-                return p;
-            }
-        }
-    }
-    "xl/workbook.xml".to_string()
-}
-
 fn parse_workbook(
     wb_xml: &str,
     wb_part: &str,
-    rels: &HashMap<String, opc::Relationship>,
+    rels: &opc::Rels,
 ) -> Result<(Vec<SheetRef>, bool), String> {
     let doc = xml::parse(wb_xml)?;
     let root = doc.root_element();
@@ -274,25 +232,6 @@ fn parse_workbook(
         return Err("xlsx: the workbook declares no sheets".to_string());
     }
     Ok((sheets, date1904))
-}
-
-/// First relationship whose `Type` ends with `suffix`, resolved to a part path.
-fn part_by_kind(
-    rels: &HashMap<String, opc::Relationship>,
-    owner: &str,
-    suffix: &str,
-) -> Option<String> {
-    let mut hit: Option<String> = None;
-    for r in rels.values() {
-        if r.external || !r.kind.ends_with(suffix) {
-            continue;
-        }
-        if let Some(p) = opc::resolve_target(owner, &r.target) {
-            hit = Some(p);
-            break;
-        }
-    }
-    hit
 }
 
 /// `xl/sharedStrings.xml` → the string pool, indexed by `<si>` position.
@@ -351,15 +290,6 @@ pub fn split_cell_ref(r: &str) -> (&str, &str) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-/// Adds a degradation note, deduplicated and capped. Notes are shown in a muted
-/// footer, so a repeated one is noise and an unbounded list is a wall of text.
-pub fn note(notes: &mut Vec<String>, msg: &str) {
-    if notes.len() >= MAX_NOTES || notes.iter().any(|n| n == msg) {
-        return;
-    }
-    notes.push(msg.to_string());
-}
-
 fn clip_chars(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((i, _)) => {
@@ -369,19 +299,6 @@ fn clip_chars(s: &str, max: usize) -> String {
         }
         None => s.to_string(),
     }
-}
-
-fn truthy(v: &str) -> bool {
-    matches!(v.trim(), "1" | "true" | "TRUE" | "True" | "on")
-}
-
-fn child<'a>(node: roxmltree::Node<'a, 'a>, local: &str) -> Option<roxmltree::Node<'a, 'a>> {
-    node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == local)
-}
-
-fn elems<'a>(node: roxmltree::Node<'a, 'a>) -> impl Iterator<Item = roxmltree::Node<'a, 'a>> + 'a {
-    node.children().filter(|n| n.is_element())
 }
 
 #[cfg(test)]
@@ -1459,7 +1376,9 @@ mod tests {
         let doc = f.render(None);
         // 2857500 EMU = 300px, 1905000 = 200px; anchored at column B, row 2.
         assert!(doc.html.contains("class=\"xl-ph\""), "{}", doc.html);
-        assert!(doc.html.contains("Chart"), "{}", doc.html);
+        // Placeholder labels are lowercase in both renderers, matching the
+        // "image unavailable" reasons they sit alongside.
+        assert!(doc.html.contains(">chart</div>"), "{}", doc.html);
         assert!(doc.html.contains("width:300px"), "{}", doc.html);
         assert!(doc.html.contains("height:200px"), "{}", doc.html);
         assert!(doc.html.contains("left:64px"), "column B starts one default column in: {}", doc.html);
@@ -1546,6 +1465,33 @@ mod tests {
     }
 
     #[test]
+    fn an_unparseable_drawing_rels_part_says_the_images_were_lost() {
+        // The sheet's `.rels` is where the drawing relationship lives, so a
+        // malformed one takes every drawing on the sheet with it. Dropping them
+        // silently is the failure mode this guards: the note has to say so.
+        let f = single(
+            "bad-rels",
+            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Widget</t></is></c></row></sheetData>\
+             <drawing r:id=\"rIdD\"/>",
+            &[(
+                "xl/worksheets/_rels/sheet1.xml.rels",
+                "<Relationships><Relationship".to_string(),
+            )],
+        );
+        let doc = f.render(None);
+        // The grid itself is unaffected.
+        assert!(visible_text(&doc.html).contains("Widget"), "{}", doc.html);
+        assert!(
+            doc.notes
+                .iter()
+                .any(|n| n.contains("could not be read")),
+            "{:?}",
+            doc.notes
+        );
+        balanced(&doc.html);
+    }
+
+    #[test]
     fn a_missing_drawing_part_is_ignored_rather_than_fatal() {
         let f = single(
             "no-drawing",
@@ -1572,5 +1518,13 @@ mod tests {
         // accumulator — this must be a `None`, not a panic.
         assert_eq!(col_letter_to_index("XFE"), None);
         assert_eq!(col_letter_to_index(&"A".repeat(64)), None);
+    }
+
+    #[test]
+    fn cell_ref_splits_letters_from_digits() {
+        assert_eq!(split_cell_ref("AB12"), ("AB", "12"));
+        assert_eq!(split_cell_ref("A1"), ("A", "1"));
+        assert_eq!(split_cell_ref("Sheet"), ("Sheet", ""));
+        assert_eq!(split_cell_ref(""), ("", ""));
     }
 }
