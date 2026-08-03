@@ -23,7 +23,8 @@ use super::super::fonts;
 use super::super::html::{attr, fmt_px, hundredths_pt_to_px, Style, Writer};
 use super::super::listnum::auto_num;
 use super::super::model::{
-    self, Align, Caps, HtmlStyle, LineHeight, ListMarker, Para, Run, Script, TextRun, SINGLE_LINE,
+    self, Align, Break, Caps, HtmlStyle, LineHeight, ListMarker, Para, Run, Script, TextRun,
+    SINGLE_LINE,
 };
 use super::super::xml::{child, elems, has_inner_text, inner_text, truthy};
 use super::Ctx;
@@ -41,6 +42,12 @@ const HTML: HtmlStyle = HtmlStyle {
     list_class: "pp-p pp-li",
     marker_class: "pp-bu",
     text_class: "pp-tx",
+    // A slide has no pages and no columns, so `a:br` is only ever a line break.
+    break_class: "",
+    // A slide's pictures are shapes, placed absolutely by `shapes.rs`, so no
+    // `Graphic` run is ever built here and neither class is ever emitted.
+    img_class: "",
+    graphic_class: "",
     scalable: false,
 };
 
@@ -535,7 +542,7 @@ fn parse_para(
     let mut runs = Vec::with_capacity(nodes.len());
     for r in nodes {
         match r.tag_name().name() {
-            "br" => runs.push(Run::Break),
+            "br" => runs.push(Run::Break(Break::Line)),
             // A field (slide number, date) renders its cached text; the live
             // value is not computable here.
             "r" | "fld" => {
@@ -566,6 +573,9 @@ fn parse_para(
         space_after_px: pp.after_px.unwrap_or(0.0),
         marker,
         rtl: pp.rtl == Some(true),
+        // DrawingML paints the shape, not the paragraph: a slide's fills and
+        // outlines are emitted by the shape renderer.
+        ..Default::default()
     }
 }
 
@@ -592,6 +602,13 @@ fn parse_run(text: String, rp: &RunProps, base_pt: f32, scale: f32, theme: &Them
             -1 => Some(Script::Sub),
             _ => None,
         },
+        // DrawingML has no run highlight.
+        highlight: None,
+        // Deliberately never an `<a>`: a slide's link is styled like one (above)
+        // but carries no destination, because `a:hlinkClick` on a slide most often
+        // targets another slide in the deck — a jump this preview cannot make, and
+        // a clickable dead end reads worse than link-coloured text.
+        link: None,
     }
 }
 

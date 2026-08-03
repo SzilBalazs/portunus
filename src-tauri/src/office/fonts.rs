@@ -149,6 +149,22 @@ fn alias(lower: &str) -> Option<&'static str> {
     })
 }
 
+/// The family as stated, quoted, with a generic behind it — deliberately *not*
+/// through [`alias`], which folds every symbol font onto plain `sans-serif`
+/// because a substituted symbol face is tofu.
+///
+/// For the one case where that fold is wrong: a code point the remap tables do
+/// not know (a docx `w:sym`). It means its glyph only in the font that stated it,
+/// so a reader who has that font installed gets the glyph and everyone else gets
+/// one missing character instead of missing text.
+pub fn literal_font_stack(name: &str) -> String {
+    let (clean, _) = sanitize(name);
+    if clean.is_empty() {
+        return "sans-serif".to_string();
+    }
+    format!("\"{}\", sans-serif", clean)
+}
+
 pub fn is_symbol_font(name: &str) -> bool {
     let (clean, _) = sanitize(name);
     matches!(
@@ -379,6 +395,21 @@ mod tests {
         // Empty / all-rejected names fall back to the generic alone.
         assert_eq!(css_font_stack(""), "sans-serif");
         assert_eq!(css_font_stack("{}"), "sans-serif");
+    }
+
+    #[test]
+    fn a_literal_stack_keeps_the_symbol_family_the_alias_table_folds_away() {
+        // The whole point: `css_font_stack` substitutes a symbol font away, and an
+        // unmapped `w:sym` code point needs the family it was written for.
+        assert_eq!(css_font_stack("Wingdings"), "sans-serif");
+        assert_eq!(literal_font_stack("Wingdings"), "\"Wingdings\", sans-serif");
+        // Same sanitizing, so it cannot break out of the attribute either.
+        assert_eq!(
+            literal_font_stack("Wingdings\";}</style>"),
+            "\"Wingdings\", sans-serif"
+        );
+        assert_eq!(literal_font_stack("{}"), "sans-serif");
+        assert_eq!(literal_font_stack(""), "sans-serif");
     }
 
     #[test]

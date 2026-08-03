@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { OfficeShape } from "../../types";
+import type { OfficeDoc, OfficeShape } from "../../types";
 import { officeShape } from "../../utils";
 import {
   buildOfficeSrcdoc,
@@ -30,8 +30,8 @@ import { useOfficeHtml } from "./useOfficeHtml";
 
 /**
  * Extensions the Rust HTML renderer handles today, per shape. Everything else
- * keeps going through the markdown / grid path (`fallback`); later backend stages
- * move `docx` and the ODF formats over by adding them here.
+ * keeps going through the markdown / grid path (`fallback`); a later backend stage
+ * moves the ODF formats over by adding them here.
  *
  * Keyed by shape rather than a flat set because the two are independent: `ods` is
  * a sheet the renderer cannot produce yet, and answering with the HTML frame would
@@ -40,7 +40,7 @@ import { useOfficeHtml } from "./useOfficeHtml";
 const HTML_RENDERED: Record<OfficeShape, ReadonlySet<string>> = {
   sheet: new Set(["xlsx"]),
   slide: new Set(["pptx"]),
-  doc: new Set<string>(),
+  doc: new Set(["docx"]),
 };
 
 /**
@@ -62,7 +62,14 @@ export function officeRendersHtml(filename: string): boolean {
 const SLIDE_FIT = 0.98;
 
 /**
- * Zoom floor for a document whose contain-fit factor is `fit`.
+ * Slack left when fitting a page to the frame's width, in wrap px: the frame's own
+ * vertical scrollbar (10px, SANDBOX_SCROLLBAR_CSS) plus a hair, so a page fitted to
+ * the width does not then grow a horizontal scrollbar under itself.
+ */
+const DOC_FIT_SLACK = 14;
+
+/**
+ * Zoom floor for a document whose fit factor is `fit`.
  *
  * A slide is a fixed canvas: fitting 1280px of it into a 340px side panel is a
  * factor of ~0.26, well under the shared OFFICE_ZOOM_MIN, and a floor above the
@@ -71,6 +78,31 @@ const SLIDE_FIT = 0.98;
  */
 function zoomFloor(fit: number): number {
   return fit > 0 ? Math.min(OFFICE_ZOOM_MIN, fit * 0.5) : OFFICE_ZOOM_MIN;
+}
+
+/**
+ * The authored size a document's opening zoom is fitted to, and how.
+ *
+ *  - `contain` (slide): a fixed canvas, fitted on both axes so the whole of it is
+ *    on screen - upscaling included, since a small canvas in a big window should
+ *    fill it.
+ *  - `width` (doc): a page of known width and arbitrary height, fitted on the one
+ *    axis that has a meaning, and capped at 1 (see computeFit).
+ */
+interface FitTarget {
+  mode: "contain" | "width";
+  w: number;
+  /** 0 for `width`, which never looks at the height. */
+  h: number;
+}
+
+/** A sheet answers null: it grows in both directions and opens at 100%. */
+function fitTarget(variant: OfficeShape, doc: OfficeDoc | null): FitTarget | null {
+  if (variant === "slide" && doc?.natural) {
+    return { mode: "contain", w: doc.natural[0], h: doc.natural[1] };
+  }
+  if (variant === "doc" && doc?.page) return { mode: "width", w: doc.page[0], h: 0 };
+  return null;
 }
 
 /** How long a re-render may take before the skeleton covers the stale document. */
@@ -161,12 +193,13 @@ function OfficeHtmlPreview({
   // and has to be able to clear them; the fit machinery itself lives further down.
   const [fit, setFit] = useState(0);
   const fitRef = useRef(0);
-  const naturalRef = useRef<[number, number] | null>(null);
+  const fitToRef = useRef<FitTarget | null>(null);
   if (pathRef.current !== path) {
     pathRef.current = path;
     setSection(null);
-    // A new file opens at its own natural zoom - for a slide, its own fit, which
-    // is a property of *this* canvas and has to be measured again.
+    // A new file opens at its own natural zoom - for a slide or a page, its own
+    // fit, which is a property of *this* canvas / paper size and has to be
+    // measured again.
     userZoomed.current = false;
     fitRef.current = 0;
     setFit(0);
@@ -198,20 +231,22 @@ function OfficeHtmlPreview({
   }, []);
   useEffect(() => () => window.clearTimeout(badgeTimer.current), []);
 
-  // ── slide fit ──────────────────────────────────────────────────────────────
-  // A slide has a fixed canvas, so "100%" is not a sensible opening zoom: a 1280px
-  // canvas in a 340px panel would show one corner of it. The host measures the wrap
-  // against the canvas and opens at the contain-fit factor instead, and loosens the
-  // frame's zoom floor to match (see zoomFloor).
+  // ── default fit ────────────────────────────────────────────────────────────
+  // Two of the three variants have an authored size, so "100%" is not a sensible
+  // opening zoom for them: a 1280px slide canvas in a 340px panel would show one
+  // corner of it, and an 816px page in the same panel would show the left third of
+  // every line. The host measures the wrap against that size and opens at the fit
+  // factor instead, loosening the frame's zoom floor to match (see zoomFloor). A
+  // sheet has no authored size to fit and opens at 100%.
   //
   // Held in state *and* a ref: the state drives the re-fit effect, the ref lets the
   // srcdoc memo read the current value without joining its deps - a resize must
   // never rebuild the document, which is a frame navigation.
-  naturalRef.current = variant === "slide" ? doc?.natural ?? null : null;
+  fitToRef.current = fitTarget(variant, doc);
   // A zero from state means "not measured yet", not "does not fit", so it must not
   // clobber a measurement the srcdoc memo already took for this document.
   if (fit > 0) fitRef.current = fit;
-  if (!naturalRef.current) fitRef.current = 0;
+  if (!fitToRef.current) fitRef.current = 0;
 
   // Deliberately synchronous and callable during render: the *first* document of a
   // deck has to be built with its fit already known. Waiting for the layout effect
@@ -219,17 +254,26 @@ function OfficeHtmlPreview({
   // big, and only then gets a `zoom` message - which is the flash.
   const computeFit = useCallback(() => {
     const el = wrapRef.current;
-    const nat = naturalRef.current;
-    if (!el || !nat || nat[0] <= 0 || nat[1] <= 0) return 0;
+    const to = fitToRef.current;
+    if (!el || !to || to.w <= 0) return 0;
     const w = el.clientWidth;
     const h = el.clientHeight;
     if (w <= 0 || h <= 0) return 0; // not laid out yet; the observer will call back
-    return Math.round(Math.min(w / nat[0], h / nat[1]) * SLIDE_FIT * 100) / 100;
+    // A page is fitted by *width* alone, and never above 1. Its height is whatever
+    // the document runs to, so a contain-fit would shrink a ten-page render to a
+    // sliver; and a wide QuickLook window should show the paper at 100% rather than
+    // blow a 816px page up to fill it.
+    if (to.mode === "width") {
+      return Math.min(1, Math.round(((w - DOC_FIT_SLACK) / to.w) * 100) / 100);
+    }
+    // A slide is a fixed canvas: both axes, and a hair of letterbox left over.
+    if (to.h <= 0) return 0;
+    return Math.round(Math.min(w / to.w, h / to.h) * SLIDE_FIT * 100) / 100;
   }, []);
 
   const measureFit = useCallback(() => {
     const z = computeFit();
-    if (z <= 0 && naturalRef.current) return; // mid-layout, not "no fit"
+    if (z <= 0 && fitToRef.current) return; // mid-layout, not "no fit"
     setFit(prev => (Math.abs(prev - z) < 0.005 ? prev : z));
   }, [computeFit]);
 
@@ -246,14 +290,18 @@ function OfficeHtmlPreview({
     if (!doc) return null;
     const token = randomToken();
     // Baked in rather than sent after `ready`: a slide flip that opened at 100% and
-    // then snapped to fit would flash the canvas at four times its size. Measured
-    // here rather than read from `fit` because the state is one render behind on the
-    // first document of a deck - the wrap is already laid out (the skeleton was in
-    // it), so the measurement is available now.
-    if (doc.shape === "slide" && fitRef.current <= 0) fitRef.current = computeFit();
+    // then snapped to fit would flash the canvas at four times its size, and a page
+    // would flash a third of a line's width. Measured here rather than read from
+    // `fit` because the state is one render behind on the first document of a file -
+    // the wrap is already laid out (the skeleton was in it), so the measurement is
+    // available now.
+    //
+    // `fitToRef` being null (a sheet) is what keeps fitRef at 0 through the render
+    // above, so both branches below fall through to the carried zoom for one.
+    if (fitToRef.current && fitRef.current <= 0) fitRef.current = computeFit();
     const floor = zoomFloor(fitRef.current);
     const open =
-      doc.shape === "slide" && !userZoomed.current && fitRef.current > 0
+      !userZoomed.current && fitRef.current > 0
         ? fitRef.current
         : clampOfficeZoom(zoomRef.current, floor);
     zoomRef.current = open;
@@ -369,8 +417,9 @@ function OfficeHtmlPreview({
     showZoomBadge(next);
   }, [send, showZoomBadge]);
 
-  // Ctrl+0. For a slide "actual size" is the fit, not 100%: nobody asks to see a
-  // sixth of a slide.
+  // Ctrl+0. Where there is a fit, "actual size" is *it* rather than 100%: nobody
+  // asks to see a sixth of a slide, or a page cropped to the panel's width. A
+  // sheet has no fit and so resets to 1.
   const resetZoom = useCallback(() => {
     userZoomed.current = false;
     const z = fitRef.current > 0 ? fitRef.current : 1;

@@ -32,11 +32,13 @@ pub fn handle_cli_args() -> bool {
                 // Notes and section list go to stderr so stdout stays pipeable
                 // straight into a file.
                 eprintln!(
-                    "shape={:?} section={}/{} truncated={}",
+                    "shape={:?} section={}/{} truncated={} natural={:?} page={:?}",
                     doc.shape,
                     doc.section,
                     doc.sections.len(),
-                    doc.truncated
+                    doc.truncated,
+                    doc.natural,
+                    doc.page
                 );
                 for (i, name) in doc.sections.iter().enumerate() {
                     eprintln!("  [{i}] {name}");

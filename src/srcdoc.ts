@@ -156,17 +156,29 @@ export interface OfficeSrcdocOpts {
 /** Wrapper the reader's zoom transform is applied to. */
 const OFFICE_ZOOM_ID = 'ozoom';
 
-/** Hidden viewport-sized probe the slide scaffold measures itself against. */
+/** Hidden viewport-sized probe the doc and slide scaffolds measure themselves
+ *  against. */
 const OFFICE_VP_ID = 'ovp';
 
 /**
- * Slack left when padding the slide wrapper out to the viewport. A wrapper sized
+ * Slack left when padding a wrapper out to the viewport. A wrapper sized
  * to the exact viewport makes body exactly the viewport too, which is the size at
  * which a scrollbar's appearance shrinks the client box, shrinks the wrapper,
  * removes the scrollbar, and starts again - so the fitted state deliberately sits
  * one scrollbar short of the edge.
  */
 const OFFICE_VP_SLACK = 12;
+
+/**
+ * The probe itself, for the two variants whose wrapper is padded out to the
+ * viewport (doc and slide). `position:fixed` with 100% of each axis *is* the
+ * viewport by construction, so its layout box is the viewport expressed in the
+ * same pre-scale px the wrapper is laid out in - whatever the root's own `zoom`
+ * does to the mapping between those px and painted ones.
+ */
+const OFFICE_VP_CSS =
+  `#${OFFICE_VP_ID}{position:fixed;left:0;top:0;width:100%;height:100%;` +
+  `visibility:hidden;pointer-events:none}`;
 
 /**
  * What counts as selectable text per variant, and what chrome a drag may cross
@@ -178,15 +190,19 @@ const OFFICE_VP_SLACK = 12;
  * letters are chrome, and letting a drag pick them up would put them in the copied
  * TSV. A slide is the same idea one level up: `pp-tb` is a shape's text box and
  * `pp-tbl` its table, so a press inside either selects and a press on the canvas,
- * a picture or a placeholder pans. The doc variant is provisional along with the
- * rest of its scaffolding: a page is text throughout, so left-drag selects
- * anywhere and panning is middle-drag only.
+ * a picture or a placeholder pans. The doc variant needs no such split: a page is
+ * text throughout, so left-drag selects anywhere and panning is middle-drag only.
+ *
+ * A docx table needs nothing here either - the engine's cell and block detection
+ * is by tag (`closest('td,th')`, `BLOCK_TAGS`), not by any renderer's class, so a
+ * selection across `.of-tc` cells already copies as TSV and one across headings
+ * already breaks by line.
  */
 const SELECTORS: Record<OfficeVariant, FrameSelectionOpts> = {
   sheet: { text: '.xl-t', exclude: 'th', host: '' },
-  // Contract for stage 3: a doc-shape renderer must wrap its page in `.of-page`.
-  // The class is the doc shape's own - deliberately not the sheet renderer's
-  // `.xl-doc` root, which is `Shape::Sheet` and carries the sheet's own CSS.
+  // The docx renderer wraps its page in `.of-page`. That class is the doc shape's
+  // own - deliberately not the sheet renderer's `.xl-doc` root, which is
+  // `Shape::Sheet` and carries the sheet's own CSS.
   doc: { text: '.of-page', exclude: '', host: '.of-page' },
   slide: { text: '.pp-tb,.pp-tbl', exclude: '', host: '.pp-doc' },
 };
@@ -282,9 +298,14 @@ const OFFICE_BASE_CSS =
  * *element* (a replaced element, so its composited layer gets blitted); a
  * transform inside the document rasterizes text at the final device scale.
  *
- * `width: calc(100% / z)` is the other half: transform does not affect layout, so
- * the body has to be laid out at the pre-scale width for the scaled result to
- * come out one viewport wide.
+ * The other half is that all three wrappers are *content-sized*
+ * (`width:max-content`) and never sized against the viewport. A width that
+ * depended on the zoom - `calc(100% / z)`, which the doc variant used to carry -
+ * makes zooming relayout rather than scale: at 2x the column halves, so anything
+ * fitted to it re-wraps, anything centred in it re-centres (a centred title
+ * visibly slides sideways as you zoom) and anything carrying real px widths
+ * overflows it. Laying out once and letting the transform do all the scaling is
+ * both exactly linear and free of layout work per wheel tick.
  *
  * The launcher's own `--ui-zoom` stays on `zoom` - it is the UI scale the rest of
  * the app uses, and it is not a per-document control.
@@ -307,26 +328,56 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
       // zoom dirties layout on every step, and a 1000x30 sheet is 30k cells to
       // relay out per wheel tick; a bare transform touches no layout at all.
       //
-      // Sheets can afford to skip it because their content is content-sized: the
-      // grid is a `table-layout:fixed` table of explicit column widths, so it
-      // never needed a percentage width to size against. `max-content` is also
+      // A sheet was the first variant that could skip it, because its content is
+      // content-sized: the grid is a `table-layout:fixed` table of explicit column
+      // widths, so it never needed a percentage width to size against - and the
+      // other two turned out to be the same story. `max-content` is also
       // free of any dependency on body's width, which matters because the
       // bootstrap sizes body from the *scaled* wrapper (transforms do not affect
       // layout, so without that body keeps its full unscaled box and the viewport
       // scrolls over a blank region) - a percentage here would make that circular.
       return root + `#${OFFICE_ZOOM_ID}{width:max-content}body{cursor:grab}`;
     case 'doc': {
-      // Provisional until the docx renderer lands (backend stage 2): page geometry
-      // arrives as [width, padX, padY] in CSS px, centred on the chrome backdrop.
+      // Page geometry arrives as [width, padX, padY] in CSS px, centred on the
+      // chrome backdrop. `width` is the *whole* page including its margins -
+      // `box-sizing:border-box` from the base CSS is what makes the padding sit
+      // inside it, so a Letter page is 816px wide and not 816 + 2 x 96.
+      //
+      // The fallback is US Letter with 1in margins, for a document whose renderer
+      // reported no geometry at all. A renderer with asymmetric margins overrides
+      // the padding from its own stylesheet, which comes later in document order.
       const [w, px, py] = opts.page ?? [816, 96, 96];
-      // These two keep the zoom-dependent width the sheet drops: their content
-      // *is* sized against the viewport (a centred page column, a letterboxed
-      // canvas), and the relayout it costs is one box, not a grid of cells.
+      // Content-sized exactly as the sheet and the slide are, with no
+      // zoom-dependent width: a page is the variant where relayout-instead-of-scale
+      // is *visible* rather than merely slow (see the note above the switch).
+      // Centring a page narrower than the frame, and the pan range of one zoomed
+      // past it, both come from the wrapper's *minimum* size instead, which the
+      // bootstrap sets from the measured viewport (see `pad`).
+      //
+      // `align-items:flex-start` because of that minimum: the default `stretch`
+      // would grow a short page to the full viewport height, and a page's bottom
+      // edge is part of reading it as paper. A document is read from the top, so
+      // there is nothing to centre vertically either.
       return (
         root +
-        `#${OFFICE_ZOOM_ID}{display:flex;justify-content:center;` +
-        `width:calc(100% / var(--office-zoom,1))}` +
-        `.of-page{width:${w}px;max-width:100%;padding:${py}px ${px}px;background:#fff;color:#000}`
+        `#${OFFICE_ZOOM_ID}{display:flex;align-items:flex-start;justify-content:center;` +
+        `width:max-content}` +
+        // The page is laid out once, at the width the document was authored for, and
+        // the transform does every bit of the scaling - hence no `max-width:100%`.
+        // A percentage cap is what made zoom relayout the page: shrinking it below
+        // its authored width re-centres centred paragraphs (a title slides sideways
+        // and clips as you zoom in) and pushes content that carries real px widths -
+        // a table with a px `<colgroup>` - off the paper and onto the chrome.
+        //
+        // Vertical air and a shadow so the paper reads as a sheet lying on the
+        // chrome rather than as the frame's own background. Deliberately a shadow
+        // and not a border: in this UI a border means interactive.
+        // `flex:none` for the same reason as the missing cap: a flex item's default
+        // `flex-shrink:1` is another route to a page narrower than its authored
+        // width, and this one has no zoom in it at all.
+        `.of-page{flex:none;width:${w}px;padding:${py}px ${px}px;background:#fff;color:#000;` +
+        `margin:10px 0;box-shadow:0 1px 10px rgba(0,0,0,0.3)}` +
+        OFFICE_VP_CSS
       );
     }
     case 'slide':
@@ -348,12 +399,7 @@ function officeVariantCss(variant: OfficeVariant, opts: OfficeSrcdocOpts): strin
         // Everything outside a text box pans, so the whole canvas offers the grab
         // cursor and the renderer's `cursor:text` rules take it back where text is.
         `body{cursor:grab}` +
-        // Viewport probe: `position:fixed` with 100% of each axis *is* the viewport
-        // by construction, so its layout box is the viewport expressed in the same
-        // pre-scale px the wrapper is laid out in - whatever the root's own `zoom`
-        // does to the mapping between those px and painted ones.
-        `#${OFFICE_VP_ID}{position:fixed;left:0;top:0;width:100%;height:100%;` +
-        `visibility:hidden;pointer-events:none}`
+        OFFICE_VP_CSS
       );
   }
 }
@@ -378,13 +424,16 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
   const mark = JSON.stringify(opts.bestMarkId ?? null);
   const zoom = clampOfficeZoom(opts.zoom ?? 1, opts.zoomMin);
   const zmin = clampOfficeZoom(opts.zoomMin ?? OFFICE_ZOOM_MIN, opts.zoomMin);
-  // The sheet and slide wrappers are laid out independently of body's width, so
-  // body can be sized from them without going circular. The doc variant still
-  // carries a zoom-dependent width and sizes itself.
-  const fits = variant !== 'doc';
-  // ...and only the slide wrapper needs padding out to the viewport first: a sheet
-  // is scrolled from its top-left corner, a slide is centred in the letterbox.
-  const pads = variant === 'slide';
+  // Every wrapper is content-sized (`width:max-content`) and so laid out
+  // independently of body's width, which is what lets body be sized from the
+  // *scaled* wrapper without going circular. All three variants therefore size
+  // body themselves - see `fit` below.
+  //
+  // Two of them need the wrapper padded out to the viewport first: a slide is
+  // centred in its letterbox, and a page is centred in the frame when it is
+  // narrower than one and needs a pan range when it is wider. Only a sheet does
+  // not - it is scrolled from its top-left corner and grows in both directions.
+  const pads = variant !== 'sheet';
   // Only slides carry fixed-size text boxes that PowerPoint shrinks text to fit.
   const autofits = variant === 'slide';
   return (
@@ -435,20 +484,19 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     // body to the scaled wrapper is what removes that phantom region.
     // offsetWidth/offsetHeight are the untransformed layout box, which is exactly
     // the number to multiply.
-    // A slide is padded out to the viewport first (in pre-scale px, hence the
-    // division by Z), which is what centres a fitted canvas and what gives a
-    // zoomed-in one a scroll range to pan through.
-    (fits
-      ? `var fit=function(){if(!W)return;` +
-        (pads
-          ? `if(VP){var s=${OFFICE_VP_SLACK};` +
-            `W.style.minWidth=Math.max(0,Math.floor((VP.offsetWidth-s)/Z))+'px';` +
-            `W.style.minHeight=Math.max(0,Math.floor((VP.offsetHeight-s)/Z))+'px';}`
-          : '') +
-        `var b=document.body.style;` +
-        `b.width=Math.ceil(W.offsetWidth*Z)+'px';` +
-        `b.height=Math.ceil(W.offsetHeight*Z)+'px';};`
-      : `var fit=function(){};`) +
+    // A slide and a page are padded out to the viewport first (in pre-scale px,
+    // hence the division by Z), which is what centres a fitted canvas or a page
+    // narrower than the frame, and what gives a zoomed-in one a scroll range to pan
+    // through.
+    `var fit=function(){if(!W)return;` +
+    (pads
+      ? `if(VP){var s=${OFFICE_VP_SLACK};` +
+        `W.style.minWidth=Math.max(0,Math.floor((VP.offsetWidth-s)/Z))+'px';` +
+        `W.style.minHeight=Math.max(0,Math.floor((VP.offsetHeight-s)/Z))+'px';}`
+      : '') +
+    `var b=document.body.style;` +
+    `b.width=Math.ceil(W.offsetWidth*Z)+'px';` +
+    `b.height=Math.ceil(W.offsetHeight*Z)+'px';};` +
     // A trackpad emits wheel events far faster than the compositor draws, so the
     // write is coalesced to one per frame. Z is updated synchronously (and echoed
     // straight away) so the accumulated factor and the host's badge never lag
@@ -463,8 +511,9 @@ function officeBootstrap(variant: OfficeVariant, opts: OfficeSrcdocOpts): string
     `z=Math.round(Math.max(ZMIN,Math.min(ZMAX,z||1))*100)/100;` +
     `Z=z;if(!raf)raf=requestAnimationFrame(flush);` +
     `post({type:'zoomed',factor:z,requestId:rid});};` +
-    // The letterbox is measured, so it has to be re-measured when the frame is
-    // resized (panel width drag, Quicklook opening over the side preview).
+    // The padding is measured, so it has to be re-measured when the frame is
+    // resized (panel width drag, Quicklook opening over the side preview) - or a
+    // slide's letterbox and a page's margins keep the old frame's geometry.
     (pads
       ? `window.addEventListener('resize',function(){if(!raf)raf=requestAnimationFrame(flush);});`
       : '') +
@@ -596,7 +645,9 @@ export function buildOfficeSrcdoc(
     officeVariantCss(variant, opts) +
     SANDBOX_SCROLLBAR_CSS +
     `</style></head><body>` +
-    (variant === 'slide' ? `<i id="${OFFICE_VP_ID}"></i>` : '') +
+    // Viewport probe, for the variants whose wrapper the bootstrap pads out to the
+    // frame (see `pads`). A sheet never measures it, so it never emits it.
+    (variant === 'sheet' ? '' : `<i id="${OFFICE_VP_ID}"></i>`) +
     `<div id="${OFFICE_ZOOM_ID}">${html}</div>` +
     `<script nonce="${nonce}">${officeBootstrap(variant, opts)}</script>` +
     `</body></html>`

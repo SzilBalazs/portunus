@@ -2,6 +2,7 @@
 //! for the content index, Markdown and spreadsheet grids for the preview.
 
 mod cellstyle;
+mod docx;
 mod drawingml;
 mod emit;
 mod fonts;
@@ -82,9 +83,10 @@ pub fn render(path: &str, section: Option<u32>, terms: &[String]) -> Result<Offi
     match ext.as_str() {
         "xlsx" => xlsx::render(path, section, terms),
         "pptx" => pptx::render(path, section, terms),
+        "docx" => docx::render(path, section, terms),
         // Later stages fill these in; until then the frontend keeps using the
         // markdown/grid path for them.
-        "docx" | "odt" | "ods" | "odp" => {
+        "odt" | "ods" | "odp" => {
             Err(format!("office: no HTML renderer yet for {ext}"))
         }
         other => Err(format!("unsupported office extension: {other}")),

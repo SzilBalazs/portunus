@@ -106,6 +106,63 @@ pub fn list_parts(zip: &mut Zip, pred: impl Fn(&str) -> bool) -> Vec<String> {
         .collect()
 }
 
+/// A package fixture on disk, deleted when it drops.
+///
+/// Test-only, and shared by every renderer's tests: a [`Zip`] is
+/// `ZipArchive<BufReader<File>>`, so no fixture package can live in memory, and
+/// a `Ctx` that carries the media path needs a real archive behind it even when
+/// the fixture references no media at all.
+#[cfg(test)]
+pub struct TestPkg(std::path::PathBuf);
+
+#[cfg(test)]
+impl TestPkg {
+    /// A repeated entry name means "replace": `zip` itself rejects a duplicate,
+    /// so the last write of a name wins and document order is preserved.
+    pub fn new(tag: &str, entries: &[(&str, Vec<u8>)]) -> TestPkg {
+        use std::io::Write;
+        let mut seen = std::collections::HashSet::new();
+        let mut parts: Vec<&(&str, Vec<u8>)> = entries
+            .iter()
+            .rev()
+            .filter(|(name, _)| seen.insert(*name))
+            .collect();
+        parts.reverse();
+
+        // Tests run in parallel in one process, so the pid alone is not unique.
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "portunus-office-{tag}-{}-{n}.zip",
+            std::process::id()
+        ));
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, body) in parts {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+        TestPkg(path)
+    }
+
+    pub fn path(&self) -> &str {
+        self.0.to_str().unwrap()
+    }
+
+    pub fn open(&self) -> Zip {
+        open_zip(self.path()).expect("fixture package opens")
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestPkg {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
