@@ -154,12 +154,11 @@ fn sniff_svg(bytes: &[u8]) -> bool {
 // Notes are `&'static str` so de-duplication is a plain compare with no
 // allocation, and a document with 300 metafiles still produces one line of
 // explanation rather than 300.
-const NOTE_TOO_LARGE: &str = "Some images were omitted: they exceed the preview image size limit.";
-pub(super) const NOTE_BUDGET: &str =
-    "Some images were omitted: the document exceeds the preview image budget.";
-const NOTE_VECTOR: &str = "Vector images (EMF/WMF) are shown as placeholders.";
-const NOTE_UNREADABLE: &str = "Some images could not be decoded.";
-const NOTE_UNSUPPORTED: &str = "Some images use a format the preview cannot display.";
+const NOTE_TOO_LARGE: &str = "Some images omitted — size limit";
+pub(super) const NOTE_BUDGET: &str = "Some images omitted — size limit";
+const NOTE_VECTOR: &str = "Vector images not drawn";
+const NOTE_UNREADABLE: &str = "Some images could not be decoded";
+const NOTE_UNSUPPORTED: &str = "Some image formats unsupported";
 
 /// Per-document image budget: how many encoded bytes the preview has already
 /// committed, plus the notes explaining the placeholders it had to emit.

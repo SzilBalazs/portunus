@@ -29,18 +29,19 @@ import { officeScroll } from "./scrollRegistry";
 import { useOfficeHtml } from "./useOfficeHtml";
 
 /**
- * Extensions the Rust HTML renderer handles today, per shape. Everything else
- * keeps going through the markdown / grid path (`fallback`); a later backend stage
- * moves the ODF formats over by adding them here.
+ * Extensions the Rust HTML renderer handles today, per shape. Anything absent keeps
+ * going through the markdown / grid path (`fallback`).
  *
- * Keyed by shape rather than a flat set because the two are independent: `ods` is
- * a sheet the renderer cannot produce yet, and answering with the HTML frame would
- * show its error card instead of the legacy grid.
+ * All six are rendered now, so nothing falls back in practice — but the table stays
+ * because it is what the footer hints and the action panel agree with the preview
+ * about (see `officeRendersHtml`), and because it is keyed by shape rather than as a
+ * flat set: a format the renderer cannot produce must answer with its legacy view
+ * rather than with the frame's error card.
  */
 const HTML_RENDERED: Record<OfficeShape, ReadonlySet<string>> = {
-  sheet: new Set(["xlsx"]),
-  slide: new Set(["pptx"]),
-  doc: new Set(["docx"]),
+  sheet: new Set(["xlsx", "ods"]),
+  slide: new Set(["pptx", "odp"]),
+  doc: new Set(["docx", "odt"]),
 };
 
 /**

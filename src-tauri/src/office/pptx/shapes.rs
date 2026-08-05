@@ -131,7 +131,7 @@ fn emit_sp(ctx: &mut Ctx, w: &mut Writer, sp: Node, env: &Env, groups: &[GroupXf
         // carries text is data the reader cannot see, so say so once.
         if child(sp, "txBody").is_some() {
             ctx.notes
-                .add("Some text in this file has no position and is not shown.");
+                .add("Some text has no position");
         }
         return;
     };
@@ -272,7 +272,7 @@ fn emit_text(
     ]);
     if opts.vertical {
         ctx.notes
-            .add("Vertical text is shown horizontally: the preview does not rotate text.");
+            .add("Vertical text shown horizontally");
     }
     let paras = text::parse_paras(tb, &cas, &opts, ctx.theme, &ctx.clr_map);
     text::emit_body(ctx, w, &paras, &opts);
@@ -380,8 +380,6 @@ fn emit_image(
             if matches!(mode, BlipMode::Tile) {
                 // A tiled fill is not an image element; approximate with the
                 // untiled bitmap stretched over the box and say so once.
-                ctx.notes
-                    .add("Tiled picture fills are shown stretched rather than repeated.");
             }
             w.void(
                 "img",
@@ -506,9 +504,9 @@ fn emit_frame(ctx: &mut Ctx, w: &mut Writer, fr: Node, env: &Env, groups: &[Grou
     // around say so in the footer as well; the rest are self-explanatory.
     if uri.contains("/chart") {
         ctx.notes
-            .add("Charts are shown as placeholders: the preview does not draw chart data.");
+            .add("Charts not drawn");
     } else if uri.contains("/diagram") {
-        ctx.notes.add("SmartArt diagrams are shown as placeholders.");
+        ctx.notes.add("SmartArt not drawn");
     }
     css.push_str("box-sizing:border-box;");
     w.open("div", &attrs(&[&attr("class", "pp-sp"), &attr("style", &css)]));
@@ -521,8 +519,6 @@ fn emit_table(ctx: &mut Ctx, w: &mut Writer, tbl: Node, env: &Env) {
         .and_then(|p| child(p, "tableStyleId"))
         .is_some()
     {
-        ctx.notes
-            .add("Table styles are simplified: banding and conditional borders are approximate.");
     }
     let cols: Vec<f64> = child(tbl, "tblGrid")
         .map(|g| {

@@ -279,6 +279,13 @@ pub fn fmt_deg(v: f32) -> Option<String> {
     fmt_num(v).map(|s| s + "deg")
 }
 
+/// A unitless number, for the CSS properties where a bare ratio and a percentage
+/// are not the same thing — `line-height` above all, which resolves a percentage at
+/// the element that states it and a number at each element that inherits it.
+pub fn fmt_ratio(v: f32) -> Option<String> {
+    fmt_num(v)
+}
+
 // Unit converters. Each is named for the unit it consumes, because the Office
 // formats express the same quantity in four different scalings and mixing them
 // up produces a plausible-looking layout that is off by 20x.
@@ -350,6 +357,20 @@ impl Style {
         if let Some(v) = value {
             self.push(prop, &v);
         }
+    }
+
+    /// Appends an already-formed `prop:value;` declaration.
+    ///
+    /// For the emitters that produce a whole declaration rather than a value —
+    /// `line_css` and `fill_css` — so a caller does not have to take the property
+    /// name back off. Anything that is not a terminated declaration is dropped
+    /// rather than concatenated into the next one.
+    pub fn push_decl(&mut self, decl: &str) {
+        let d = decl.trim();
+        if !d.ends_with(';') || !d.contains(':') {
+            return;
+        }
+        self.buf.push_str(d);
     }
 
     pub fn is_empty(&self) -> bool {

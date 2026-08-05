@@ -16,7 +16,7 @@
 
 use super::drawingml::color::Color;
 use super::highlight::{Marker, Terms};
-use super::html::{attr, attrs, fmt_pct, fmt_px, pt_to_px, Style, Writer};
+use super::html::{attr, attrs, fmt_px, fmt_ratio, pt_to_px, Style, Writer};
 
 /// Line spacing stated as a percentage is relative to a single line of the
 /// font, which is taller than the em box. Nothing here measures text, so this is
@@ -348,9 +348,16 @@ fn emit_para(w: &mut Writer, p: &Para, st: &HtmlStyle, hl: &mut Marker, terms: &
         ),
         // The default costs nothing to state and appears on every paragraph of
         // every deck, so it is left to the stylesheet.
+        //
+        // A **unitless** ratio, not a percentage: the two differ exactly when the
+        // runs are not the paragraph's own size. A percentage computes to px against
+        // the paragraph's `font-size` and inherits that px, so a 16px paragraph
+        // holding a 96px title run gets 17px of leading and its lines write over one
+        // another. A number inherits as a number and each run resolves it against
+        // its own size, which is what a producer means by "150% line spacing".
         LineHeight::Multiple(m) => {
             if (m - SINGLE_LINE).abs() > 0.001 {
-                s.push_opt("line-height", fmt_pct(m * 100.0));
+                s.push_opt("line-height", fmt_ratio(m));
             }
         }
     }
@@ -747,8 +754,35 @@ font-family:Widget Sans, sans-serif;font-size:12px;\">1.</span>"),
     fn line_height_states_only_what_differs_from_a_single_line() {
         let with = |line| html(&[Para { line, ..para(vec![run("x")]) }], &ST);
         assert!(!with(LineHeight::default()).contains("line-height"));
-        assert!(with(LineHeight::Multiple(1.8)).contains("line-height:180%;"));
+        // Unitless, so a run larger than the paragraph resolves the ratio against
+        // its own size instead of inheriting the paragraph's computed px — a 96px
+        // title in a 16px paragraph writes over itself otherwise.
+        assert!(with(LineHeight::Multiple(1.8)).contains("line-height:1.8;"));
+        assert!(!with(LineHeight::Multiple(1.8)).contains("180%"));
         assert!(with(LineHeight::Exact(40.0)).contains("line-height:40px;"));
+    }
+
+    #[test]
+    fn a_ratio_line_height_survives_a_run_larger_than_its_paragraph() {
+        // The shape of the odp title bug: the paragraph resolves to one size and
+        // the run inside it to another.
+        let big = TextRun {
+            text: "Google Trends".to_string(),
+            size_pt: 72.0,
+            ..Default::default()
+        };
+        let out = html(
+            &[Para {
+                line: LineHeight::Multiple(1.068),
+                size_pt: 12.0,
+                ..para(vec![Run::Text(big)])
+            }],
+            &ST,
+        );
+        // Two decimals is the writer's precision for every CSS number; on a 96px
+        // run that is a quarter of a pixel.
+        assert!(out.contains("line-height:1.07;"), "{out}");
+        assert!(out.contains("font-size:96px"), "{out}");
     }
 
     #[test]

@@ -1,9 +1,16 @@
-//! `w:hyperlink` destinations and `w:bookmarkStart` names, turned into the two
-//! strings the emitter is allowed to put in an attribute: an `href` and an `id`.
+//! Link destinations and bookmark names, turned into the two strings the emitter
+//! is allowed to put in an attribute: an `href` and an `id`.
 //!
 //! Both are document-controlled, so both are decided here rather than at the
-//! point of emission — [`model::TextRun::link`] and [`model::Run::Anchor`] are
-//! documented as *already sanitized*, and this is the file that owes them that.
+//! point of emission — [`super::model::TextRun::link`] and
+//! [`super::model::Run::Anchor`] are documented as *already sanitized*, and this
+//! is the file that owes them that.
+//!
+//! Shared by every dialect rather than living with one: `w:hyperlink@r:id`,
+//! `text:a@xlink:href` and a bookmark name in either format are all the same
+//! problem, and a second copy of a URL whitelist is a second place for it to go
+//! stale. [`href_of`] is the OOXML relationship half; [`sanitize_href`] and
+//! [`bookmark_id`] are what a dialect with plain URIs in its markup needs.
 //!
 //! The frame the HTML lands in cannot navigate anywhere: its sandbox is
 //! `allow-scripts` with no `allow-top-navigation` and no `allow-popups`, and its
@@ -13,8 +20,8 @@
 //! the only guard — but it is the layer that lives next to the parser, and the
 //! other two are one attribute edit away in a `.tsx`.
 
-use super::super::opc;
-use super::super::xml::attr_local;
+use super::opc;
+use super::xml::attr_local;
 use roxmltree::Node;
 
 /// Characters of an `href` kept. Word writes long URLs, but a document that
@@ -176,7 +183,7 @@ mod tests {
              <w:hyperlink r:id=\"rId1\"/><w:hyperlink r:id=\"rId2\"/>\
              <w:hyperlink r:id=\"rId3\"/><w:hyperlink r:id=\"rId9\"/>\
              <w:hyperlink w:anchor=\"café Widget\"/><w:hyperlink/></root>";
-        let doc = super::super::super::xml::parse(src).expect("fixture parses");
+        let doc = super::super::xml::parse(src).expect("fixture parses");
         let mut rels = opc::Rels::new();
         let rel = |target: &str, external: bool| opc::Relationship {
             target: target.to_string(),
@@ -187,7 +194,7 @@ mod tests {
         rels.insert("rId2".to_string(), rel("javascript:alert(1)", true));
         // An internal target: a part of the package, not a destination.
         rels.insert("rId3".to_string(), rel("other.xml", false));
-        let hrefs: Vec<Option<String>> = super::super::super::xml::elems(doc.root_element())
+        let hrefs: Vec<Option<String>> = super::super::xml::elems(doc.root_element())
             .map(|n| href_of(&rels, n))
             .collect();
         assert_eq!(

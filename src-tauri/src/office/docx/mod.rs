@@ -15,16 +15,16 @@
 
 mod body;
 mod draw;
-mod link;
 mod notes;
 mod numbering;
 mod style;
 mod table;
 
+use super::docshape::{self, Page, MAX_MARGIN_PX, MAX_PAGE_PX, MIN_COLUMN_PX, MIN_PAGE_PX};
 use super::drawingml::theme::Theme;
 use super::emit::{self, Notes};
 use super::highlight::{Marker, Terms};
-use super::html::{attr, dxa_to_px, fmt_px, pt_to_px, Style, Writer};
+use super::html::{attr, dxa_to_px, Writer};
 use super::media::{MediaBudget, MediaCache};
 use super::pkg::{self, Budget, Zip};
 use super::xml::{child, elems};
@@ -37,104 +37,15 @@ use style::Styles;
 /// larger than a slide's.
 pub const HTML_CAP: usize = 8 * 1024 * 1024;
 
-/// US Letter at 96dpi with 1in margins: what a document with no usable
-/// `w:sectPr` gets. The same fallback the frontend's host CSS states, so the two
-/// agree when neither has anything to go on.
-const DEFAULT_PAGE_W: f32 = 816.0;
-const DEFAULT_PAGE_H: f32 = 1056.0;
-const DEFAULT_MARGIN: f32 = 96.0;
-
-/// Sane page bounds. Below the minimum there is no column to read; above the
-/// maximum the page is wider than any display and the reader can only pan.
-const MIN_PAGE_PX: f32 = 96.0;
-const MAX_PAGE_PX: f32 = 4096.0;
-/// A margin never eats more than this, nor more than half the paper minus a
-/// readable column — a document that states margins wider than its own page would
-/// otherwise leave no text column at all.
-const MAX_MARGIN_PX: f32 = 512.0;
-const MIN_COLUMN_PX: f32 = 96.0;
-
 /// `w:defaultTabStop` when `settings.xml` states none: Word's own default, half
 /// an inch.
 const DEFAULT_TAB_DXA: i64 = 720;
 const MAX_TAB_DXA: i64 = 5760;
 
-const NOTE_STYLES: &str =
-    "Text styles are unavailable: this document's stylesheet could not be read.";
-const NOTE_NUMBERING: &str =
-    "List numbering is unavailable: this document's numbering definitions could not be read.";
-const NOTE_THEME: &str =
-    "Theme colours and fonts are unavailable: this document's theme could not be read.";
-const NOTE_BODY: &str = "This document's body could not be read.";
-
-/// Structural stylesheet. Every selector is at most one type plus one class, so
-/// the per-paragraph inline styles that carry the document's own geometry always
-/// win, and so do the document-derived rules appended after this block.
-const BASE_CSS: &str = "\
-.of-page{background:#fff;color:#000;white-space:pre-wrap;overflow-wrap:break-word;}
-/* One class for a paragraph and for every heading level: `model::emit_para`
-   changes the element and nothing else, so the heading's UA margins and weight
-   have to be reset here or they fight the document's own spacing. The weight is
-   inherited rather than normal because a heading style states its own boldness on
-   the runs, which is where the emitter puts it. */
-.of-p{margin:0;font-weight:inherit;}
-/* A marked paragraph is a flex row: marker, then the runs as a block that wraps
-   at its own left edge. See the hanging-indent note in `model::emit_para`. */
-.of-li{display:flex;align-items:baseline;}
-.of-bu{display:inline-block;flex:none;white-space:pre;}
-.of-tx{flex:1 1 auto;min-width:0;}
-/* A page or column break cannot be paginated away in a scrolling column, so it
-   is drawn as the boundary it is: a full-width hairline with air around it. The
-   `content` declaration is not decoration - WebKit builds a real box for a `br`
-   only when its style has content (`HTMLBRElement::createElementRenderer`), and
-   without one the border never paints. */
-br.of-pb{content:'';display:block;height:0;border-top:1px solid #c9c9c9;margin:16px 0;}
-/* A table's columns come from the document's own `w:tblGrid` under a fixed
-   layout, because nothing here measures text — see `table.rs`. `max-width` is
-   what keeps a table wider than the text column from pushing the page open, and
-   it has to sit on the class rather than inline so a document-stated `width`
-   still wins. `of-tbl-auto` is the fallback for a table whose grid says nothing:
-   a fixed layout with no column widths splits it equally, which is a geometry no
-   document asked for. */
-table.of-tbl{border-collapse:collapse;table-layout:fixed;max-width:100%;}
-table.of-tbl-auto{table-layout:auto;}
-/* Word's default cell margins are 0.08in on the leading and trailing edge and
-   nothing vertical, and its default vertical alignment is top. Both live here so
-   that the common cell needs no `style` attribute at all: a table in a long
-   report is thousands of cells, and every repeated declaration is bytes against
-   the writer's cap. */
-td.of-tc{padding:0 7.2px;vertical-align:top;overflow-wrap:break-word;}
-/* An image is a run, so it sits in the line the document put it in. `max-width`
-   is the backstop for a box narrower than the text column — a table cell:
-   `draw.rs` already scales every extent down to the column, so this only bites
-   inside one, and then it is a squeeze rather than an overflowing page. */
-img.of-img{max-width:100%;}
-/* The box a graphic the preview cannot draw degrades to. Inline-flex, not the
-   absolutely positioned block a slide's placeholder is: this one stands in the
-   text flow between the runs around it, and a block element inside a `p` would
-   split the paragraph. */
-.of-gph{display:inline-flex;align-items:center;justify-content:center;\
-box-sizing:border-box;vertical-align:bottom;overflow:hidden;max-width:100%;\
-border:1px dashed #b0b0b0;background:#f7f7f7;color:#6b6b6b;font-size:11px;\
-text-align:center;white-space:normal;}
-/* A link's colour and underline are the run's own resolved properties (see
-   `body::text_run`), so the UA's blue-and-underlined default has to be turned off
-   or it wins over a document that stated a colour of its own. */
-.of-page a{color:inherit;text-decoration:inherit;}
-/* Footnotes and endnotes, collected at the end of the column: Word puts them at
-   the foot of the page that references them, and this column has no pages. The
-   hairline is the separator Word draws above them. */
-.of-fnotes{margin-top:24px;border-top:1px solid #c9c9c9;padding-top:8px;}
-.of-fn{margin-top:6px;}
-/* The number in front of a note, which is also the link back to its marker. */
-.of-fnb{vertical-align:super;font-size:0.7em;padding-right:4px;}
-/* A text box's own paragraphs, hoisted out of the paragraph that anchored them
-   because block content cannot sit inside a `p` — see `body::hoist`. The border is
-   the only thing left saying a box is what this was, its real position being one
-   this column cannot honour. */
-.of-txbx{border:1px solid #c9c9c9;padding:6px 8px;margin:8px 0;}
-.office-note{color:var(--fg-mute,#6b6b6b);font-size:11px;padding:6px 2px;}
-";
+const NOTE_STYLES: &str = "Stylesheet unreadable — text styles missing";
+const NOTE_NUMBERING: &str = "Numbering definitions unreadable";
+const NOTE_THEME: &str = "Theme unreadable — colours and fonts missing";
+const NOTE_BODY: &str = "Document body unreadable";
 
 /// Everything the body walk needs. Grouped so the emitters can take disjoint
 /// mutable borrows of the pieces they touch.
@@ -195,30 +106,6 @@ pub struct Ctx<'a> {
     /// start of the body — which is distinct from a paragraph that names no style
     /// and therefore takes the document's default.
     pub prev_style: Option<Option<String>>,
-}
-
-/// The page box in px. Wider than [`OfficeDoc::page`] can carry, because the four
-/// margins are only equal in most documents rather than in all of them.
-struct Page {
-    width: f32,
-    height: f32,
-    left: f32,
-    right: f32,
-    top: f32,
-    bottom: f32,
-}
-
-impl Default for Page {
-    fn default() -> Page {
-        Page {
-            width: DEFAULT_PAGE_W,
-            height: DEFAULT_PAGE_H,
-            left: DEFAULT_MARGIN,
-            right: DEFAULT_MARGIN,
-            top: DEFAULT_MARGIN,
-            bottom: DEFAULT_MARGIN,
-        }
-    }
 }
 
 pub fn render(path: &str, section: Option<u32>, terms: &[String]) -> Result<OfficeDoc, String> {
@@ -397,7 +284,14 @@ fn render_with(
     }
 
     let truncated = w.truncated();
-    let html = emit::wrap_style(BASE_CSS, &page_css(&page, &styles, tab_px), w.finish());
+    let d = styles.defaults();
+    let page_css = docshape::page_css(
+        &page,
+        d.run.font.as_deref(),
+        style::size_pt(&d.run),
+        tab_px,
+    );
+    let html = emit::wrap_style(docshape::BASE_CSS, &page_css, w.finish());
 
     Ok(OfficeDoc {
         html,
@@ -468,40 +362,6 @@ fn page_geometry(body: Node) -> Page {
         p.bottom = px("bottom", p.height, p.bottom);
     }
     p
-}
-
-/// The document-derived half of the stylesheet: the page's default text, its tab
-/// stop, and the padding when the three-tuple cannot carry it.
-fn page_css(page: &Page, styles: &Styles, tab_px: f32) -> String {
-    let d = styles.defaults();
-    let mut s = Style::new();
-    s.push_opt("font-family", d.run.font.clone());
-    s.push_opt("font-size", fmt_px(pt_to_px(style::size_pt(&d.run))));
-    // Tabs are literal U+0009 under `white-space:pre-wrap`, and `tab-size` is the
-    // only thing that positions them — explicit `w:tabs` stops are not modelled
-    // (honouring one means knowing where the text currently is).
-    s.push_opt("tab-size", fmt_px(tab_px));
-    // So an empty document still looks like a page rather than a white strip.
-    s.push_opt("min-height", fmt_px(page.height));
-    let mut out = format!(".of-page{{{}}}\n", s.css());
-
-    // `OfficeDoc::page` is a three-tuple — width, one x padding, one y padding —
-    // so the host's `.of-page` rule can only state a symmetric box. When the
-    // document's margins are not symmetric, the exact four-value padding is
-    // emitted here instead: this stylesheet is written into the document *after*
-    // the host's variant CSS and both rules are a single class, so equal
-    // specificity means source order decides and this one wins.
-    let asymmetric =
-        (page.left - page.right).abs() > 0.5 || (page.top - page.bottom).abs() > 0.5;
-    if asymmetric {
-        let pad = [page.top, page.right, page.bottom, page.left]
-            .iter()
-            .map(|v| fmt_px(*v).unwrap_or_else(|| "0px".to_string()))
-            .collect::<Vec<_>>()
-            .join(" ");
-        out.push_str(&format!(".of-page{{padding:{pad};}}\n"));
-    }
-    out
 }
 
 /// `w:defaultTabStop` from `settings.xml`, in px.
@@ -1018,12 +878,12 @@ mod tests {
         // The box names what it stands for; the footer says the preview will never
         // draw it, which one box in a long report cannot say on its own.
         assert!(
-            doc.notes.iter().any(|n| n.contains("Charts are shown as placeholders")),
+            doc.notes.iter().any(|n| n == "Charts not drawn"),
             "{:?}",
             doc.notes
         );
         assert!(
-            doc.notes.iter().any(|n| n.contains("SmartArt diagrams are shown as placeholders")),
+            doc.notes.iter().any(|n| n == "SmartArt not drawn"),
             "{:?}",
             doc.notes
         );
@@ -1208,7 +1068,7 @@ mod tests {
         let html = body_html(&doc).to_string();
         assert_eq!(html.matches("of-gph").count(), 200, "{}", html.len());
         assert!(
-            doc.notes.iter().any(|n| n.contains("more of them than the preview draws")),
+            doc.notes.iter().any(|n| n == "Some images not shown"),
             "{:?}",
             doc.notes
         );
@@ -1565,7 +1425,9 @@ mod tests {
         // content.
         assert!(html.find("of-fnotes").unwrap() > html.find("Widget").unwrap(), "{html}");
         assert!(!html.contains("SEPARATOR") && !html.contains("CONTINUATION"), "{html}");
-        assert!(doc.notes.iter().any(|n| n == notes::NOTE_TAIL), "{:?}", doc.notes);
+        // Not noted: where the notes sit is visible in the rendered column, and a
+        // footer line fires for every document that has a single footnote.
+        assert!(doc.notes.is_empty(), "{:?}", doc.notes);
     }
 
     #[test]

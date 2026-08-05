@@ -99,7 +99,7 @@ fn render_capped(
         .take(8)
         .collect();
     if !hidden.is_empty() {
-        notes.add(&format!("Hidden in this workbook: {}.", hidden.join(", ")));
+        notes.add(&format!("Hidden sheets: {}", hidden.join(", ")));
     }
     let default_idx = sheets.iter().position(|s| !s.hidden).unwrap_or(0) as u32;
     let last = sheets.len().saturating_sub(1) as u32;
@@ -119,12 +119,12 @@ fn render_capped(
         Some(x) => match Styles::parse(&x, &theme) {
             Ok(s) => s,
             Err(_) => {
-                notes.add("Cell formatting is unavailable: the workbook's styles are unreadable.");
+                notes.add("Cell styles unreadable");
                 Styles::empty()
             }
         },
         None => {
-            notes.add("Cell formatting is unavailable: the workbook has no styles part.");
+            notes.add("Cell styles unreadable");
             Styles::empty()
         }
     };
@@ -163,7 +163,7 @@ fn render_capped(
                 let msg = emit::degrade_msg(&e, "sheet");
                 ctx.notes.add(&msg);
                 sheet::SheetOut {
-                    html: sheet::error_body(&msg),
+                    html: super::sheet::error_body(&msg),
                     truncated: true,
                 }
             }
@@ -269,19 +269,6 @@ pub fn col_letter_to_index(col: &str) -> Option<usize> {
     }
 }
 
-/// 0-based index → the column letters shown in the gutter.
-pub fn col_letter(idx: usize) -> String {
-    let mut n = idx.saturating_add(1);
-    let mut out = Vec::new();
-    while n > 0 {
-        let rem = (n - 1) % 26;
-        out.push(b'A' + rem as u8);
-        n = (n - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
 /// Split a cell reference like "AB12" into its letter prefix and digit suffix.
 pub fn split_cell_ref(r: &str) -> (&str, &str) {
     let split = r.find(|c: char| c.is_ascii_digit()).unwrap_or(r.len());
@@ -303,6 +290,7 @@ fn clip_chars(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::sheet::col_letter;
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
@@ -804,7 +792,7 @@ mod tests {
         assert!(text.contains("1234.5"), "{text}");
         // An out-of-range shared-string index degrades to a note, not a panic.
         assert!(
-            doc.notes.iter().any(|n| n.contains("shared string")),
+            doc.notes.iter().any(|n| n == "Some cell text missing"),
             "{:?}",
             doc.notes
         );
@@ -1100,7 +1088,7 @@ mod tests {
         let doc = f.render(None);
         assert!(visible_text(&doc.html).contains("2.5"));
         assert!(
-            doc.notes.iter().any(|n| n.contains("no styles part")),
+            doc.notes.iter().any(|n| n == "Cell styles unreadable"),
             "{:?}",
             doc.notes
         );
@@ -1174,7 +1162,7 @@ mod tests {
         // 898 rows of nothing is not "clipped" - there was nothing there to clip.
         assert!(!doc.truncated);
         assert!(
-            !doc.notes.iter().any(|n| n.contains("rows are shown")),
+            !doc.notes.iter().any(|n| n == "First 200 rows only"),
             "{:?}",
             doc.notes
         );
@@ -1192,7 +1180,7 @@ mod tests {
         let doc = f.render(None);
         assert!(doc.truncated);
         assert!(
-            doc.notes.iter().any(|n| n.contains("rows are shown")),
+            doc.notes.iter().any(|n| n == "First 200 rows only"),
             "{:?}",
             doc.notes
         );
@@ -1216,7 +1204,7 @@ mod tests {
         let doc = f.render(None);
         assert!(doc.truncated);
         assert!(
-            doc.notes.iter().any(|n| n.contains("columns are shown")),
+            doc.notes.iter().any(|n| n == "First 200 columns only"),
             "{:?}",
             doc.notes
         );

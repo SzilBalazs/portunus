@@ -49,14 +49,13 @@ const MAX_ALT_DEPTH: usize = 4;
 /// nothing — see [`side`].
 const EDGE_FRACTION: f32 = 0.25;
 
-const NOTE_COUNT: &str =
-    "Some images are not shown: this document holds more of them than the preview draws.";
+const NOTE_COUNT: &str = "Some images not shown";
 
 // Word for the two frame kinds a report is actually built around. Deliberately
 // the same strings the slide renderer uses (`pptx::shapes`), so a reader who
 // previews both formats is told the same thing in the same words.
-const NOTE_CHART: &str = "Charts are shown as placeholders: the preview does not draw chart data.";
-const NOTE_DIAGRAM: &str = "SmartArt diagrams are shown as placeholders.";
+const NOTE_CHART: &str = "Charts not drawn";
+const NOTE_DIAGRAM: &str = "SmartArt not drawn";
 
 /// The OLE relationship kind. `emit::graphic_label` keys on the `/ole` in it, so
 /// an object whose own relationship cannot be read still labels through the

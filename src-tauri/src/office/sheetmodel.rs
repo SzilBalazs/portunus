@@ -11,9 +11,8 @@
 //! Unlike the paragraph model in [`super::model`], the HTML is not here. A
 //! paragraph paints itself; a cell is one `<td>` inside a table whose gutter,
 //! colgroup, sticky panes and deduplicated class tables belong to the sheet
-//! renderer, and that renderer is still `xlsx::sheet` until a second dialect
-//! joins it. What lives here is what an adapter has to fill in — and none of it
-//! names a format.
+//! renderer, which is [`super::sheet`]. What lives here is what an adapter has to
+//! fill in — and none of it names a format.
 
 use super::model::Align;
 

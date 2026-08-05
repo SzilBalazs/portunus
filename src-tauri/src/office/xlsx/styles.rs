@@ -13,8 +13,9 @@ use super::super::drawingml::theme::{SchemeSlot, Theme};
 use super::super::fonts;
 use super::super::html::{fmt_px, pt_to_px, Style};
 use super::super::numfmt::Format;
+use super::super::sheet::StyleTable;
 use super::super::xml::{self, attr_bool, attr_f32, attr_u32, child, elems};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 // Every table in styles.xml is document-controlled and unbounded; each gets a cap
@@ -204,15 +205,18 @@ impl Styles {
             .unwrap_or(false)
     }
 
+}
+
+impl StyleTable for Styles {
     /// `td.xfN{…}` rules for the styles the sheet actually used.
     ///
     /// The selector is `td.xfN` (one type + one class) so it ties with the base
     /// stylesheet's `.xl-sheet td` gridline and `td.xl-num` alignment rules and
     /// wins on source order — these rules are emitted last. A bare `.xfN` would
     /// lose to both, and a document border would never replace a gridline.
-    pub fn css_block(&self, used: impl IntoIterator<Item = u32>) -> String {
+    fn css_block(&self, used: &BTreeSet<u32>) -> String {
         let mut out = String::new();
-        for id in used {
+        for &id in used {
             let Some(x) = self.xfs.get(id as usize) else {
                 continue;
             };
@@ -741,7 +745,7 @@ mod tests {
         assert!(css.contains("white-space:pre-wrap;"), "{css}");
         assert!(css.contains("padding-left:18px;"), "{css}");
         assert!(s.has_css(0));
-        let block = s.css_block([0u32]);
+        let block = s.css_block(&BTreeSet::from([0u32]));
         // The selector must carry a type so it ties with the base gridline rule
         // and wins on order.
         assert!(block.starts_with("td.xf0{"), "{block}");
@@ -825,7 +829,7 @@ mod tests {
         let s = styles(r#"<cellXfs count="1"><xf numFmtId="0" fontId="7" fillId="9"/></cellXfs>"#);
         assert_eq!(s.get(0).css, "");
         assert!(!s.has_css(0));
-        assert_eq!(s.css_block([0u32]), "");
+        assert_eq!(s.css_block(&BTreeSet::from([0u32])), "");
         // Garbage attribute values are ignored rather than propagated.
         let s = styles(
             r#"<fonts count="1"><font><sz val="not-a-number"/><color rgb="zz"/></font></fonts>

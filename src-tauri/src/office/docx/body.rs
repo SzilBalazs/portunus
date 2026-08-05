@@ -15,12 +15,13 @@ use super::super::drawingml::color::Color;
 use super::super::drawingml::theme::{parse_hex_rgb, SchemeSlot};
 use super::super::fonts;
 use super::super::html::{attr, Writer};
+use super::super::link;
 use super::super::media;
 use super::super::model::{self, Break, HtmlStyle, ListMarker, Run};
 use super::super::xml::{self, attr_local, child, elems};
 use super::numbering::{Indent, Marker as NumMarker, Suffix};
 use super::style::{self, ParaProps, RunProps};
-use super::{draw, link, notes, table, Ctx};
+use super::{draw, notes, table, Ctx};
 use roxmltree::Node;
 
 /// The docx spelling of the paragraph model. A page column has real page breaks,
@@ -66,9 +67,8 @@ const MAX_BOOKMARKS: usize = 2_000;
 /// first, so that buffer needs a bound that does not depend on the outer one.
 const BOX_CAP: usize = 256 * 1024;
 
-pub const NOTE_PARAS: &str = "This document is very long: only the first part of it is shown.";
-pub const NOTE_BOXES: &str =
-    "Some text boxes are not shown: this document holds more of them than the preview draws.";
+pub const NOTE_PARAS: &str = "Long document — first part only";
+pub const NOTE_BOXES: &str = "Some text boxes not shown";
 pub const NOTE_TXBX: &str = "Text boxes are shown in the text flow, after the paragraph they \
 are attached to, rather than at the position the document places them.";
 

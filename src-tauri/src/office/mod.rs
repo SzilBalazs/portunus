@@ -2,6 +2,7 @@
 //! for the content index, Markdown and spreadsheet grids for the preview.
 
 mod cellstyle;
+mod docshape;
 mod docx;
 mod drawingml;
 mod emit;
@@ -9,15 +10,19 @@ mod fonts;
 mod grid;
 mod highlight;
 mod html;
+mod link;
 mod listnum;
 mod markdown;
 mod media;
 mod model;
 mod numfmt;
+mod odf;
 mod opc;
 mod pkg;
 mod pptx;
+mod sheet;
 mod sheetmodel;
+mod slideshape;
 mod text;
 mod xlsx;
 mod xml;
@@ -84,11 +89,10 @@ pub fn render(path: &str, section: Option<u32>, terms: &[String]) -> Result<Offi
         "xlsx" => xlsx::render(path, section, terms),
         "pptx" => pptx::render(path, section, terms),
         "docx" => docx::render(path, section, terms),
-        // Later stages fill these in; until then the frontend keeps using the
-        // markdown/grid path for them.
-        "odt" | "ods" | "odp" => {
-            Err(format!("office: no HTML renderer yet for {ext}"))
-        }
+        // One entry point for the three ODF classes: the package's own
+        // `office:body` decides which renderer runs, not the extension, so a
+        // renamed file renders as what it is (see `odf::pkg::Class`).
+        "odt" | "ods" | "odp" => odf::render(path, section, terms),
         other => Err(format!("unsupported office extension: {other}")),
     }
 }

@@ -37,12 +37,8 @@ const MAX_TAIL_BYTES: usize = 128 * 1024;
 /// Characters of a `w:id`. Ids are small integers; anything longer is not one.
 const MAX_ID_CHARS: usize = 16;
 
-pub const NOTE_TAIL: &str = "Footnotes and endnotes are shown together at the end of the \
-document rather than at the foot of each page.";
-pub const NOTE_CAPPED: &str =
-    "Some notes are not shown: this document holds more of them than the preview draws.";
-pub const NOTE_MISSING: &str =
-    "Some footnote or endnote text is unavailable: it could not be read from this document.";
+pub const NOTE_CAPPED: &str = "Some footnotes not shown";
+pub const NOTE_MISSING: &str = "Some footnote text missing";
 
 /// The two note parts are separate id spaces — footnote 2 and endnote 2 are
 /// different notes — so the kind travels with every id.
@@ -192,7 +188,6 @@ pub fn emit_tail(ctx: &mut Ctx, w: &mut Writer) {
     if used.is_empty() {
         return;
     }
-    ctx.notes.add(NOTE_TAIL);
     let start = w.len();
     w.open("div", &attr("class", "of-fnotes"));
     for r in &used {

@@ -72,12 +72,11 @@ const DEFAULT_MAR_DXA: [i64; 4] = [0, 108, 0, 108];
 
 /// A table stopped early: the row cap and the cell caps both end the same way, and
 /// what the reader needs to know is that this is not all of it.
-const NOTE_CLIPPED: &str = "A large table is cut short: only its first rows are shown.";
+const NOTE_CLIPPED: &str = "Large table cut short";
 
 /// The document-wide cell budget, which stops a whole table rather than trimming
 /// one — so it needs its own wording.
-const NOTE_DOC_CELLS: &str =
-    "This document has more table cells than the preview draws: its last tables are not shown.";
+const NOTE_DOC_CELLS: &str = "Later tables not shown";
 
 // ── plan ─────────────────────────────────────────────────────────────────────
 
@@ -122,7 +121,7 @@ struct Plan<'d> {
 pub fn emit_table(ctx: &mut Ctx, w: &mut Writer, tbl: Node, depth: usize) {
     if depth >= MAX_NEST {
         ctx.notes.add(&format!(
-            "A table nested more than {MAX_NEST} levels deep is not shown."
+            "Deeply nested table not shown"
         ));
         return;
     }
@@ -157,7 +156,7 @@ pub fn emit_table(ctx: &mut Ctx, w: &mut Writer, tbl: Node, depth: usize) {
     }
     if plan.clipped_cols {
         ctx.notes.add(&format!(
-            "A table wider than {MAX_COLS} columns is cut short: its extra columns are not shown."
+            "Wide table cut short"
         ));
     }
 
